@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+bun.lockb
+
+# Source files (if not needed)
+src/
+*.ts
+!dist/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Documentation
+*.md
+docs/
+examples/
+
+# Tests
+tests/
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/
+
+# Development
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# Build artifacts (for multi-stage builds)
+dist/
+build/
+target/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Database files
+*.db
+*.sqlite
+
+# Keys and secrets
+*.pem
+*.key
+!*.key.example

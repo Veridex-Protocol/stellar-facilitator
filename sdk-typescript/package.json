@@ -1,0 +1,41 @@
+{
+  "name": "@veridex/sdk",
+  "version": "0.1.0",
+  "description": "Veridex TypeScript SDK - Client library for Bazaar discovery and x402 payments",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^16.2.0",
+    "@x402/core": "^2.21.0",
+    "@x402/stellar": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/minimatch": "^5.1.2",
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "veridex",
+    "x402",
+    "stellar",
+    "bazaar",
+    "discovery",
+    "payment",
+    "sdk"
+  ]
+}

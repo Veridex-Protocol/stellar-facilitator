@@ -1,0 +1,70 @@
+name: Veridex v2 CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [facilitator-service, bazaar-service, mcp-server, sdk-typescript]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - run: npm ci
+        working-directory: ${{ matrix.package }}
+      - run: npm run typecheck
+        working-directory: ${{ matrix.package }}
+      - run: npm run build
+        working-directory: ${{ matrix.package }}
+      - name: Test packages that contain tests
+        if: matrix.package == 'facilitator-service' || matrix.package == 'bazaar-service'
+        run: npm test -- --run
+        working-directory: ${{ matrix.package }}
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m compileall -q veridex
+        working-directory: sdk-python
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - run: go test ./...
+        working-directory: sdks/go
+
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts/upto-settlement
+      - run: cargo test --locked
+        working-directory: contracts/upto-settlement
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config
+      - run: docker compose build facilitator bazaar mcp-server

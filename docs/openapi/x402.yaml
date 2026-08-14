@@ -1,0 +1,131 @@
+openapi: 3.0.3
+info:
+  title: Veridex Stellar x402 v2 APIs
+  version: 0.2.0
+  license:
+    name: Apache-2.0
+servers:
+  - url: http://localhost:3002
+    description: Facilitator
+paths:
+  /supported:
+    get:
+      summary: Return canonical x402 v2 capabilities
+      responses:
+        '200':
+          description: Supported payment kinds and Stellar signers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportedResponse'
+  /verify:
+    post:
+      summary: Verify a canonical x402 v2 payment payload
+      requestBody:
+        $ref: '#/components/requestBodies/PaymentRequest'
+      responses:
+        '200':
+          description: Valid payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerifyResponse' }
+        '400':
+          description: Invalid payment or request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerifyResponse' }
+  /settle:
+    post:
+      summary: Settle a canonical x402 v2 payment on Stellar
+      requestBody:
+        $ref: '#/components/requestBodies/PaymentRequest'
+      responses:
+        '200':
+          description: Settlement result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettleResponse' }
+        '400': { description: Invalid payment or request }
+        '500': { description: Settlement failure }
+  /x402/verify:
+    post:
+      deprecated: true
+      summary: Compatibility alias for /verify
+      requestBody: { $ref: '#/components/requestBodies/PaymentRequest' }
+      responses: { '200': { description: Verification result } }
+  /x402/settle:
+    post:
+      deprecated: true
+      summary: Compatibility alias for /settle
+      requestBody: { $ref: '#/components/requestBodies/PaymentRequest' }
+      responses: { '200': { description: Settlement result } }
+  /health:
+    get:
+      summary: Facilitator health
+      responses: { '200': { description: Healthy } }
+  /stats:
+    get:
+      summary: Facilitator runtime statistics
+      responses: { '200': { description: Statistics } }
+components:
+  requestBodies:
+    PaymentRequest:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [paymentPayload, paymentRequirements]
+            properties:
+              paymentPayload: { type: object, additionalProperties: true }
+              paymentRequirements: { $ref: '#/components/schemas/PaymentRequirements' }
+  schemas:
+    PaymentRequirements:
+      type: object
+      required: [scheme, network, amount, asset, payTo]
+      properties:
+        scheme: { type: string, enum: [exact] }
+        network: { type: string, enum: ['stellar:testnet', 'stellar:pubnet'] }
+        amount: { type: string, pattern: '^[0-9]+$' }
+        asset: { type: string, description: SEP-41 token contract address }
+        payTo: { type: string, description: Stellar recipient address }
+        maxTimeoutSeconds: { type: integer }
+        extra: { type: object, additionalProperties: true }
+    VerifyResponse:
+      type: object
+      required: [isValid]
+      properties:
+        isValid: { type: boolean }
+        payer: { type: string }
+        invalidReason: { type: string }
+        invalidMessage: { type: string }
+    SettleResponse:
+      type: object
+      required: [success, network]
+      properties:
+        success: { type: boolean }
+        transaction: { type: string }
+        network: { type: string }
+        payer: { type: string }
+        errorReason: { type: string }
+        errorMessage: { type: string }
+    SupportedResponse:
+      type: object
+      required: [kinds, extensions, signers]
+      properties:
+        kinds:
+          type: array
+          items:
+            type: object
+            required: [x402Version, scheme, network]
+            properties:
+              x402Version: { type: integer, enum: [2] }
+              scheme: { type: string, enum: [exact] }
+              network: { type: string }
+              extra: { type: object, additionalProperties: true }
+        extensions: { type: array, items: { type: string } }
+        signers:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }

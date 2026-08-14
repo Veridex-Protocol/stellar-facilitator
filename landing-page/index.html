@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Veridex is federated x402 infrastructure for Stellar agents: discover services, enforce policy, and settle non-custodial payments."
+    />
+    <title>Veridex — Federated x402 Infrastructure for Stellar Agents</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-glow" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Veridex home">
+        <svg class="brand-mark" viewBox="0 0 46 46" aria-hidden="true">
+          <path d="M23 3 40 13v20L23 43 6 33V13L23 3Z" />
+          <path d="m14.5 17.25 8.5 15.5 8.5-15.5" />
+          <circle cx="23" cy="17" r="3.5" />
+        </svg>
+        <span>veridex</span>
+      </a>
+
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="nav-menu">
+        <span class="sr-only">Open navigation</span>
+        <span></span><span></span>
+      </button>
+
+      <nav id="nav-menu" class="site-nav" aria-label="Primary navigation">
+        <a href="#why-veridex">Why Veridex</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#builders">For builders</a>
+        <a href="https://docs.veridex.network/" target="_blank" rel="noreferrer">Docs <span>↗</span></a>
+      </nav>
+
+      <a class="nav-cta" href="https://github.com/Veridex-Protocol/stellar-facilitator" target="_blank" rel="noreferrer">
+        View source <span>↗</span>
+      </a>
+    </header>
+
+    <main id="top">
+      <section class="hero section-shell">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Stellar-native agent payments</p>
+          <h1>Commerce infrastructure for agents that <em>choose.</em></h1>
+          <p class="hero-lede">
+            Let agents discover a useful service, pay it from their own wallet,
+            and receive a verifiable result—without giving a marketplace custody
+            or turning discovery into a walled garden.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#architecture">Explore the architecture <span>↓</span></a>
+            <a class="text-link" href="https://github.com/Veridex-Protocol/stellar-facilitator" target="_blank" rel="noreferrer">
+              <span class="github-glyph" aria-hidden="true">⌘</span> Explore on GitHub
+            </a>
+          </div>
+          <div class="hero-proof">
+            <div class="proof-icon">✦</div>
+            <p><strong>Non-custodial by design.</strong> Your agent signs within the policy you define.</p>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="Veridex payment and discovery system diagram">
+          <div class="orb orb-one"></div>
+          <div class="orb orb-two"></div>
+          <div class="visual-grid"></div>
+          <div class="visual-caption">VERIDEX / STELLAR / X402</div>
+
+          <div class="flow-line flow-line-top"></div>
+          <div class="flow-line flow-line-bottom"></div>
+
+          <article class="system-card agent-card">
+            <div class="card-icon agent-icon">✦</div>
+            <p class="card-kicker">01 / CLIENT</p>
+            <h2>Agent wallet</h2>
+            <small>Policy-bound signature</small>
+          </article>
+
+          <article class="system-card facilitator-card">
+            <div class="pulse-ring"></div>
+            <div class="card-icon facilitator-icon">
+              <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 2.5 24.4 8.5v11L14 25.5 3.6 19.5v-11L14 2.5Z"/><path d="m9.2 11.1 4.8 8.7 4.8-8.7"/></svg>
+            </div>
+            <p class="card-kicker">02 / VERIFY + SETTLE</p>
+            <h2>Facilitator</h2>
+            <small>Non-custodial payment plane</small>
+          </article>
+
+          <article class="system-card resource-card">
+            <div class="card-icon resource-icon">↗</div>
+            <p class="card-kicker">03 / SERVICE</p>
+            <h2>Paid resource</h2>
+            <small>HTTP API or MCP tool</small>
+          </article>
+
+          <article class="bazaar-card">
+            <div class="bazaar-card-top">
+              <span class="signal"><i></i><i></i><i></i></span>
+              <span>FEDERATED BAZAAR</span>
+            </div>
+            <div class="bazaar-nodes">
+              <b></b><b></b><b></b><b></b><b></b>
+            </div>
+            <p>Discover independently operated services.</p>
+          </article>
+
+          <div class="visual-status"><span></span> discovery connected</div>
+        </div>
+      </section>
+
+      <section class="signal-strip" aria-label="Key platform properties">
+        <div><span class="strip-index">01</span> Self-custodial signing</div>
+        <div><span class="strip-index">02</span> Federated discovery</div>
+        <div><span class="strip-index">03</span> Stellar-native settlement</div>
+        <div><span class="strip-index">04</span> Agent policy controls</div>
+      </section>
+
+      <section id="why-veridex" class="reason-section section-shell">
+        <div class="section-heading">
+          <p class="eyebrow"><span></span> Built for an open agent economy</p>
+          <h2>Payment should be <em>certain.</em><br />Discovery should be <em>open.</em></h2>
+        </div>
+
+        <div class="reason-grid">
+          <article class="reason-card reason-card-dark">
+            <div class="reason-number">01</div>
+            <div>
+              <h3>Pay from your own wallet.</h3>
+              <p>
+                The facilitator verifies and submits. Value moves directly from
+                payer to seller. Veridex never takes custody of agent funds.
+              </p>
+            </div>
+            <div class="mini-transfer" aria-hidden="true">
+              <span>AGENT</span><i></i><span>SELLER</span>
+            </div>
+          </article>
+
+          <article class="reason-card reason-card-lilac">
+            <div class="reason-number">02</div>
+            <div>
+              <h3>Discover beyond one catalog.</h3>
+              <p>
+                Bazaar nodes exchange signed, freshness-bounded announcements.
+                Every operator keeps an independent index and ranking policy.
+              </p>
+            </div>
+            <div class="mini-mesh" aria-hidden="true">
+              <i></i><i></i><i></i><i></i><i></i>
+            </div>
+          </article>
+
+          <article class="reason-card reason-card-orange">
+            <div class="reason-number">03</div>
+            <div>
+              <h3>Give agents room to act—within limits.</h3>
+              <p>
+                Veridex’s developer SDKs pair self-custodial passkeys and session
+                keys with budgets, approvals, and auditable policy decisions.
+              </p>
+            </div>
+            <div class="mini-policy" aria-hidden="true">
+              <span>Daily cap</span><strong>$50.00</strong><b></b>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="architecture-section">
+        <div class="section-shell">
+          <div class="architecture-heading">
+            <div>
+              <p class="eyebrow light"><span></span> Two planes. One trustworthy flow.</p>
+              <h2>Built to make the hard parts<br /><em>boringly reliable.</em></h2>
+            </div>
+            <p>
+              Payment safety and service discovery have different failure modes.
+              Veridex keeps them decoupled, so a slow search index never blocks a
+              confirmed Stellar payment.
+            </p>
+          </div>
+
+          <div class="architecture-map">
+            <div class="architecture-label payment-label">
+              <span>PAYMENT PLANE</span>
+              <small>Non-custodial settlement</small>
+            </div>
+            <div class="architecture-label discovery-label">
+              <span>DISCOVERY PLANE</span>
+              <small>Federated, advisory search</small>
+            </div>
+
+            <svg class="architecture-lines" viewBox="0 0 1100 410" preserveAspectRatio="none" aria-hidden="true">
+              <path class="line-coral" d="M108 120H328C355 120 359 120 380 120H628C650 120 664 120 692 120H980" />
+              <path class="line-lilac" d="M172 302H350C377 302 384 302 411 302H720C744 302 749 302 775 302H962" />
+              <path class="line-join" d="M541 139V249" />
+              <circle class="dot-coral" cx="328" cy="120" r="5" />
+              <circle class="dot-coral" cx="692" cy="120" r="5" />
+              <circle class="dot-lilac" cx="350" cy="302" r="5" />
+              <circle class="dot-lilac" cx="775" cy="302" r="5" />
+            </svg>
+
+            <article class="arch-node wallet-node">
+              <span class="arch-icon">✦</span>
+              <h3>Agent wallet</h3>
+              <p>Passkey + session policy</p>
+            </article>
+            <article class="arch-node facilitator-node">
+              <span class="arch-icon">◇</span>
+              <h3>x402 facilitator</h3>
+              <p>Verify · simulate · settle</p>
+            </article>
+            <article class="arch-node stellar-node">
+              <span class="arch-icon">✧</span>
+              <h3>Stellar</h3>
+              <p>SEP-41 · Soroban · XLM fees</p>
+            </article>
+            <article class="arch-node mcp-node">
+              <span class="arch-icon">⌘</span>
+              <h3>MCP server</h3>
+              <p>Discover + paid call</p>
+            </article>
+            <article class="arch-node bazaar-node">
+              <span class="arch-icon">⊹</span>
+              <h3>PostgreSQL Bazaar</h3>
+              <p>Full-text + pgvector</p>
+            </article>
+            <article class="arch-node mesh-node">
+              <span class="arch-icon">◌</span>
+              <h3>Peer mesh</h3>
+              <p>Signed announcements</p>
+            </article>
+          </div>
+
+          <div class="architecture-notes">
+            <div><b>Payment finality</b><span>Verified against fresh Stellar ledger state before settlement.</span></div>
+            <div><b>Discovery resilience</b><span>Indexing, embeddings, and federation run off the payment critical path.</span></div>
+            <div><b>Operational safety</b><span>Channel leases, reconciliation, fee ceilings, and RPC failover protect the service.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="builders" class="builder-section section-shell">
+        <div class="builder-copy">
+          <p class="eyebrow"><span></span> A familiar surface for every builder</p>
+          <h2>Use the pieces you need.<br />Keep control of the rest.</h2>
+          <p>
+            Plug a paid API into the Bazaar. Give an agent a constrained payment
+            capability. Or self-host the entire stack. Veridex is open source,
+            composable infrastructure—not a rent-seeking intermediary.
+          </p>
+          <a class="text-link dark-link" href="https://docs.veridex.network/" target="_blank" rel="noreferrer">Read the developer docs <span>↗</span></a>
+        </div>
+
+        <div class="code-window">
+          <div class="window-top">
+            <div><i></i><i></i><i></i></div>
+            <span>agent-workflow.ts</span>
+            <b>Illustrative</b>
+          </div>
+          <pre><code><span class="code-dim">// Agent asks the Bazaar, then pays from its own wallet.</span>
+<span class="code-dim">const</span> <span class="code-name">resources</span> = <span class="code-dim">await</span> <span class="code-name">mcp</span>.<span class="code-fn">callTool</span>(
+  <span class="code-string">'discover_resources'</span>,
+  { <span class="code-key">query</span>: <span class="code-string">'real-time weather for Lagos'</span>,
+    <span class="code-key">network</span>: <span class="code-string">'stellar:testnet'</span> }
+);
+
+<span class="code-dim">const</span> <span class="code-name">result</span> = <span class="code-dim">await</span> <span class="code-name">mcp</span>.<span class="code-fn">callTool</span>(
+  <span class="code-string">'pay_resource'</span>,
+  { <span class="code-key">resourceUrl</span>: <span class="code-name">resources</span>[<span class="code-number">0</span>].url }
+);
+
+<span class="code-dim">// Wallet signs locally. Receipt returns after Stellar settlement.</span></code></pre>
+          <div class="code-status"><span></span> policy validated · settlement receipt recorded</div>
+        </div>
+      </section>
+
+      <section class="proof-section">
+        <div class="section-shell">
+          <div class="proof-header">
+            <p class="eyebrow light"><span></span> Foundation, not a fresh start</p>
+            <h2>Built on a developer platform<br />for the agent economy.</h2>
+          </div>
+          <div class="proof-stat-grid">
+            <article><strong>11</strong><span>open-source developer SDKs</span></article>
+            <article><strong>1</strong><span>self-custodial passkey identity</span></article>
+            <article><strong>∞</strong><span>independently operated Bazaar nodes</span></article>
+            <article><strong>0</strong><span>agent funds held by Veridex</span></article>
+          </div>
+          <p class="proof-footnote">
+            Passkeys, session keys, spending policies, approval flows, and verifiable
+            evidence give developers a proven control surface to bring to Stellar agents.
+          </p>
+        </div>
+      </section>
+
+      <section class="closing-section section-shell">
+        <div class="closing-copy">
+          <p class="eyebrow"><span></span> Build the open agent economy on Stellar</p>
+          <h2>Let your agent find<br />something worth paying for.</h2>
+        </div>
+        <div class="closing-actions">
+          <a class="button button-primary" href="https://github.com/Veridex-Protocol/stellar-facilitator" target="_blank" rel="noreferrer">Explore the source <span>↗</span></a>
+          <a class="text-link dark-link" href="https://docs.veridex.network/" target="_blank" rel="noreferrer">Developer docs <span>↗</span></a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <a class="brand" href="#top" aria-label="Veridex home">
+        <svg class="brand-mark" viewBox="0 0 46 46" aria-hidden="true">
+          <path d="M23 3 40 13v20L23 43 6 33V13L23 3Z" />
+          <path d="m14.5 17.25 8.5 15.5 8.5-15.5" />
+          <circle cx="23" cy="17" r="3.5" />
+        </svg>
+        <span>veridex</span>
+      </a>
+      <p>Federated x402 infrastructure for Stellar agents.</p>
+      <div>
+        <a href="https://github.com/Veridex-Protocol/stellar-facilitator" target="_blank" rel="noreferrer">GitHub</a>
+        <a href="https://docs.veridex.network/" target="_blank" rel="noreferrer">Docs</a>
+      </div>
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

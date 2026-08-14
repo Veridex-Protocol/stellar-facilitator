@@ -1,0 +1,52 @@
+{
+  "name": "@veridex/facilitator-service",
+  "version": "0.1.0",
+  "description": "Veridex x402 Facilitator Service - Stellar payment settlement with channel accounts",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "facilitator-service": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.9",
+    "@x402/core": "^2.20.0",
+    "@x402/stellar": "^2.20.0",
+    "@x402/extensions": "^2.20.0",
+    "@stellar/stellar-sdk": "^13.0.0",
+    "hono": "^4.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/minimatch": "^5.1.2",
+    "typescript": "^5.7.0",
+    "tsx": "^4.21.0",
+    "vitest": "^3.0.0",
+    "eslint": "^9.24.0"
+  },
+  "keywords": [
+    "x402",
+    "facilitator",
+    "stellar",
+    "payment",
+    "settlement",
+    "channel-accounts"
+  ]
+}

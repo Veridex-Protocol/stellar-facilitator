@@ -1,0 +1,38 @@
+{
+  "name": "@veridex/stellar-facilitator",
+  "version": "0.1.0",
+  "description": "Veridex Stellar x402 Facilitator with exact and upto payment schemes",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "test": "vitest",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@x402/core": "workspace:*",
+    "@x402/stellar": "workspace:*",
+    "@stellar/stellar-sdk": "^13.0.0",
+    "hono": "^4.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "tsx": "^4.16.0",
+    "vitest": "^2.0.0",
+    "eslint": "^9.0.0"
+  },
+  "keywords": [
+    "x402",
+    "stellar",
+    "facilitator",
+    "soroban",
+    "payment",
+    "upto"
+  ]
+}
