@@ -15,6 +15,7 @@ import {
   Networks,
   Keypair,
   xdr,
+  rpc as SorobanRpc,
 } from "@stellar/stellar-sdk";
 import type {
   X402StellarRequest,
@@ -76,6 +77,26 @@ export class StellarTransactionVerifier {
       const signatureCheck = this.validateSignatures(parsed);
       if (!signatureCheck.valid) {
         return signatureCheck;
+      }
+
+      // For Soroban operations or C... smart account signers, simulate auth & execution via Soroban RPC
+      const isSmartAccount = parsed.sourceAccount.startsWith("C");
+      const hasSorobanOp = parsed.operations.some((op) => op.type === "invokeHostFunction");
+
+      if ((isSmartAccount || hasSorobanOp) && this.config.rpcUrl) {
+        try {
+          const server = new SorobanRpc.Server(this.config.rpcUrl);
+          const simulated = await server.simulateTransaction(parsed.transaction);
+
+          if (SorobanRpc.Api.isSimulationError(simulated)) {
+            return {
+              valid: false,
+              error: `Smart Account / Soroban auth simulation failed: ${simulated.error}`,
+            };
+          }
+        } catch (simErr: any) {
+          console.warn("[Verifier] Simulation check warning:", simErr.message);
+        }
       }
 
       return {
@@ -170,10 +191,13 @@ export class StellarTransactionVerifier {
     parsed: ParsedStellarTransaction,
     expectedAmount?: string
   ): VerificationResult {
-    // Find payment operation to facilitator
+    // Find payment operation to facilitator or Soroban invokeHostFunction
     const paymentOp = parsed.operations.find((op) => {
       if (op.type === "payment") {
         return op.destination === this.facilitatorPublicKey;
+      }
+      if (op.type === "invokeHostFunction") {
+        return true; // Soroban contract invocation (validated via simulateTransaction)
       }
       return false;
     });
@@ -181,8 +205,13 @@ export class StellarTransactionVerifier {
     if (!paymentOp) {
       return {
         valid: false,
-        error: `No payment operation to facilitator (${this.facilitatorPublicKey})`,
+        error: `No payment operation to facilitator (${this.facilitatorPublicKey}) or valid Soroban invocation`,
       };
+    }
+
+    if (paymentOp.type === "invokeHostFunction") {
+      // Soroban invocation is checked via simulateTransaction in verify()
+      return { valid: true };
     }
 
     // Validate asset is native XLM

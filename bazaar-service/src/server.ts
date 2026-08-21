@@ -151,6 +151,46 @@ export class BazaarService {
    * Setup HTTP routes
    */
   private setupRoutes(): void {
+    // Capability Descriptor endpoint (x402ccd/0) per extension proposal #3117
+    this.app.get("/.well-known/x402", (c) => {
+      const baseUrl = process.env.BASE_URL || "https://bazaar.veridex.io";
+
+      return c.json({
+        ccd: "x402ccd/0",
+        service: "Veridex Bazaar Discovery & Catalog Service",
+        baseUrl,
+        runtime: {
+          attested: false, // HONESTY RULE: MUST be false unless verifiable TEE claim is present
+          platform: "stellar-soroban",
+          note: "Catalog and discovery records independently verifiable via P2P mesh & chain provenance."
+        },
+        receipts: {
+          format: "x402job/1",
+          signer: process.env.BAZAAR_PUBLIC_KEY || "GBazaarDiscoveryServicePublicKeyPlaceholder",
+          note: "Signature over canonical JSON; request and result digests recompute from exact bytes exchanged."
+        },
+        jobs: [
+          {
+            id: "discovery/search",
+            method: "GET",
+            path: "/discovery/search",
+            price: {
+              asset: "USDC",
+              amountAtomic: "0",
+              decimals: 6,
+              network: "stellar:pubnet",
+              scheme: "exact",
+              payTo: process.env.BAZAAR_PUBLIC_KEY || "GBazaarDiscoveryServicePublicKeyPlaceholder"
+            },
+            verification: {
+              kind: "chain-provenance",
+              detail: "Bazaar search results signed and verified against P2P mesh node attestations."
+            }
+          }
+        ]
+      });
+    });
+
     // Health check
     this.app.get("/health", async (c) => {
       const dbHealth = await this.db.healthCheck();
@@ -247,6 +287,64 @@ export class BazaarService {
           message: error instanceof Error ? error.message : "Unknown error",
         }, 400);
       }
+    });
+
+    // Capability Descriptor endpoint (x402ccd/0) per extension proposal #3117
+    this.app.get("/.well-known/x402", (c) => {
+      const baseUrl = process.env.BASE_URL || "https://bazaar.veridex.io";
+      const receiptSigner = process.env.FACILITATOR_PUBLIC_KEY || "GB222222222222222222222222222222222222222222222222222222";
+
+      return c.json({
+        ccd: "x402ccd/0",
+        service: "Veridex Attested & Verified Compute Gateway",
+        baseUrl,
+        runtime: {
+          attested: false, // Honesty Rule: MUST be false unless verifiable TEE claim is present
+          platform: "stellar-soroban",
+          note: "Results independently verifiable via chain provenance; attested (TEE) runtime is labeled per job when present."
+        },
+        receipts: {
+          format: "x402job/1",
+          signer: receiptSigner,
+          note: "Signature over canonical JSON; request and result digests recompute from exact bytes exchanged."
+        },
+        jobs: [
+          {
+            id: "oracle/read",
+            method: "POST",
+            path: "/oracle/read",
+            price: {
+              asset: "USDC",
+              amountAtomic: "50000",
+              decimals: 6,
+              network: "stellar:testnet",
+              scheme: "exact",
+              payTo: receiptSigner
+            },
+            verification: {
+              kind: "chain-provenance",
+              detail: "Response names feedId, blockNumber, timestamp; re-query oracle or ledger to reproduce."
+            }
+          },
+          {
+            id: "compute/session",
+            method: "POST",
+            path: "/rooms",
+            price: {
+              asset: "XLM",
+              amountAtomic: "10000000",
+              decimals: 7,
+              network: "stellar:testnet",
+              scheme: "upto",
+              payTo: receiptSigner
+            },
+            verification: {
+              kind: "chain-provenance",
+              detail: "Session spend metered and bound on-chain by upto_escrow Soroban contract."
+            }
+          }
+        ]
+      });
     });
 
     // Trigger catalog ingestion

@@ -106,13 +106,7 @@ export class SorobanEscrowClient {
     const prepared = await this.server.prepareTransaction(transaction);
     prepared.sign(this.config.sourceKeypair);
 
-    const result = await this.server.sendTransaction(prepared);
-
-    if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${result.errorResult?.toXDR("base64")}`);
-    }
-
-    const txResult = await this.pollTransaction(result.hash);
+    const txResult = await this.sendAndPollTransaction(prepared);
     const successResult = txResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
 
     if (!successResult.returnValue) {
@@ -161,13 +155,7 @@ export class SorobanEscrowClient {
     const prepared = await this.server.prepareTransaction(transaction);
     prepared.sign(this.config.sourceKeypair);
 
-    const result = await this.server.sendTransaction(prepared);
-
-    if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${result.errorResult?.toXDR("base64")}`);
-    }
-
-    const txResult = await this.pollTransaction(result.hash);
+    const txResult = await this.sendAndPollTransaction(prepared);
     const successResult = txResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
 
     if (!successResult.returnValue) {
@@ -204,13 +192,7 @@ export class SorobanEscrowClient {
     const prepared = await this.server.prepareTransaction(transaction);
     prepared.sign(this.config.sourceKeypair);
 
-    const result = await this.server.sendTransaction(prepared);
-
-    if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${result.errorResult?.toXDR("base64")}`);
-    }
-
-    const txResult = await this.pollTransaction(result.hash);
+    const txResult = await this.sendAndPollTransaction(prepared);
     const successResult = txResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
 
     if (!successResult.returnValue) {
@@ -247,13 +229,7 @@ export class SorobanEscrowClient {
     const prepared = await this.server.prepareTransaction(transaction);
     prepared.sign(this.config.sourceKeypair);
 
-    const result = await this.server.sendTransaction(prepared);
-
-    if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${result.errorResult?.toXDR("base64")}`);
-    }
-
-    const txResult = await this.pollTransaction(result.hash);
+    const txResult = await this.sendAndPollTransaction(prepared);
     const successResult = txResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
 
     if (!successResult.returnValue) {
@@ -358,14 +334,78 @@ export class SorobanEscrowClient {
   }
 
   /**
-   * Poll transaction status
+   * Submit transaction with retries on transient RPC responses (e.g. TRY_AGAIN_LATER)
+   * and poll until resolution with backoff + jitter.
+   */
+  private async sendAndPollTransaction(
+    prepared: any,
+    maxSendRetries: number = 3,
+    maxPollAttempts: number = 20
+  ): Promise<SorobanRpc.Api.GetTransactionResponse> {
+    let result: SorobanRpc.Api.SendTransactionResponse | undefined;
+    let sendAttempt = 0;
+    let delayMs = 1000;
+
+    while (sendAttempt < maxSendRetries) {
+      sendAttempt++;
+      result = await this.server.sendTransaction(prepared);
+
+      if (result.status === "PENDING" || result.status === "DUPLICATE") {
+        break;
+      }
+
+      if (result.status === "TRY_AGAIN_LATER") {
+        console.warn(
+          `[SorobanEscrowClient] sendTransaction returned TRY_AGAIN_LATER (attempt ${sendAttempt}/${maxSendRetries}), retrying in ${delayMs}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        delayMs = Math.min(Math.floor(delayMs * 1.5), 5000);
+        continue;
+      }
+
+      if (result.status === "ERROR") {
+        const xdrString = result.errorResult?.toXDR("base64");
+        const isSeqDrift = xdrString && (xdrString.includes("txBadSeq") || xdrString.includes("tx_bad_seq"));
+        const errMessage = isSeqDrift
+          ? `Transaction submission failed with sequence drift (txBadSeq): status=${result.status}, latestLedger=${result.latestLedger}`
+          : `Transaction submission failed: status=${result.status}, errorResult=${xdrString || "none"}, latestLedger=${result.latestLedger}`;
+
+        const err = new Error(errMessage) as any;
+        err.rpcStatus = result.status;
+        err.rpcErrorResult = xdrString;
+        err.latestLedger = result.latestLedger;
+        throw err;
+      }
+
+      break;
+    }
+
+    if (!result || result.status === "TRY_AGAIN_LATER") {
+      const err = new Error(
+        `Transaction submission failed after ${maxSendRetries} retries: status=${result?.status || "UNKNOWN"}`
+      ) as any;
+      if (result) {
+        err.rpcStatus = result.status;
+        err.latestLedger = result.latestLedger;
+      }
+      throw err;
+    }
+
+    return this.pollTransaction(result.hash, maxPollAttempts);
+  }
+
+  /**
+   * Poll transaction status with exponential backoff and jitter
    */
   private async pollTransaction(
     hash: string,
     maxAttempts: number = 20
   ): Promise<SorobanRpc.Api.GetTransactionResponse> {
+    let delayMs = 1000;
+
     for (let i = 0; i < maxAttempts; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const jitter = Math.floor(delayMs * (0.9 + Math.random() * 0.2));
+      await new Promise((resolve) => setTimeout(resolve, jitter));
 
       const tx = await this.server.getTransaction(hash);
 
@@ -374,11 +414,24 @@ export class SorobanEscrowClient {
       }
 
       if (tx.status === "FAILED") {
-        throw new Error(`Transaction failed: ${tx.resultXdr?.toXDR("base64")}`);
+        const xdrStr = tx.resultXdr?.toXDR("base64");
+        const err = new Error(`Transaction failed on ledger: ${xdrStr || "unknown error"}`) as any;
+        err.rpcStatus = tx.status;
+        err.txHash = hash;
+        throw err;
       }
+
+      if (tx.status === "NOT_FOUND") {
+        console.log(`[SorobanEscrowClient] Poll ${i + 1}/${maxAttempts} for ${hash}: NOT_FOUND (pending in mempool)`);
+      }
+
+      delayMs = Math.min(Math.floor(delayMs * 1.5), 5000);
     }
 
-    throw new Error("Transaction polling timeout");
+    const timeoutErr = new Error(`Transaction polling timeout: status_unknown (txHash: ${hash})`) as any;
+    timeoutErr.txHash = hash;
+    timeoutErr.rpcStatus = "STATUS_UNKNOWN";
+    throw timeoutErr;
   }
 
   /**

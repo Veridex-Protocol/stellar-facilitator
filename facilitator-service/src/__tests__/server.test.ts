@@ -28,14 +28,21 @@ describe("canonical facilitator HTTP surface", () => {
     const body = (await response.json()) as any;
 
     expect(response.status).toBe(200);
-    expect(body.kinds).toEqual([
-      expect.objectContaining({
-        x402Version: 2,
-        scheme: "exact",
-        network: "stellar:testnet",
-        extra: expect.objectContaining({ areFeesSponsored: true }),
-      }),
-    ]);
+    expect(body.kinds).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          x402Version: 2,
+          scheme: "exact",
+          network: "stellar:testnet",
+          extra: expect.objectContaining({ areFeesSponsored: true }),
+        }),
+        expect.objectContaining({
+          x402Version: 2,
+          scheme: "upto",
+          network: "stellar:testnet",
+        }),
+      ])
+    );
     expect(body.signers["stellar:*"]).toContain(signer.publicKey());
   });
 

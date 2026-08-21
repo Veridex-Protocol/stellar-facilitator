@@ -24,6 +24,7 @@ import {
   X402Facilitator,
   createVerifier,
   createSettler,
+  generateJobReceipt,
 } from "./stellar/index.js";
 import type {
   X402StellarRequest,
@@ -250,11 +251,77 @@ export class FacilitatorService {
             network,
             extra: this.x402Facilitator.getExtra(network as any),
           },
+          {
+            x402Version: 2,
+            scheme: "upto",
+            network,
+            extra: {
+              contractId: process.env.UPTO_ESCROW_CONTRACT_ID || "upto_escrow_v1",
+            },
+          },
         ],
-        extensions: [],
+        extensions: ["attested-compute"],
         signers: {
           "stellar:*": this.x402Facilitator.getSigners(network),
         },
+      });
+    });
+
+    // Capability Descriptor endpoint (x402ccd/0) per extension proposal #3117
+    this.app.get("/.well-known/x402", (c) => {
+      const baseUrl = process.env.BASE_URL || "https://facilitator.veridex.io";
+      const receiptSigner = this.config.stellar.facilitatorPublicKey;
+
+      return c.json({
+        ccd: "x402ccd/0",
+        service: "Veridex Attested & Verified Compute Facilitator",
+        baseUrl,
+        runtime: {
+          attested: false, // Honesty Rule: MUST be false unless verifiable TEE claim is present
+          platform: "stellar-soroban",
+          note: "Results independently verifiable via chain provenance; attested (TEE) runtime is labeled per job when present."
+        },
+        receipts: {
+          format: "x402job/1",
+          signer: receiptSigner,
+          note: "Signature over canonical JSON; request and result digests recompute from exact bytes exchanged."
+        },
+        jobs: [
+          {
+            id: "oracle/read",
+            method: "POST",
+            path: "/oracle/read",
+            price: {
+              asset: "USDC",
+              amountAtomic: "50000",
+              decimals: 6,
+              network: `stellar:${this.config.stellar.network}`,
+              scheme: "exact",
+              payTo: receiptSigner
+            },
+            verification: {
+              kind: "chain-provenance",
+              detail: "Response names feedId, blockNumber, timestamp; re-query oracle or ledger to reproduce."
+            }
+          },
+          {
+            id: "compute/session",
+            method: "POST",
+            path: "/rooms",
+            price: {
+              asset: "XLM",
+              amountAtomic: "10000000",
+              decimals: 7,
+              network: `stellar:${this.config.stellar.network}`,
+              scheme: "upto",
+              payTo: receiptSigner
+            },
+            verification: {
+              kind: "chain-provenance",
+              detail: "Session spend metered and bound on-chain by upto_escrow Soroban contract."
+            }
+          }
+        ]
       });
     });
 
@@ -328,7 +395,26 @@ export class FacilitatorService {
           await this.catalogSuccessfulPayment(paymentPayload, paymentRequirements).catch((error) =>
             console.error("[Facilitator] Bazaar catalog update failed:", error)
           );
-          return c.json(result);
+
+          // Generate recomputable compute receipt (x402job/1) per proposal #3117
+          const receipt = generateJobReceipt({
+            serviceUrl: process.env.BASE_URL || "https://facilitator.veridex.io",
+            jobId: paymentRequirements.scheme || "exact",
+            requestBody: paymentPayload,
+            resultBody: { transaction: result.transaction, ledger: (result as any).ledger },
+            txHash: result.transaction,
+            payer: result.payer || paymentRequirements.payTo,
+            asset: paymentRequirements.asset || "USDC",
+            amount: paymentRequirements.amount,
+            network: paymentRequirements.network,
+            signerSecretKey: this.config.stellar.facilitatorSecretKey,
+            signerPublicKey: this.config.stellar.facilitatorPublicKey,
+          });
+
+          return c.json({
+            ...result,
+            receipt,
+          });
         } else {
           return c.json(result, 500);
         }
