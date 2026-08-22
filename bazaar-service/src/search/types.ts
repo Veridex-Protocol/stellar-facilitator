@@ -70,7 +70,7 @@ export type SearchQuery = z.infer<typeof SearchQuerySchema>;
  */
 export const SearchResultSchema = CatalogResourceSchema.extend({
   compositeScore: z.number(),
-  semanticScore: z.number().optional(),
+  vectorScore: z.number().optional(),
   bm25Score: z.number().optional(),
   uptimeScore: z.number().optional(),
   latencyScore: z.number().optional(),
@@ -97,7 +97,7 @@ export type SearchResponse = z.infer<typeof SearchResponseSchema>;
  * Composite ranking weights
  */
 export interface RankingWeights {
-  semantic: number;    // Vector similarity weight (default: 0.35)
+  vector: number;      // Feature-hash vector similarity weight (default: 0.35)
   bm25: number;        // Keyword match weight (default: 0.25)
   uptime: number;      // Node uptime weight (default: 0.15)
   latency: number;     // Response latency weight (default: 0.15)
@@ -105,7 +105,7 @@ export interface RankingWeights {
 }
 
 export const DEFAULT_RANKING_WEIGHTS: RankingWeights = {
-  semantic: 0.35,
+  vector: 0.35,
   bm25: 0.25,
   uptime: 0.15,
   latency: 0.15,

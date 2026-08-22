@@ -2,8 +2,20 @@
  * Veridex Bazaar Discovery Engine - Text Embedding Generation
  * License: Apache-2.0
  *
- * Uses deterministic 384-dimensional feature hashing. This keeps deployments
- * offline, reproducible, and free of native model-install dependencies.
+ * Deterministic 384-dimensional **feature hashing** over unigrams and bigrams.
+ * Keeps deployments offline, reproducible, and free of native model installs.
+ *
+ * Be clear about what this is and is not. Feature hashing places tokens in a
+ * fixed vector space by hash, so two documents are close when they share
+ * tokens. It carries no semantics: "car" and "automobile" land in unrelated
+ * dimensions. In the hybrid RRF ranking this is therefore a second *lexical*
+ * signal alongside BM25, not a semantic one — useful for bigram and
+ * out-of-vocabulary matching that BM25 misses, but it is not what the
+ * literature means by dense retrieval.
+ *
+ * True semantic retrieval needs a learned model behind
+ * `EMBEDDING_PROVIDER`. That work is scoped in the roadmap; until it lands,
+ * nothing here should be described as semantic or vector search.
  */
 
 import { createHash } from "node:crypto";
@@ -12,19 +24,21 @@ const EMBEDDING_DIMENSION = 384;
 let initialized = false;
 
 /**
- * Initialize the embedding model pipeline
- * @param modelName - HuggingFace model identifier
+ * Initializes the embedding pipeline.
+ *
+ * Feature hashing needs no model load; this exists so the service startup
+ * sequence stays identical when a learned provider is added behind
+ * `EMBEDDING_PROVIDER`.
  */
 export async function initializeEmbeddingModel(): Promise<void> {
   initialized = true;
 }
 
 /**
- * Generate 1536-dimensional embedding vector for text
- * For now, using 384-dim model (all-MiniLM-L6-v2) - can be upgraded to OpenAI text-embedding-3-small
+ * Generates a 384-dimensional feature-hash vector for text.
  *
  * @param text - Input text to embed
- * @returns Normalized embedding vector
+ * @returns An L2-normalized vector of EMBEDDING_DIMENSION components
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
   if (!initialized) {
@@ -125,7 +139,7 @@ export function normalizeVector(vector: number[]): number[] {
 }
 
 /**
- * Get embedding dimension (384 for all-MiniLM-L6-v2)
+ * Returns the embedding dimension (384, matching the `vector(384)` column)
  */
 export function getEmbeddingDimension(): number {
   return EMBEDDING_DIMENSION;

@@ -3,7 +3,8 @@
 -- Version: 2.0.0
 --
 -- This schema implements the P2P federated catalog with telemetry-enriched ranking.
--- Uses pgvector for semantic search with 384-dimensional embeddings (all-MiniLM-L6-v2).
+-- Uses pgvector with 384-dimensional feature-hash embeddings (see search/embeddings.ts:
+-- lexical, not semantic — a learned model is future work).
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -39,9 +40,15 @@ CREATE TABLE IF NOT EXISTS catalog_resources (
     last_seen TIMESTAMPTZ DEFAULT now(),  -- Last heartbeat or settlement
     soft_dropped BOOLEAN DEFAULT false,  -- True if validation fails
 
-    -- Vector embedding for semantic search (384 dimensions)
-    -- Generated from: service_name + description + tags
+    -- Feature-hash embedding (384 dimensions), generated from
+    -- service_name + description + tags. Lexical, not semantic.
     embedding vector(384),
+
+    -- Settlement that backs this entry.
+    -- The catalog confirms this transaction on Horizon before listing anything
+    -- (see catalog/settlement-proof.ts). UNIQUE so one payment cannot be
+    -- reused to list a second resource.
+    settlement_tx TEXT UNIQUE,
 
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -161,7 +168,7 @@ CREATE TRIGGER update_resource_telemetry_updated_at
 
 -- Comments for documentation
 COMMENT ON TABLE catalog_resources IS 'Primary catalog of x402-protected resources discovered via P2P mesh and settlement events';
-COMMENT ON COLUMN catalog_resources.embedding IS '384-dimensional vector embedding from all-MiniLM-L6-v2 model';
+COMMENT ON COLUMN catalog_resources.embedding IS '384-dimensional feature-hash embedding (lexical, not semantic; see search/embeddings.ts)';
 COMMENT ON COLUMN catalog_resources.soft_dropped IS 'True if resource failed soft-drop validation rules';
 COMMENT ON TABLE resource_telemetry IS 'Real-time performance and liveness metrics for each cataloged resource';
 COMMENT ON TABLE node_heartbeats IS 'Audit log of P2P heartbeat messages with Ed25519 signature verification';

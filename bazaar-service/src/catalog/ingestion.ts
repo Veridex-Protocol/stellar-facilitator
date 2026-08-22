@@ -16,6 +16,7 @@ import type { Pool as PoolType } from "pg";
 import { z } from "zod";
 import { isIP } from "node:net";
 import { generateResourceEmbedding } from "../search/embeddings.js";
+import { verifySettlement } from "./settlement-proof.js";
 import type { DatabaseConfig } from "../search/types.js";
 
 /**
@@ -46,7 +47,12 @@ export interface IngestionRequest {
   scheme: string;
   bazaarExtension: BazaarExtension;
   extensions?: Record<string, any>;
-  settlementSucceeded?: boolean;
+  /**
+   * Hash of the settlement that backs this entry. Required: the catalog
+   * confirms it on Horizon rather than trusting the caller that a payment
+   * happened. See settlement-proof.ts.
+   */
+  settlementTx: string;
 }
 
 /**
@@ -64,8 +70,10 @@ export interface IngestionResult {
  */
 export class CatalogIngestionWorker {
   private pool: PoolType;
+  private horizonUrl: string;
 
-  constructor(config: DatabaseConfig) {
+  constructor(config: DatabaseConfig, options: { horizonUrl: string }) {
+    this.horizonUrl = options.horizonUrl;
     this.pool = new Pool({
       host: config.host,
       port: config.port,
@@ -97,6 +105,22 @@ export class CatalogIngestionWorker {
         };
       }
 
+      // Confirm a real settlement backs this entry. Everything below writes
+      // to the public catalog, so this gate comes before any of it.
+      const settlement = await verifySettlement(request.settlementTx, request.payTo, {
+        horizonUrl: this.horizonUrl,
+      });
+      if (!settlement.valid) {
+        await client.query("ROLLBACK");
+        const reason = settlement.reason ?? "settlement could not be confirmed";
+        console.warn(`[Catalog Ingestion] Rejected ${request.resourceUrl}: ${reason}`);
+        return {
+          status: "rejected",
+          rejectedReason: reason,
+          extensionResponse: this.encodeExtensionResponse("rejected", reason),
+        };
+      }
+
       // Generate vector embedding
       const embedding = await generateResourceEmbedding(
         request.bazaarExtension.description,
@@ -109,9 +133,9 @@ export class CatalogIngestionWorker {
         `INSERT INTO catalog_resources (
           resource_url, resource_type, tool_name, service_name, description,
           mime_type, pay_to, network, scheme, tags, icon_url, route_template,
-          input_spec, output_spec, extensions, embedding
+          input_spec, output_spec, extensions, embedding, settlement_tx
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT ON CONSTRAINT unique_resource_tool_entry
         DO UPDATE SET
           service_name = EXCLUDED.service_name,
@@ -124,6 +148,8 @@ export class CatalogIngestionWorker {
           output_spec = EXCLUDED.output_spec,
           extensions = EXCLUDED.extensions,
           embedding = EXCLUDED.embedding,
+          settlement_tx = EXCLUDED.settlement_tx,
+          last_seen = NOW(),
           updated_at = NOW()
         RETURNING id`,
         [
@@ -143,12 +169,13 @@ export class CatalogIngestionWorker {
           request.bazaarExtension.outputSpec ? JSON.stringify(request.bazaarExtension.outputSpec) : null,
           request.extensions ? JSON.stringify(request.extensions) : "{}",
           `[${embedding.join(",")}]`,
+          request.settlementTx,
         ]
       );
 
       const resourceId = result.rows[0].id;
 
-      if (request.settlementSucceeded) {
+      {
         await client.query(
           `INSERT INTO resource_telemetry (resource_id, settlement_count)
            VALUES ($1, 1)
@@ -168,8 +195,22 @@ export class CatalogIngestionWorker {
         resourceId,
         extensionResponse: this.encodeExtensionResponse("success"),
       };
-    } catch (error) {
+    } catch (error: any) {
       await client.query("ROLLBACK");
+
+      // One settlement binds one catalog entry. Reusing a valid payment to
+      // list a second resource trips the unique index, and that is a rejection
+      // with a reason rather than an internal error.
+      if (error?.code === "23505" && String(error?.constraint).includes("settlement_tx")) {
+        const reason = "settlementTx has already been used to list a different resource";
+        console.warn(`[Catalog Ingestion] Rejected ${request.resourceUrl}: ${reason}`);
+        return {
+          status: "rejected",
+          rejectedReason: reason,
+          extensionResponse: this.encodeExtensionResponse("rejected", reason),
+        };
+      }
+
       console.error("[Catalog Ingestion] Error ingesting resource:", error);
 
       return {

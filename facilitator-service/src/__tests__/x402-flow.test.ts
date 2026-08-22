@@ -10,6 +10,8 @@ import { X402Facilitator } from "../stellar/x402-facilitator.js";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { STELLAR_TESTNET_CAIP2 } from "@x402/stellar";
 
+const ASSET = "CC7AMNLQWIEKWMSGKXC7DFEXHDTNMQ6JL2BBPRBM6RQXYZXCNKD75CVB";
+
 describe("x402 Flow Integration", () => {
   let channelPool: ChannelAccountPool;
   let x402Facilitator: X402Facilitator;
@@ -33,49 +35,52 @@ describe("x402 Flow Integration", () => {
       channelPool,
       networkPassphrase: Networks.TESTNET,
       feeBumpSignerSecret: facilitatorKeypair.secret(),
-      rpcUrl: "https://horizon-testnet.stellar.org",
+      areFeesSponsored: false,
+      rpcUrl: "https://soroban-testnet.stellar.org",
     });
   });
 
-  it("should identify supported networks correctly", () => {
+  it("identifies supported networks correctly", () => {
     expect(x402Facilitator.supported(STELLAR_TESTNET_CAIP2 as any)).toBe(true);
     expect(x402Facilitator.schemeId).toBe("exact");
   });
 
-  it("should reject invalid payment payloads gracefully during verification", async () => {
-    const invalidRequirements: PaymentRequirements = {
+  it("rejects an invalid payment payload with a reason, not an exception", async () => {
+    const requirements: PaymentRequirements = {
       scheme: "exact",
       network: STELLAR_TESTNET_CAIP2 as any,
-      asset: "native",
+      asset: ASSET,
       amount: "1000000",
       payTo: Keypair.random().publicKey(),
       maxTimeoutSeconds: 60,
       extra: {},
     };
 
-    const invalidPayload: PaymentPayload = {
+    const payload: PaymentPayload = {
       x402Version: 2,
-      accepted: invalidRequirements,
-      payload: {
-        transaction: "INVALID_BASE64_XDR",
-      },
+      accepted: requirements,
+      payload: { transaction: "INVALID_BASE64_XDR" },
     };
 
-    const result = await x402Facilitator.verify(invalidPayload, invalidRequirements);
+    const result = await x402Facilitator.verify(payload, requirements);
     expect(result.isValid).toBe(false);
     expect(result.invalidReason).toBeDefined();
+    expect(result.invalidReason).not.toBe("");
   });
 
-  it("should handle legacy requests and convert them to x402 payloads", async () => {
-    const legacyReq = {
-      scheme: "stellar" as const,
-      network: "testnet",
-      resourceServer: Keypair.random().publicKey(),
-      transactionXdr: "AAAAAG...",
-    };
+  it("only advertises fee sponsorship once it has been turned on deliberately", () => {
+    // Sponsorship used to be inferred from "a secret key is configured", which
+    // is always true. It is now an explicit, separately established fact.
+    expect(x402Facilitator.areFeesSponsored).toBe(false);
+    expect(x402Facilitator.getExtra(STELLAR_TESTNET_CAIP2 as any)).toMatchObject({
+      areFeesSponsored: false,
+    });
 
-    const res = await x402Facilitator.verifyLegacy(legacyReq, "1000000");
-    expect(res).toBeDefined();
-    expect(res.valid).toBe(false); // Invalid XDR, expected
+    x402Facilitator.setFeeSponsorship(true);
+
+    expect(x402Facilitator.areFeesSponsored).toBe(true);
+    expect(x402Facilitator.getExtra(STELLAR_TESTNET_CAIP2 as any)).toMatchObject({
+      areFeesSponsored: true,
+    });
   });
 });

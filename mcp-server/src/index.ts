@@ -7,7 +7,7 @@
  * and x402 payment tools to AI agents.
  *
  * Tools:
- * - discover_resources - Search Bazaar catalog with semantic/keyword search
+ * - discover_resources - Search the Bazaar catalog (hybrid keyword + vector ranking)
  * - pay_resource - Execute x402 Stellar payment for resource access
  * - get_escrow_balance - Check escrow account balance (Soroban)
  * - deposit_escrow - Deposit funds into escrow (Soroban)
@@ -66,7 +66,7 @@ function getConfig(): MCPServerConfig {
  * Discover resources tool schema
  */
 const DiscoverResourcesSchema = z.object({
-  query: z.string().describe("Search query (semantic or keyword)"),
+  query: z.string().describe("Search query (keyword; ranking fuses BM25, feature-hash vectors, and telemetry)"),
   network: z.string().optional().describe("Network filter (e.g., 'stellar:pubnet')"),
   limit: z.number().optional().describe("Maximum results (default: 20)"),
 });
@@ -116,7 +116,7 @@ class VeridexMCPServer {
         {
           name: "discover_resources",
           description:
-            "Search Veridex Bazaar catalog for x402 resources using semantic or keyword search. " +
+            "Search the Veridex Bazaar catalog for x402 resources. Ranking fuses BM25 keyword match, feature-hash vector similarity, and live telemetry. " +
             "Returns ranked results with telemetry (uptime, latency, reliability).",
           inputSchema: {
             type: "object",
@@ -245,7 +245,7 @@ class VeridexMCPServer {
           type: "text",
           text:
             `Found ${results.total || 0} resources:\n\n${formatted}\n\n` +
-            `Results are ranked by semantic, keyword, uptime, latency, and reliability signals.`,
+            `Results are ranked by keyword match, feature-hash vector similarity, uptime, latency, and reliability signals.`,
         },
       ],
     };

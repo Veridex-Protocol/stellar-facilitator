@@ -4,8 +4,11 @@
  *
  * Implements Reciprocal Rank Fusion (RRF) combining:
  * - BM25 full-text keyword search (PostgreSQL ts_rank_cd)
- * - Vector semantic similarity (pgvector cosine distance)
+ * - Feature-hash vector similarity (pgvector cosine distance)
  * - Real-time telemetry ranking (uptime, latency, reliability)
+ *
+ * The vector leg is feature hashing, not a learned model, so it behaves as a
+ * second lexical signal rather than a semantic one. See search/embeddings.ts.
  */
 
 import pkg from "pg";
@@ -135,14 +138,14 @@ export class BazaarSearchEngine {
           t.failed_settlement_count,
           t.liveness_status,
           -- Individual ranking components
-          COALESCE(v.vec_score, 0.0) AS semantic_score,
+          COALESCE(v.vec_score, 0.0) AS vector_score,
           LEAST(1.0, COALESCE(k.text_score, 0.0)) AS bm25_score,
           COALESCE(t.uptime_ratio, 0.5) AS uptime_score,
           EXP(-COALESCE(t.avg_response_time_ms, 1000.0) / 500.0) AS latency_score,
           LEAST(1.0, LN(COALESCE(t.settlement_count, 0) + 1) / 3.0) AS reliability_score,
           -- Composite Quality Score (Φ)
           (
-            ${this.weights.semantic} * COALESCE(v.vec_score, 0.0) +
+            ${this.weights.vector} * COALESCE(v.vec_score, 0.0) +
             ${this.weights.bm25} * LEAST(1.0, COALESCE(k.text_score, 0.0)) +
             ${this.weights.uptime} * COALESCE(t.uptime_ratio, 0.5) +
             ${this.weights.latency} * EXP(-COALESCE(t.avg_response_time_ms, 1000.0) / 500.0) +
@@ -188,7 +191,7 @@ export class BazaarSearchEngine {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       compositeScore: parseFloat(row.composite_score),
-      semanticScore: parseFloat(row.semantic_score),
+      vectorScore: parseFloat(row.vector_score),
       bm25Score: parseFloat(row.bm25_score),
       uptimeScore: parseFloat(row.uptime_score),
       latencyScore: parseFloat(row.latency_score),
@@ -219,7 +222,7 @@ export class BazaarSearchEngine {
   }
 
   /**
-   * List all resources with optional filters (no semantic search)
+   * List all resources with optional filters (no query ranking applied)
    */
   async list(
     filters: {

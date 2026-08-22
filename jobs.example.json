@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Jobs advertised in /.well-known/x402, loaded via X402_JOBS_FILE.",
+    "Every entry is validated at boot: the network must be the one this",
+    "facilitator serves, the scheme must be one it advertises on /supported,",
+    "and the price must be denominated in a SEP-41 token contract address.",
+    "A job that fails any of those aborts the boot rather than being served.",
+    "Leave X402_JOBS_FILE unset to advertise no jobs, which is correct for a",
+    "facilitator that does not itself sell anything."
+  ],
+  "jobs": [
+    {
+      "id": "example/echo",
+      "method": "POST",
+      "path": "/example/echo",
+      "price": {
+        "asset": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+        "assetCode": "XLM",
+        "amountAtomic": "100000",
+        "decimals": 7,
+        "network": "stellar:testnet",
+        "scheme": "exact",
+        "payTo": "GCNNJJV3XUXWCVV3WBKILBCUUGKSDZ2BL4HHNV7AISYMW6PJQX47DZYU"
+      },
+      "verification": {
+        "kind": "chain-provenance",
+        "detail": "The settlement is on the Stellar ledger; the x402job/1 receipt digests the exact request and result bytes."
+      }
+    }
+  ]
+}

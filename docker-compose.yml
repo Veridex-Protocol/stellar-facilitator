@@ -55,7 +55,13 @@ services:
       P2P_BOOTSTRAP_PEERS: ""
       STELLAR_SECRET_KEY: ${BAZAAR_STELLAR_SECRET_KEY:-}
       P2P_ANNOUNCED_RESOURCES: ${P2P_ANNOUNCED_RESOURCES:-[]}
-      BAZAAR_INTERNAL_TOKEN: ${BAZAAR_INTERNAL_TOKEN:-}
+
+      # Required. Guards /catalog/ingest, which writes to the public catalog.
+      BAZAAR_INTERNAL_TOKEN: ${BAZAAR_INTERNAL_TOKEN:?set BAZAAR_INTERNAL_TOKEN - run npm run setup}
+
+      # Used to confirm the settlement behind every catalog entry.
+      HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
+      BAZAAR_BASE_URL: ${BAZAAR_BASE_URL:-http://localhost:3001}
 
       # Logging
       LOG_LEVEL: info
@@ -86,6 +92,26 @@ services:
       FACILITATOR_PUBLIC_KEY: ${FACILITATOR_PUBLIC_KEY}
       FACILITATOR_SECRET_KEY: ${FACILITATOR_SECRET_KEY}
 
+      # Public origin advertised in /.well-known/x402. Required: the descriptor
+      # states where clients reach this service, which a bind address cannot.
+      BASE_URL: ${BASE_URL:-http://localhost:3002}
+
+      # Confirmed against Horizon at boot; the process refuses to start if it
+      # would advertise sponsorship from an unfunded account.
+      SPONSOR_FEES: ${SPONSOR_FEES:-true}
+
+      # upto is advertised only when a real contract is confirmed on-chain.
+      # Leave unset until one is deployed.
+      UPTO_ESCROW_CONTRACT_ID_TESTNET: ${UPTO_ESCROW_CONTRACT_ID_TESTNET:-}
+
+      # Jobs advertised in the capability descriptor. None by default.
+      X402_JOBS_FILE: ${X402_JOBS_FILE:-}
+
+      MAX_TRANSACTION_FEE_STROOPS: ${MAX_TRANSACTION_FEE_STROOPS:-1000000}
+      LEDGER_SKEW_RETRIES: ${LEDGER_SKEW_RETRIES:-2}
+      LEDGER_SKEW_RETRY_DELAY_MS: ${LEDGER_SKEW_RETRY_DELAY_MS:-6000}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
+
       # Channel Account Pool
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
@@ -108,6 +134,29 @@ services:
       retries: 5
     depends_on:
       bazaar:
+        condition: service_healthy
+
+  # Demo resource server — the seller the conformance harness buys from
+  demo-server:
+    build:
+      context: ./demo-server
+      dockerfile: Dockerfile
+    container_name: veridex-demo-server
+    ports:
+      - "3003:3003"
+    environment:
+      DEMO_SERVER_PORT: 3003
+      FACILITATOR_URL: http://facilitator:3002
+      SELLER_ADDRESS: ${SELLER_ADDRESS}
+      PAYMENT_ASSET: ${PAYMENT_ASSET}
+      PAYMENT_AMOUNT: ${PAYMENT_AMOUNT:-100000}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      facilitator:
         condition: service_healthy
 
   # MCP Discovery Server (optional)

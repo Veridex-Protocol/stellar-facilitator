@@ -3,7 +3,7 @@
  * License: Apache-2.0
  *
  * Exposes REST endpoints for:
- * - GET /discovery/search - Hybrid semantic search
+ * - GET /discovery/search - Hybrid search (BM25 + feature-hash vector + telemetry)
  * - GET /discovery/resources - List catalog
  * - POST /announce - Accept P2P announcements via HTTP
  * - POST /catalog/ingest - Trigger ingestion worker
@@ -49,6 +49,10 @@ export interface BazaarServiceConfig {
 
   // Stellar keypair for announcements (optional)
   stellarSecretKey?: string;
+  /** Horizon endpoint used to confirm the settlements behind catalog entries. */
+  horizonUrl: string;
+  /** Shared secret the facilitator presents on /catalog/ingest. Required. */
+  internalToken: string;
   announcedResources: ResourceMetadata[];
 }
 
@@ -79,7 +83,30 @@ export function getDefaultConfig(): BazaarServiceConfig {
     },
     stellarSecretKey: process.env.STELLAR_SECRET_KEY,
     announcedResources: parseAnnouncedResources(process.env.P2P_ANNOUNCED_RESOURCES),
+    horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
+    // Required, not optional. The previous guard read
+    // `if (internalToken && ...)`, which skipped authentication entirely when
+    // the variable was unset — an open write endpoint on the public catalog.
+    internalToken: requireInternalToken(),
   };
+}
+
+/**
+ * Reads the shared secret protecting catalog writes.
+ *
+ * @returns The configured token
+ * @throws {Error} When it is unset or too short to be a secret
+ */
+function requireInternalToken(): string {
+  const token = process.env.BAZAAR_INTERNAL_TOKEN?.trim();
+  if (!token || token.length < 24) {
+    throw new Error(
+      "BAZAAR_INTERNAL_TOKEN is required and must be at least 24 characters. " +
+        "It guards /catalog/ingest, which writes to the public catalog. " +
+        "Generate one with: node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\"",
+    );
+  }
+  return token;
 }
 
 function parseAnnouncedResources(value?: string): ResourceMetadata[] {
@@ -120,7 +147,9 @@ export class BazaarService {
     this.p2pNode = new P2PNode(config.p2p);
     this.telemetryTracker = new TelemetryTracker(this.db);
     this.searchEngine = new BazaarSearchEngine(config.database);
-    this.ingestionWorker = new CatalogIngestionWorker(config.database);
+    this.ingestionWorker = new CatalogIngestionWorker(config.database, {
+      horizonUrl: config.horizonUrl,
+    });
 
     // Initialize announcer if secret key provided
     if (config.stellarSecretKey) {
@@ -151,43 +180,39 @@ export class BazaarService {
    * Setup HTTP routes
    */
   private setupRoutes(): void {
-    // Capability Descriptor endpoint (x402ccd/0) per extension proposal #3117
+    // Capability Descriptor (x402ccd/0), per extension proposal #3117.
+    //
+    // The Bazaar sells nothing: discovery is free and it issues no receipts.
+    // It therefore advertises no jobs and no receipt signer, rather than
+    // listing a zero-priced job against a placeholder address.
     this.app.get("/.well-known/x402", (c) => {
-      const baseUrl = process.env.BASE_URL || "https://bazaar.veridex.io";
+      const baseUrl = process.env.BAZAAR_BASE_URL;
+      if (!baseUrl) {
+        return c.json(
+          {
+            error: "not_configured",
+            message:
+              "BAZAAR_BASE_URL is not set, so this service cannot state the origin clients reach it at.",
+          },
+          503,
+        );
+      }
 
       return c.json({
         ccd: "x402ccd/0",
         service: "Veridex Bazaar Discovery & Catalog Service",
-        baseUrl,
+        baseUrl: baseUrl.replace(/\/+$/, ""),
         runtime: {
-          attested: false, // HONESTY RULE: MUST be false unless verifiable TEE claim is present
+          // Honesty rule: false unless a verifiable TEE claim is present.
+          attested: false,
           platform: "stellar-soroban",
-          note: "Catalog and discovery records independently verifiable via P2P mesh & chain provenance."
+          note: "Catalog entries are bound to settlements this service confirms on Horizon before listing them.",
         },
-        receipts: {
-          format: "x402job/1",
-          signer: process.env.BAZAAR_PUBLIC_KEY || "GBazaarDiscoveryServicePublicKeyPlaceholder",
-          note: "Signature over canonical JSON; request and result digests recompute from exact bytes exchanged."
-        },
-        jobs: [
-          {
-            id: "discovery/search",
-            method: "GET",
-            path: "/discovery/search",
-            price: {
-              asset: "USDC",
-              amountAtomic: "0",
-              decimals: 6,
-              network: "stellar:pubnet",
-              scheme: "exact",
-              payTo: process.env.BAZAAR_PUBLIC_KEY || "GBazaarDiscoveryServicePublicKeyPlaceholder"
-            },
-            verification: {
-              kind: "chain-provenance",
-              detail: "Bazaar search results signed and verified against P2P mesh node attestations."
-            }
-          }
-        ]
+        jobs: [],
+        endpoints: [
+          { method: "GET", path: "/discovery/search", price: null, description: "Hybrid catalog search. Free." },
+          { method: "GET", path: "/discovery/resources", price: null, description: "List catalog entries. Free." },
+        ],
       });
     });
 
@@ -220,7 +245,7 @@ export class BazaarService {
       });
     });
 
-    // Hybrid semantic search
+    // Hybrid search: BM25 keywords, feature-hash vectors, and telemetry, fused by RRF
     this.app.get("/discovery/search", async (c) => {
       try {
         const query = c.req.query("q") || c.req.query("query");
@@ -289,72 +314,32 @@ export class BazaarService {
       }
     });
 
-    // Capability Descriptor endpoint (x402ccd/0) per extension proposal #3117
-    this.app.get("/.well-known/x402", (c) => {
-      const baseUrl = process.env.BASE_URL || "https://bazaar.veridex.io";
-      const receiptSigner = process.env.FACILITATOR_PUBLIC_KEY || "GB222222222222222222222222222222222222222222222222222222";
-
-      return c.json({
-        ccd: "x402ccd/0",
-        service: "Veridex Attested & Verified Compute Gateway",
-        baseUrl,
-        runtime: {
-          attested: false, // Honesty Rule: MUST be false unless verifiable TEE claim is present
-          platform: "stellar-soroban",
-          note: "Results independently verifiable via chain provenance; attested (TEE) runtime is labeled per job when present."
-        },
-        receipts: {
-          format: "x402job/1",
-          signer: receiptSigner,
-          note: "Signature over canonical JSON; request and result digests recompute from exact bytes exchanged."
-        },
-        jobs: [
-          {
-            id: "oracle/read",
-            method: "POST",
-            path: "/oracle/read",
-            price: {
-              asset: "USDC",
-              amountAtomic: "50000",
-              decimals: 6,
-              network: "stellar:testnet",
-              scheme: "exact",
-              payTo: receiptSigner
-            },
-            verification: {
-              kind: "chain-provenance",
-              detail: "Response names feedId, blockNumber, timestamp; re-query oracle or ledger to reproduce."
-            }
-          },
-          {
-            id: "compute/session",
-            method: "POST",
-            path: "/rooms",
-            price: {
-              asset: "XLM",
-              amountAtomic: "10000000",
-              decimals: 7,
-              network: "stellar:testnet",
-              scheme: "upto",
-              payTo: receiptSigner
-            },
-            verification: {
-              kind: "chain-provenance",
-              detail: "Session spend metered and bound on-chain by upto_escrow Soroban contract."
-            }
-          }
-        ]
-      });
-    });
-
     // Trigger catalog ingestion
     this.app.post("/catalog/ingest", async (c) => {
       try {
-        const internalToken = process.env.BAZAAR_INTERNAL_TOKEN;
-        if (internalToken && c.req.header("Authorization") !== `Bearer ${internalToken}`) {
-          return c.json({ error: "Unauthorized" }, 401);
+        if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+          return c.json(
+            {
+              error: "unauthorized",
+              message:
+                "/catalog/ingest requires the facilitator's bearer token. This endpoint writes to the public catalog.",
+            },
+            401,
+          );
         }
+
         const body = await c.req.json();
+
+        if (typeof body?.settlementTx !== "string" || body.settlementTx.length === 0) {
+          return c.json(
+            {
+              status: "rejected",
+              reason:
+                "settlementTx is required: a catalog entry must name the settlement that backs it, which this service confirms on Horizon.",
+            },
+            400,
+          );
+        }
 
         const result = await this.ingestionWorker.ingest(body);
 
@@ -416,7 +401,16 @@ export class BazaarService {
     // Set up P2P message handler
     this.p2pNode.onMessage(async (message) => {
       try {
-        if (message.description && message.payTo && message.network && message.scheme) {
+        // A signed gossip announcement proves who said it, not that anyone
+        // paid. Only announcements naming a settlement reach the catalog; the
+        // rest still count as liveness telemetry below.
+        if (
+          message.description &&
+          message.payTo &&
+          message.network &&
+          message.scheme &&
+          typeof (message as any).settlementTx === "string"
+        ) {
           await this.ingestionWorker.ingest({
             resourceUrl: message.resourceUrl,
             resourceType: message.resourceType || (message.toolName ? "mcp" : "http"),
@@ -435,6 +429,7 @@ export class BazaarService {
               outputSpec: message.outputSpec,
             },
             extensions: message.extensions,
+            settlementTx: (message as any).settlementTx,
           });
         }
         await this.telemetryTracker.processHeartbeat(message);
