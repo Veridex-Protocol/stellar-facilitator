@@ -1,8 +1,8 @@
-# ADR-010: Conformance Is the Acceptance Artifact — A Stock Client, Real Money, Every Pull Request
+# ADR-010: Conformance Is the Acceptance Artifact - A Stock Client, Real Money, Every Pull Request
 
 ## Status
 
-Accepted (2026-08-23) — records why acceptance is a harness that imports nothing from this repository and settles a real testnet payment on every CI run, and why published reliability figures are derived from durable logs rather than from `/stats`.
+Accepted (2026-08-23) - records why acceptance is a harness that imports nothing from this repository and settles a real testnet payment on every CI run, and why published reliability figures are derived from durable logs rather than from `/stats`.
 
 ## Context
 
@@ -14,7 +14,7 @@ and names the failure mode it is screening for:
 
 > Conformance discipline and upkeep. Evidence the team treats wire level conformance as first class, plus a plan to stay current as the discovery conventions evolve. **Drift, not inability, is the failure mode this screens for.**
 
-Drift is the operative word. Discovery conventions are moving under the x402 Foundation and will move again during the grant. A repository that conformed on the award date and was never re-checked is the predictable outcome, and it is indistinguishable from a repository that never conformed — until a reviewer runs a client against it.
+Drift is the operative word. Discovery conventions are moving under the x402 Foundation and will move again during the grant. A repository that conformed on the award date and was never re-checked is the predictable outcome, and it is indistinguishable from a repository that never conformed - until a reviewer runs a client against it.
 
 Our own CI, before this change, ran typecheck, build, unit tests, and a docker build. All 17 unit tests passed and every one of them was mocked. **Nothing in CI had ever settled a payment.** We could have shipped a facilitator that returned a plausible transaction hash without touching Stellar and CI would have been green.
 
@@ -32,7 +32,7 @@ So the question we had to answer was not "does our facilitator work" but "what w
 
 Four properties make it hard to fake:
 
-1. **Stock client.** Payment goes through `wrapFetchWithPayment` — the library's own drop-in wrapper — driving an `x402Client`. No custom protocol code, no patches.
+1. **Stock client.** Payment goes through `wrapFetchWithPayment` - the library's own drop-in wrapper - driving an `x402Client`. No custom protocol code, no patches.
 2. **Independent ledger read.** The settled transaction is re-fetched from Horizon. A facilitator returning a plausible hash without settling fails here.
 3. **Independent canonicalization.** RFC 8785 is reimplemented inside the harness to verify receipts, because verifying with the code that produced them proves only self-consistency ([ADR-006](./adr-006-recomputable-receipts.md)).
 4. **Recorded provenance.** The report records the installed versions of the client packages that actually ran.
@@ -57,7 +57,7 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 
 ### 4. One command from a clean clone
 
-`npm run demo` — bootstrap, stack, harness — in roughly 60–90 seconds after the first image build. The reviewer's path and CI's path are the same path.
+`npm run demo` - bootstrap, stack, harness - in roughly 60-90 seconds after the first image build. The reviewer's path and CI's path are the same path.
 
 ### 5. Published figures come from logs, not counters
 
@@ -78,13 +78,13 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 - Drift is caught on the pull request that causes it, which is the thing the RFP is actually screening for.
 - Every published number is reproducible by a stranger from a clean clone, with no cooperation from us.
 - The harness has already earned its keep. It caught the liveness pruning defect ([ADR-003](./adr-003-settlement-liveness.md)) that unit tests could not, because that bug only appears when a real stack has been running long enough for a background sweep to fire.
-- It also caught two bugs in *itself* — a wrong `wrapFetchWithPayment` signature and a settle payload with no discovery extension — which is the harness working: it tests the contract, not our assumptions.
+- It also caught two bugs in *itself* - a wrong `wrapFetchWithPayment` signature and a settle payload with no discovery extension - which is the harness working: it tests the contract, not our assumptions.
 - Evidence is concrete: settled transactions `3ef04dd9…`, `40de5e21…`, `3599b260…`, Horizon-confirmed at ledger 4276297 and after.
 
 **Costs accepted**
 
 - **CI spends real testnet XLM and depends on Friendbot and public Soroban RPC.** A testnet reset or a Friendbot outage turns CI red for reasons unrelated to the change under review. Accepted deliberately: the alternative is a green CI that proves nothing.
-- **The conformance job takes ~10–20 minutes** against seconds for unit tests, and cannot be meaningfully parallelised — it is a real payment against a real network.
+- **The conformance job takes ~10-20 minutes** against seconds for unit tests, and cannot be meaningfully parallelised - it is a real payment against a real network.
 - **Flakiness is real and load-dependent.** Soroban RPC skew ([ADR-008](./adr-008-ledger-skew-retry.md)) can fail a run. Mitigated by the retry, not eliminated, and a failure hint in `demo.sh` names the two likely causes so a red run is not misread as a code defect.
 - **The harness must be maintained against a moving spec.** It is a second implementation of parts of the wire format and will need updating as conventions evolve. That maintenance *is* the upkeep the RFP asks for, so the cost is the deliverable.
 
@@ -97,10 +97,10 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 
 ## References
 
-- [`conformance/src/harness.mjs`](../../conformance/src/harness.mjs) — 32 checks, independent JCS, Horizon re-read
-- [`scripts/bootstrap-testnet.mjs`](../../scripts/bootstrap-testnet.mjs) — Friendbot accounts and channel provisioning, no stored secrets
-- [`demo.sh`](../../demo.sh) — the one-command path, with preflight checks for failures people actually hit
-- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — the conformance job
-- [`scripts/summarize-outcomes.mjs`](../../scripts/summarize-outcomes.mjs) — figures derived from durable logs
-- [`facilitator-service/src/logger.ts`](../../facilitator-service/src/logger.ts) — the `request_outcome` line those figures come from
-- RFP §3.6 — "conformance is a hard acceptance criterion"
+- [`conformance/src/harness.mjs`](../../conformance/src/harness.mjs) - 32 checks, independent JCS, Horizon re-read
+- [`scripts/bootstrap-testnet.mjs`](../../scripts/bootstrap-testnet.mjs) - Friendbot accounts and channel provisioning, no stored secrets
+- [`demo.sh`](../../demo.sh) - the one-command path, with preflight checks for failures people actually hit
+- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) - the conformance job
+- [`scripts/summarize-outcomes.mjs`](../../scripts/summarize-outcomes.mjs) - figures derived from durable logs
+- [`facilitator-service/src/logger.ts`](../../facilitator-service/src/logger.ts) - the `request_outcome` line those figures come from
+- RFP §3.6 - "conformance is a hard acceptance criterion"

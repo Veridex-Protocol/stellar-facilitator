@@ -252,7 +252,7 @@ export class TelemetryTracker {
    * Heartbeats alone are not enough. A seller who simply exposes a paid
    * endpoint and never joins the mesh produces no heartbeats at all, so
    * heartbeat-only pruning marked every auto-catalogued resource OFFLINE within
-   * minutes and removed it from search — with nothing wrong with it. A payment
+   * minutes and removed it from search - with nothing wrong with it. A payment
    * that settled is proof the endpoint was reachable and served someone.
    *
    * Should be called periodically (e.g., every 5 minutes).

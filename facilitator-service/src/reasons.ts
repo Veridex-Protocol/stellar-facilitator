@@ -66,7 +66,7 @@ export const REASON_MESSAGES: Readonly<Record<string, string>> = {
 
   // ── Payload structure (@x402/stellar, exact) ───────────────────────────────
   invalid_exact_stellar_payload_malformed:
-    "The 'transaction' field is not a decodable base64 Stellar transaction envelope for this network. Send it exactly as the client produced it — do not re-encode it.",
+    "The 'transaction' field is not a decodable base64 Stellar transaction envelope for this network. Send it exactly as the client produced it - do not re-encode it.",
   invalid_exact_stellar_payload_wrong_operation:
     "The transaction must contain exactly one InvokeHostFunction operation; it contained something else.",
   invalid_exact_stellar_payload_wrong_function_name:
@@ -132,7 +132,7 @@ export const REASON_MESSAGES: Readonly<Record<string, string>> = {
   settle_exact_stellar_fee_bump_signing_failed:
     "The facilitator failed to sign the fee-bump wrapper for this settlement. Nothing was submitted and no funds moved.",
   settle_exact_stellar_transaction_submission_failed:
-    "The settlement transaction could not be submitted to the network. Check the transaction hash on the ledger before retrying — submission may have partially completed.",
+    "The settlement transaction could not be submitted to the network. Check the transaction hash on the ledger before retrying - submission may have partially completed.",
   settle_exact_stellar_transaction_failed:
     "The settlement transaction was submitted but the network rejected it. No payment was recorded.",
 };

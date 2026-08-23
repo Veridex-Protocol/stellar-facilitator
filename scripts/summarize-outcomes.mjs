@@ -5,8 +5,8 @@
  *
  * The `/stats` endpoint keeps counters in process memory. They reset on every
  * restart, which makes them fine for a dashboard and useless as the basis of a
- * published claim. Anything stated publicly — failure rate, median settlement
- * time — has to come from the durable structured log instead, and has to be
+ * published claim. Anything stated publicly - failure rate, median settlement
+ * time - has to come from the durable structured log instead, and has to be
  * recomputable by whoever reads the claim.
  *
  * Usage:

@@ -4,7 +4,7 @@
 --
 -- This schema implements the P2P federated catalog with telemetry-enriched ranking.
 -- Uses pgvector with 384-dimensional feature-hash embeddings (see search/embeddings.ts:
--- lexical, not semantic — a learned model is future work).
+-- lexical, not semantic - a learned model is future work).
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS vector;

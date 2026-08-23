@@ -9,7 +9,7 @@ name: Veridex x402 Stellar CI
 # Stellar testnet XLM: it creates fresh Friendbot-funded accounts on every run,
 # brings the stack up with docker compose, and makes a stock x402 client from
 # public npm pay for a resource on stellar:testnet, then re-reads the settlement
-# from Horizon. Nothing is mocked and no secrets are needed — which is the
+# from Horizon. Nothing is mocked and no secrets are needed - which is the
 # point: anyone can fork this repository and get the same green run.
 
 on:

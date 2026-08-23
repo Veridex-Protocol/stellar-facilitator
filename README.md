@@ -35,7 +35,7 @@ Start at [`docs/guide/`](docs/guide/).
 
 - Canonical facilitator endpoints: `GET /supported`, `POST /verify`, `POST /settle`
 - Stellar `exact` payments through `@x402/stellar`, with fee sponsorship
-- Every advertised capability confirmed against the network at boot — the
+- Every advertised capability confirmed against the network at boot - the
   process refuses to start rather than advertise something untrue of it
 - A reason code *and* a sentence on every rejection path, with the table tested
   exhaustive against the installed packages
@@ -51,8 +51,8 @@ Start at [`docs/guide/`](docs/guide/).
 - Signed GossipSub announcements, replay/freshness checks, heartbeats, liveness
   pruning
 - Hybrid RRF ranking over BM25, feature-hash vectors, and live telemetry
-- Discovery filters the spec names — `type`, `payTo`, `network`, `extensions`,
-  `limit`, `offset` — on both `/discovery/resources` and `/discovery/search`
+- Discovery filters the spec names - `type`, `payTo`, `network`, `extensions`,
+  `limit`, `offset` - on both `/discovery/resources` and `/discovery/search`
 - Opaque cursor pagination, bound to the query that issued it, and a
   `partialResults` flag that reports a genuinely truncated candidate pool
 - Cataloging outcomes reported to the seller in the `EXTENSION-RESPONSES`
@@ -141,7 +141,7 @@ Paging uses `nextCursor` rather than a client-computed offset. A cursor is bound
 
 `partialResults` is answered, not hardcoded. It is true when a retrieval leg filled its candidate pool, meaning ranking saw a truncated set and this page is not a complete answer; `partialReason` says so in words.
 
-Cataloging outcomes come back in the `EXTENSION-RESPONSES` header base64 JSON of `{"bazaar":{"status":…,"rejectedReason":…}}` — on the Bazaar's ingest response *and* on the facilitator's `/settle` response, so a seller learns from the same call that settled the payment whether its listing landed.
+Cataloging outcomes come back in the `EXTENSION-RESPONSES` header base64 JSON of `{"bazaar":{"status":…,"rejectedReason":…}}` - on the Bazaar's ingest response *and* on the facilitator's `/settle` response, so a seller learns from the same call that settled the payment whether its listing landed.
 
 **A settlement counts as liveness.** Liveness used to derive from P2P heartbeats alone, which meant an automatically catalogued resource was pruned to `OFFLINE` within minutes and vanished from search unless its seller also ran a libp2p node. That defeats automatic cataloging. A settlement this service confirmed on Horizon is proof the endpoint was reachable and served a paying caller, so it restores `HEALTHY` and keeps the resource discoverable (`SETTLEMENT_LIVENESS_WINDOW_MS`, default 24h).
 

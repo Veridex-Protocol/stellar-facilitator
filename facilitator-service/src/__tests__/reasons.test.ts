@@ -57,7 +57,7 @@ function reasonCodesFromPackages(): string[] {
 describe("rejection reason table", () => {
   it("has a sentence for every code the installed x402 packages can emit", () => {
     const codes = reasonCodesFromPackages();
-    expect(codes.length, "no reason codes found — check the package layout").toBeGreaterThan(20);
+    expect(codes.length, "no reason codes found - check the package layout").toBeGreaterThan(20);
 
     const missing = codes.filter((code) => !(code in REASON_MESSAGES));
     expect(

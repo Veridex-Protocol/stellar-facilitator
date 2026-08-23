@@ -1,8 +1,8 @@
-# ADR-004: Catalog Integrity — The Catalog Confirms the Payment Itself
+# ADR-004: Catalog Integrity - The Catalog Confirms the Payment Itself
 
 ## Status
 
-Accepted (2026-08-23) — records why a listing must name a settlement the catalog verifies against Horizon independently, replacing a caller-supplied boolean guarded by an authentication check that was skipped whenever its environment variable was unset.
+Accepted (2026-08-23) - records why a listing must name a settlement the catalog verifies against Horizon independently, replacing a caller-supplied boolean guarded by an authentication check that was skipped whenever its environment variable was unset.
 
 ## Context
 
@@ -30,7 +30,7 @@ Two defects, and the second is worse than the first.
 
 **The boolean proves nothing.** `settlementSucceeded: true` is an assertion by whoever sent the request. The catalog performed no independent check that any payment occurred, or that the named `payTo` received anything.
 
-**The authentication was conditional on its own configuration.** `if (internalToken && ...)` means that when `BAZAAR_INTERNAL_TOKEN` is unset, the comparison is skipped entirely and every request is accepted. The failure mode of a missing secret was *no authentication*, silently, with a healthy-looking service. A deployment that forgot the variable — or a `docker compose up` with an incomplete `.env` — exposed an unauthenticated write endpoint on a public catalog and gave no indication.
+**The authentication was conditional on its own configuration.** `if (internalToken && ...)` means that when `BAZAAR_INTERNAL_TOKEN` is unset, the comparison is skipped entirely and every request is accepted. The failure mode of a missing secret was *no authentication*, silently, with a healthy-looking service. A deployment that forgot the variable - or a `docker compose up` with an incomplete `.env` - exposed an unauthenticated write endpoint on a public catalog and gave no indication.
 
 This matters more for us than for a single-process design. When facilitator and catalog share a process and a database, cataloging is a function call and the caller is trivially trustworthy. Our catalog is a separate service that accepts writes over HTTP from facilitators and, under [ADR-001](./adr-001-discovery-federation.md), gossip from peers it does not run. "The caller said so" is not available to us as an answer.
 
@@ -60,7 +60,7 @@ settlementTx: string;
 | 3 | `successful === true` | A transaction that was submitted and rejected |
 | 4 | An effect credits `payTo` | A real payment to someone else, reused to list your own resource |
 
-Check 4 is the one that makes the others worth having. Without it, any confirmed transaction on the network — anyone's — backs any listing.
+Check 4 is the one that makes the others worth having. Without it, any confirmed transaction on the network - anyone's - backs any listing.
 
 ### 3. Authentication is mandatory and fails at boot
 
@@ -93,7 +93,7 @@ if (error?.code === "23505" && String(error?.constraint).includes("settlement_tx
 
 ### 6. Structural validation still applies
 
-Settlement verification is orthogonal to content validation. `routeTemplate` is percent-decoded *before* traversal and scheme-injection checks — the ordering the spec requires, since `%2e%2e%2f` defeats a naive `..` check — and `serviceName`, `tags`, and `iconUrl` keep their soft-drop rules. A verified payer can still submit hostile metadata.
+Settlement verification is orthogonal to content validation. `routeTemplate` is percent-decoded *before* traversal and scheme-injection checks - the ordering the spec requires, since `%2e%2e%2f` defeats a naive `..` check - and `serviceName`, `tags`, and `iconUrl` keep their soft-drop rules. A verified payer can still submit hostile metadata.
 
 ## What this does not prove
 
@@ -114,10 +114,10 @@ Binding the *URL* cryptographically requires the resource server to sign the pai
 
 **Costs accepted**
 
-- **A Horizon round trip per ingest**, roughly 200–400ms. Cataloging happens after settlement and never blocks the buyer, so nobody waits on it.
+- **A Horizon round trip per ingest**, roughly 200-400ms. Cataloging happens after settlement and never blocks the buyer, so nobody waits on it.
 - **Horizon is now a dependency of listing.** Failing closed means a Horizon outage halts cataloging. Correct for integrity, and a real availability cost.
 - **A 24-hour freshness window** on settlements. A legitimate but delayed catalog submission is rejected and must re-settle.
-- **Effect-based `payTo` matching is Horizon-shaped.** We match `account_credited` and `contract_credited` effects. A future settlement pattern that credits through a path Horizon reports differently would need this updated — a coupling to Horizon's effect vocabulary that a Soroban event decoder would not have.
+- **Effect-based `payTo` matching is Horizon-shaped.** We match `account_credited` and `contract_credited` effects. A future settlement pattern that credits through a path Horizon reports differently would need this updated - a coupling to Horizon's effect vocabulary that a Soroban event decoder would not have.
 - **Migration `001` soft-drops every pre-existing listing.** Those were created on the old boolean and have no confirmed settlement, so they are marked `soft_dropped` rather than deleted, for operator review. Correct, and it means an upgrading operator sees their catalog empty until entries re-settle.
 
 **Deliberately not done**
@@ -128,9 +128,9 @@ Binding the *URL* cryptographically requires the resource server to sign the pai
 
 ## References
 
-- [`bazaar-service/src/catalog/settlement-proof.ts`](../../bazaar-service/src/catalog/settlement-proof.ts) — the four checks and the fail-closed behaviour
-- [`bazaar-service/src/catalog/ingestion.ts`](../../bazaar-service/src/catalog/ingestion.ts) — the gate's position ahead of every write, and the replay rejection
-- [`bazaar-service/src/server.ts`](../../bazaar-service/src/server.ts) — `requireInternalToken`, the unconditional comparison
-- [`bazaar-service/src/__tests__/settlement-proof.test.ts`](../../bazaar-service/src/__tests__/settlement-proof.test.ts) — nine cases including the all-zeros hash, a payment to a different account, and an unreachable Horizon
-- [`bazaar-service/src/db/migrations/001_settlement_binding.sql`](../../bazaar-service/src/db/migrations/001_settlement_binding.sql) — column, uniqueness, and the soft-drop of unbacked history
-- RFP §3.2 — "the facilitator is a trust boundary"
+- [`bazaar-service/src/catalog/settlement-proof.ts`](../../bazaar-service/src/catalog/settlement-proof.ts) - the four checks and the fail-closed behaviour
+- [`bazaar-service/src/catalog/ingestion.ts`](../../bazaar-service/src/catalog/ingestion.ts) - the gate's position ahead of every write, and the replay rejection
+- [`bazaar-service/src/server.ts`](../../bazaar-service/src/server.ts) - `requireInternalToken`, the unconditional comparison
+- [`bazaar-service/src/__tests__/settlement-proof.test.ts`](../../bazaar-service/src/__tests__/settlement-proof.test.ts) - nine cases including the all-zeros hash, a payment to a different account, and an unreachable Horizon
+- [`bazaar-service/src/db/migrations/001_settlement_binding.sql`](../../bazaar-service/src/db/migrations/001_settlement_binding.sql) - column, uniqueness, and the soft-drop of unbacked history
+- RFP §3.2 - "the facilitator is a trust boundary"

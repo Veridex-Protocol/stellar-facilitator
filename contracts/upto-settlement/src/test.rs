@@ -157,7 +157,7 @@ fn payer_equal_to_recipient_leaves_the_balance_unchanged() {
 fn the_same_settlement_id_cannot_settle_twice() {
     // The guarantee that distinguishes this contract: replay is refused in
     // contract storage, so it holds for any payer regardless of how that payer
-    // authenticates — including a custom __check_auth that does not itself
+    // authenticates - including a custom __check_auth that does not itself
     // deduplicate.
     let f = setup();
     let t = terms(&f, 6);

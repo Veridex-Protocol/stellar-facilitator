@@ -12,7 +12,7 @@
  *  - It imports nothing from this repository. Its only dependencies are the
  *    public npm packages `@x402/fetch`, `@x402/core` and `@x402/stellar`, at
  *    exact pinned versions, installed from the public registry.
- *  - The payment goes through `wrapFetchWithPayment` — the library's own
+ *  - The payment goes through `wrapFetchWithPayment` - the library's own
  *    drop-in fetch wrapper. No custom protocol code, no patches, no forks.
  *  - The settled transaction is re-read from Horizon afterwards, so a
  *    facilitator that returned a plausible-looking hash without settling
@@ -283,7 +283,7 @@ const pinned = {
   "@stellar/stellar-sdk": installedVersion("@stellar/stellar-sdk"),
 };
 
-process.stdout.write("Veridex x402 Stellar facilitator — conformance harness\n");
+process.stdout.write("Veridex x402 Stellar facilitator - conformance harness\n");
 process.stdout.write(`  facilitator     ${FACILITATOR_URL}\n`);
 process.stdout.write(`  resource server ${DEMO_SERVER_URL}\n`);
 process.stdout.write(`  network         ${NETWORK}\n`);
@@ -467,7 +467,7 @@ await check("a direct /settle produces a transaction hash", async () => {
   });
 
   assert(status === 200, `expected 200, got ${status}: ${JSON.stringify(body).slice(0, 300)}`);
-  assert(body.success === true, `settlement failed: ${body.errorReason} — ${body.errorMessage}`);
+  assert(body.success === true, `settlement failed: ${body.errorReason} - ${body.errorMessage}`);
   assert(typeof body.transaction === "string" && body.transaction.length === 64, "no transaction hash returned");
 
   settledTransaction = body.transaction;
@@ -941,7 +941,7 @@ if (receipt) {
   process.stdout.write(`  signer        ${receipt.claims.signer}\n`);
   process.stdout.write(`  signature     ${receipt.signature.slice(0, 32)}…\n`);
   process.stdout.write(`  verified independently against the signer above, using this file's own\n`);
-  process.stdout.write(`  RFC 8785 implementation — not the one that produced it.\n`);
+  process.stdout.write(`  RFC 8785 implementation - not the one that produced it.\n`);
 }
 
 process.stdout.write(`\nreport               conformance-report.json\n`);

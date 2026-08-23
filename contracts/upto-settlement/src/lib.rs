@@ -13,7 +13,7 @@
 //! recipient, token, ceiling, validity window, facilitator, settlement id, and
 //! the digest of the request being paid for. A facilitator holding a signed
 //! authorization cannot redirect the payment, raise the ceiling, or reuse it for
-//! a different job — the signature does not cover those variants.
+//! a different job - the signature does not cover those variants.
 //!
 //! A bare `require_auth()` authorizes *the invocation*. That is not the same
 //! thing, and it is not what the `upto` scheme's recipient binding requires.
@@ -332,7 +332,7 @@ fn validate(env: &Env, payer: &Address, terms: &PayerTerms, attestation: &Facili
 /// Confirms balances moved by exactly the settled amounts and nothing else.
 ///
 /// Guards against a token whose `transfer` does something other than what it
-/// says — a fee-taking or rebasing token would break these equalities rather
+/// says - a fee-taking or rebasing token would break these equalities rather
 /// than quietly shortchange the recipient.
 ///
 /// @param env - Contract environment

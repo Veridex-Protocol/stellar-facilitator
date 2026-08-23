@@ -11,7 +11,7 @@
  * so concurrent settlements from the same account race for it. The loser comes
  * back `tx_bad_seq` and gets retried until it happens to win. A settlement was
  * observed taking 307 seconds that way, long after the caller's HTTP client had
- * given up — the buyer paid and got a 502.
+ * given up - the buyer paid and got a 502.
  *
  * A healthy run has every settlement succeed, none pathologically slow, and no
  * two sharing a source account.

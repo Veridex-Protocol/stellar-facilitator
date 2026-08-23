@@ -65,7 +65,7 @@ Everything above runs locally. To put it on a host:
 
 ### 2. Facilitator configuration
 
-- [ ] `BASE_URL` — the public HTTPS origin. It is published in
+- [ ] `BASE_URL` - the public HTTPS origin. It is published in
       `/.well-known/x402` as where clients reach you.
 - [ ] `STELLAR_NETWORK=testnet`, `HORIZON_URL`, `SOROBAN_RPC_URL`.
 - [ ] Provision funded channel accounts and list their secrets in
@@ -78,10 +78,10 @@ Everything above runs locally. To put it on a host:
 - [ ] Size the pool against measured load: `npm run probe -- --n <concurrency>`.
       Any `totalRejected`, or a `maxObservedWaitMs` approaching
       `SETTLE_QUEUE_TIMEOUT_MS`, means the pool is too small.
-- [ ] `RATE_LIMIT_MAX` — the default of 120/min is a backstop, not an edge
+- [ ] `RATE_LIMIT_MAX` - the default of 120/min is a backstop, not an edge
       policy. Settlement spends real XLM; put a real limiter in front in
       production.
-- [ ] `X402_JOBS_FILE` — only if this deployment actually sells jobs. Leave
+- [ ] `X402_JOBS_FILE` - only if this deployment actually sells jobs. Leave
       unset and the descriptor advertises none, which is correct for a bare
       facilitator. See `jobs.example.json`.
 
@@ -98,7 +98,7 @@ Everything above runs locally. To put it on a host:
       settlement binding and **soft-drops every pre-existing entry**, because
       those were listed on a caller's assertion that a payment happened rather
       than on a confirmed one. Review them before re-listing anything.
-- [ ] `HORIZON_URL` — the Bazaar confirms settlements itself and will list
+- [ ] `HORIZON_URL` - the Bazaar confirms settlements itself and will list
       nothing if it cannot reach Horizon.
 - [ ] `BAZAAR_BASE_URL` for its capability descriptor.
 - [ ] Configure P2P bootstrap multiaddresses and at least two peers.
@@ -106,7 +106,7 @@ Everything above runs locally. To put it on a host:
 ### 4. Network and TLS
 
 - [ ] Public HTTPS origins, TLS termination, firewall rules.
-- [ ] `CORS_ORIGINS` — the default is `*`, which is right for a public
+- [ ] `CORS_ORIGINS` - the default is `*`, which is right for a public
       facilitator and wrong for an internal one.
 
 ### 5. Prove it, then publish
@@ -114,7 +114,7 @@ Everything above runs locally. To put it on a host:
 - [ ] Point the harness at the deployment and run it:
       `FACILITATOR_URL=https://... DEMO_SERVER_URL=https://... npm run conformance`
 - [ ] Confirm `/supported` advertises `x402Version: 2`, `exact`,
-      `stellar:testnet`, the signer address, and `areFeesSponsored: true` —
+      `stellar:testnet`, the signer address, and `areFeesSponsored: true`  - 
       and that it advertises `upto` **only** if you deployed the contract.
 - [ ] Confirm `/.well-known/x402` names your real origin and only jobs you
       actually serve.
@@ -149,7 +149,7 @@ Testnet first, then mainnet, with separate ids for each:
 - [ ] Complete facilitator and client integration, plus an independent security
       review.
 - [ ] Only then deploy to mainnet and set `UPTO_ESCROW_CONTRACT_ID_PUBNET`.
-      A testnet id is never inherited onto pubnet — the gate reads a
+      A testnet id is never inherited onto pubnet - the gate reads a
       network-specific variable first, precisely so a mainnet deployment cannot
       quietly advertise a testnet contract.
 

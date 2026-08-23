@@ -20,7 +20,7 @@ command -v stellar >/dev/null 2>&1 || {
   exit 1
 }
 
-[ -f .env ] || { echo "No .env — run 'npm run setup' first." >&2; exit 1; }
+[ -f .env ] || { echo "No .env - run 'npm run setup' first." >&2; exit 1; }
 SECRET=$(grep '^FACILITATOR_SECRET_KEY=' .env | cut -d= -f2)
 [ -n "$SECRET" ] || { echo "FACILITATOR_SECRET_KEY is not set in .env" >&2; exit 1; }
 

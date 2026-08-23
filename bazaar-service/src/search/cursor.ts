@@ -10,7 +10,7 @@
  * A cursor here carries the position plus a fingerprint of the query that
  * produced it. Presenting a cursor from one query against a different one is
  * rejected rather than silently answered, because the ranking a cursor points
- * into is only meaningful for the query that built it — the same offset under
+ * into is only meaningful for the query that built it - the same offset under
  * different terms is a different set of rows.
  *
  * The catalog changes under a paging client, so the spec's `partialResults`

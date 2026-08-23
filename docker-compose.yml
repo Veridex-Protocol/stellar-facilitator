@@ -1,4 +1,4 @@
-# Veridex Stellar Facilitator v2.0 - Docker Compose
+# Veridex Stellar Facilitator v2.0 Docker Compose
 # License: Apache-2.0
 #
 # Complete stack:
@@ -139,7 +139,7 @@ services:
       bazaar:
         condition: service_healthy
 
-  # Demo resource server — the seller the conformance harness buys from
+  # Demo resource server - the seller the conformance harness buys from
   demo-server:
     build:
       context: ./demo-server

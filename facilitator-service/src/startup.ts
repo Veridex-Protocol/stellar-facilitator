@@ -9,11 +9,11 @@
  *
  * The three things that can quietly become false:
  *
- *  1. `areFeesSponsored: true` — true only while the sponsoring account exists
+ *  1. `areFeesSponsored: true` - true only while the sponsoring account exists
  *     and holds enough XLM to pay Soroban resource fees.
- *  2. `scheme: "upto"` — true only while a real contract is deployed at the
+ *  2. `scheme: "upto"` - true only while a real contract is deployed at the
  *     configured id on the network we are serving.
- *  3. the receipt signer — true only while we hold the secret key for the
+ *  3. the receipt signer - true only while we hold the secret key for the
  *     address we publish.
  */
 
@@ -109,7 +109,7 @@ export interface UptoGateResult {
  *
  * `upto` is a real scheme only when a real contract backs it. This resolves the
  * contract id for the network being served and confirms the contract instance
- * exists on-chain. Anything less — unset, malformed, or not deployed — and the
+ * exists on-chain. Anything less - unset, malformed, or not deployed - and the
  * scheme stays out of `/supported` entirely rather than being advertised
  * against a placeholder id.
  *

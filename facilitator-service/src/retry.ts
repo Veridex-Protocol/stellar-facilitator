@@ -10,12 +10,12 @@
  * future. Upstream report: x402-foundation/x402#3168.
  *
  * Retrying re-samples the ledger height, which is what a client's own retry
- * would do. It relaxes nothing — the full check still runs, in the package, on
+ * would do. It relaxes nothing - the full check still runs, in the package, on
  * every attempt.
  *
  * **The delay must outlast a ledger close.** Re-sampling only helps if it
  * reaches a different node *or* the lagging node catches up, and only the
- * second is guaranteed — after a close, roughly every 5 seconds. Retries
+ * second is guaranteed - after a close, roughly every 5 seconds. Retries
  * bunched inside one close window all observe the same divergence and all fail.
  * The default is therefore 6s.
  *

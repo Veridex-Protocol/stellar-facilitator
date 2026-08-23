@@ -303,7 +303,7 @@ export class FacilitatorService {
     ];
 
     // `upto` appears only when startup confirmed a real contract on this
-    // network. It is otherwise absent entirely — not advertised against a
+    // network. It is otherwise absent entirely - not advertised against a
     // placeholder id, and not advertised as "coming".
     if (this.capabilities.uptoContractId) {
       kinds.push({
@@ -675,8 +675,8 @@ export class FacilitatorService {
    *
    * Returns undefined rather than inventing a value when the settlement does
    * not name a payer: a receipt asserting the wrong payer is worse than no
-   * receipt, and the previous implementation substituted `payTo` — the
-   * recipient — when the payer was unknown.
+   * receipt, and the previous implementation substituted `payTo` - the
+   * recipient - when the payer was unknown.
    *
    * @param c - Request context, read for an optional caller-supplied job id
    * @param paymentPayload - The exact payload received
@@ -801,7 +801,7 @@ export class FacilitatorService {
    *
    * Returns the catalog's EXTENSION-RESPONSES value so it can travel back to
    * the seller on the settle response. Without that, a seller has no way to
-   * learn that their listing was rejected, or why — the feedback loop the
+   * learn that their listing was rejected, or why - the feedback loop the
    * discovery spec asks for.
    *
    * @param paymentPayload - The payload that was settled

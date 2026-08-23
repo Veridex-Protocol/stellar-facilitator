@@ -4,7 +4,7 @@
  *
  * Deliberately shallow. This checks that a request is structurally an x402
  * verify/settle request and returns a sentence naming the field that is wrong.
- * It does not inspect, normalise, or re-encode the signed `transaction` — that
+ * It does not inspect, normalise, or re-encode the signed `transaction` - that
  * string is handed to `@x402/stellar` byte-for-byte as the client produced it.
  * A facilitator that "helpfully" reshapes a signed envelope breaks every stock
  * client, which is the one thing this service must not do.

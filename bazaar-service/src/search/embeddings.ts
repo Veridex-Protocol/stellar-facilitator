@@ -9,7 +9,7 @@
  * fixed vector space by hash, so two documents are close when they share
  * tokens. It carries no semantics: "car" and "automobile" land in unrelated
  * dimensions. In the hybrid RRF ranking this is therefore a second *lexical*
- * signal alongside BM25, not a semantic one — useful for bigram and
+ * signal alongside BM25, not a semantic one - useful for bigram and
  * out-of-vocabulary matching that BM25 misses, but it is not what the
  * literature means by dense retrieval.
  *

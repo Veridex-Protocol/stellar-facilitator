@@ -89,7 +89,7 @@ export function getDefaultConfig(): BazaarServiceConfig {
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
     // Required, not optional. The previous guard read
     // `if (internalToken && ...)`, which skipped authentication entirely when
-    // the variable was unset — an open write endpoint on the public catalog.
+    // the variable was unset - an open write endpoint on the public catalog.
     internalToken: requireInternalToken(),
   };
 }

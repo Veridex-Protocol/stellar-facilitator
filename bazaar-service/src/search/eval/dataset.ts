@@ -51,7 +51,7 @@ export const BENCHMARK_DOCUMENTS: BenchmarkDocument[] = [
   {
     id: "doc-nlp-translate-01",
     serviceName: "Multilingual Neural Translation API",
-    description: "State of the art machine translation across 100+ languages with automatic language detection.",
+    description: "Modern machine translation across 100+ languages with automatic language detection.",
     tags: ["ai", "nlp", "translation", "language"],
     toolName: "translate_text",
     resourceType: "mcp",

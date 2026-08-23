@@ -1,8 +1,8 @@
-# ADR-009: Discovery Wire Conformance — Filters, Opaque Cursors, and Telling the Seller What Happened
+# ADR-009: Discovery Wire Conformance - Filters, Opaque Cursors, and Telling the Seller What Happened
 
 ## Status
 
-Accepted (2026-08-23) — records the discovery surface as the spec names it: the six filters on both endpoints, cursor pagination bound to the query that issued it, and `EXTENSION-RESPONSES` carried all the way back to the seller.
+Accepted (2026-08-23) - records the discovery surface as the spec names it: the six filters on both endpoints, cursor pagination bound to the query that issued it, and `EXTENSION-RESPONSES` carried all the way back to the seller.
 
 ## Context
 
@@ -12,11 +12,11 @@ The RFP grades wire-level behaviour, not intent:
 
 Three parts of our discovery surface did not conform.
 
-**Filters were partly wired.** The spec names `type`, `payTo`, `network`, `extensions`, `limit`, `offset`. Our search engine's `list()` supported `resourceType`, `network`, `scheme`, `tags`, `limit`, `offset` — but the *route* passed only `network`, `limit`, `offset`. `type` existed in the engine and was unreachable from HTTP; `payTo` and `extensions` did not exist at all. A client filtering by `payTo` got an unfiltered list and no error — the worst kind of non-conformance, because it looks like it works.
+**Filters were partly wired.** The spec names `type`, `payTo`, `network`, `extensions`, `limit`, `offset`. Our search engine's `list()` supported `resourceType`, `network`, `scheme`, `tags`, `limit`, `offset` - but the *route* passed only `network`, `limit`, `offset`. `type` existed in the engine and was unreachable from HTTP; `payTo` and `extensions` did not exist at all. A client filtering by `payTo` got an unfiltered list and no error - the worst kind of non-conformance, because it looks like it works.
 
-**Pagination was offset-only.** The spec names cursor pagination. We accepted `offset`, and `partialResults` was hardcoded `false` in both response paths — schema-conformant and semantically empty.
+**Pagination was offset-only.** The spec names cursor pagination. We accepted `offset`, and `partialResults` was hardcoded `false` in both response paths - schema-conformant and semantically empty.
 
-**The seller was never told whether their listing landed.** `EXTENSION-RESPONSES` is how the spec reports cataloging outcomes: *"so a seller can tell whether a listing landed, and why not."* Our ingestion built the base64 payload correctly and returned it **in the JSON body**, and the facilitator — which is what the seller actually talks to — read the catalog's response and discarded it. A seller whose listing was rejected for a bad `routeTemplate` had no way to learn that, ever. The loop the spec describes was open at both ends.
+**The seller was never told whether their listing landed.** `EXTENSION-RESPONSES` is how the spec reports cataloging outcomes: *"so a seller can tell whether a listing landed, and why not."* Our ingestion built the base64 payload correctly and returned it **in the JSON body**, and the facilitator - which is what the seller actually talks to - read the catalog's response and discarded it. A seller whose listing was rejected for a bad `routeTemplate` had no way to learn that, ever. The loop the spec describes was open at both ends.
 
 ## Decision
 
@@ -43,7 +43,7 @@ r.extensions ?& $n::text[]
 
 `scheme` and `tags` are supported as extras beyond the spec.
 
-Verified narrowing rather than merely returning 200 — `type=mcp` returns 0 against an HTTP-only catalog, and a `payTo` that paid for nothing returns 0.
+Verified narrowing rather than merely returning 200 - `type=mcp` returns 0 against an HTTP-only catalog, and a `payTo` that paid for nothing returns 0.
 
 ### 2. Cursors are opaque and bound to their query
 
@@ -58,7 +58,7 @@ Presenting a cursor against a different query is refused:
 filter set; a cursor may only be used to continue the search that produced it"}
 ```
 
-Silently answering would return the wrong page while looking correct — **the same offset under different terms is a different set of rows.** A version field is included so a future encoding change fails cleanly rather than being misread.
+Silently answering would return the wrong page while looking correct - **the same offset under different terms is a different set of rows.** A version field is included so a future encoding change fails cleanly rather than being misread.
 
 ### 3. `partialResults` is computed
 
@@ -68,11 +68,11 @@ Each retrieval leg contributes at most 50 candidates before fusion. A saturated 
 
 Three hops, all now connected:
 
-1. The Bazaar sets `EXTENSION-RESPONSES` on `/catalog/ingest` — on **acceptance and rejection**, including the pre-ingest rejection when `settlementTx` is absent.
+1. The Bazaar sets `EXTENSION-RESPONSES` on `/catalog/ingest` - on **acceptance and rejection**, including the pre-ingest rejection when `settlementTx` is absent.
 2. The facilitator reads the header from the catalog's response and returns it on its own `/settle` response.
 3. `exposeHeaders` lists it in CORS, so a browser-based caller can read its own result.
 
-Cataloging failure never fails a settled payment — the money has already moved — so the outcome travels in a header rather than a status code.
+Cataloging failure never fails a settled payment - the money has already moved - so the outcome travels in a header rather than a status code.
 
 Verified end to end. On rejection the seller receives:
 
@@ -97,7 +97,7 @@ Percent-decode **before** traversal and scheme-injection checks, because `%2e%2e
 
 **Costs accepted**
 
-- **Cursor fingerprints make cursors brittle by design.** Adding a filter mid-pagination invalidates the cursor. Correct — the result set changed — and it will look like a bug to a client that does it. The error message says exactly what happened.
+- **Cursor fingerprints make cursors brittle by design.** Adding a filter mid-pagination invalidates the cursor. Correct - the result set changed - and it will look like a bug to a client that does it. The error message says exactly what happened.
 - **The fingerprint is a 16-char SHA-256 prefix**, so collisions are possible in principle. A collision would allow a cursor from a *different* query to be accepted; the consequence is a wrong page, not a security breach, and the probability is negligible at catalog scale.
 - **Multi-page traversal is unexercised end to end.** The demo catalog holds one resource, so no conformance run has walked to a second page. Ten unit tests cover the logic and forged cursors are rejected at the wire, but that is not the same thing, and `testnet_docs.md` records it.
 - **`EXTENSION-RESPONSES` depends on the catalog being reachable.** If the Bazaar is down the header is absent, and absence is indistinguishable from "no discovery extension was declared".
@@ -111,9 +111,9 @@ Percent-decode **before** traversal and scheme-injection checks, because `%2e%2e
 
 ## References
 
-- [`bazaar-service/src/search/cursor.ts`](../../bazaar-service/src/search/cursor.ts) — encoding, fingerprinting, refusal
-- [`bazaar-service/src/search/engine.ts`](../../bazaar-service/src/search/engine.ts) — filters, `?&`, cursor resolution, `partialResults`
-- [`bazaar-service/src/server.ts`](../../bazaar-service/src/server.ts) — parameter parsing, `EXTENSION-RESPONSES` on both outcomes
-- [`facilitator-service/src/server.ts`](../../facilitator-service/src/server.ts) — header propagation to the seller, `exposeHeaders`
-- [`bazaar-service/src/__tests__/cursor.test.ts`](../../bazaar-service/src/__tests__/cursor.test.ts) — opacity, cross-query refusal, version rejection
-- [`conformance/src/harness.mjs`](../../conformance/src/harness.mjs) — the eight discovery checks
+- [`bazaar-service/src/search/cursor.ts`](../../bazaar-service/src/search/cursor.ts) - encoding, fingerprinting, refusal
+- [`bazaar-service/src/search/engine.ts`](../../bazaar-service/src/search/engine.ts) - filters, `?&`, cursor resolution, `partialResults`
+- [`bazaar-service/src/server.ts`](../../bazaar-service/src/server.ts) - parameter parsing, `EXTENSION-RESPONSES` on both outcomes
+- [`facilitator-service/src/server.ts`](../../facilitator-service/src/server.ts) - header propagation to the seller, `exposeHeaders`
+- [`bazaar-service/src/__tests__/cursor.test.ts`](../../bazaar-service/src/__tests__/cursor.test.ts) - opacity, cross-query refusal, version rejection
+- [`conformance/src/harness.mjs`](../../conformance/src/harness.mjs) - the eight discovery checks

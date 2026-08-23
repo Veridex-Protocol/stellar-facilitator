@@ -5,7 +5,7 @@
  * A minimal x402 seller, so the conformance harness has something real to buy.
  *
  * It uses the stock `@x402/hono` middleware and delegates every verify/settle
- * decision to our facilitator over HTTP — no protocol code of our own on this
+ * decision to our facilitator over HTTP - no protocol code of our own on this
  * side. It declares Bazaar discovery metadata too, so a settled payment
  * exercises the catalog-ingestion path rather than leaving it untested.
  */

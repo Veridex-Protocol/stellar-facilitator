@@ -34,7 +34,7 @@ This distinction is intentional: it keeps the architecture persuasive without cl
 | MCP discovery and paid-call path                             | Implemented locally                                           | Pending client-side signer isolation and end-to-end agent recording                  |
 | Correct`upto` contract and auth-tree validator             | **Required redesign**                                   | Not deployable until the gates in section 7.6 pass                                   |
 
-The public release checklist, deployed contract IDs/WASM hashes, testnet transaction hashes, conformance reports, and search-quality reports are release artifacts—not prose promises.
+The public release checklist, deployed contract IDs/WASM hashes, testnet transaction hashes, conformance reports, and search-quality reports are release artifacts - not prose promises.
 
 ## 2. Decisions and non-negotiable invariants
 
@@ -260,7 +260,7 @@ flowchart TB
     PB -.->|"local ranking policy"| PB
 ```
 
-An announcement envelope must sign a canonical serialization of every security-relevant field—not just URL, timestamp, and sequence. The signed payload includes at least: protocol version, `nodeId`, owner/delegate identity, resource identifier, `payTo`, network, scheme, metadata digest, timestamp, expiry, and monotonically increasing sequence. Peers reject invalid signatures, timestamps outside the bounded clock-skew window, expired announcements, repeated or non-increasing sequences, and announcements that conflict with payment-bound ownership.
+An announcement envelope must sign a canonical serialization of every security-relevant field - not just URL, timestamp, and sequence. The signed payload includes at least: protocol version, `nodeId`, owner/delegate identity, resource identifier, `payTo`, network, scheme, metadata digest, timestamp, expiry, and monotonically increasing sequence. Peers reject invalid signatures, timestamps outside the bounded clock-skew window, expired announcements, repeated or non-increasing sequences, and announcements that conflict with payment-bound ownership.
 
 Peer identity is transport identity; listing authority is the Stellar owner/delegate signature. These must not be conflated. libp2p peer reputation and GossipSub scoring control transport abuse, while owner-level rate limits, stake/allowlist policy where appropriate, and query-time diversity caps limit Sybil-driven search manipulation.
 
@@ -407,8 +407,8 @@ The facilitator exposes canonical x402 v2 routes:
 
 The Bazaar exposes:
 
-- `GET /discovery/resources` — deterministic browse with `type`, `payTo`, `network`, `scheme`, extensions, limit, and cursor/offset compatibility.
-- `GET /discovery/search` — hybrid natural-language search with structural filters, opaque cursor pagination, `partialResults`, `searchMethod`, provenance, and ranking explanation fields.
+- `GET /discovery/resources` - deterministic browse with `type`, `payTo`, `network`, `scheme`, extensions, limit, and cursor/offset compatibility.
+- `GET /discovery/search` - hybrid natural-language search with structural filters, opaque cursor pagination, `partialResults`, `searchMethod`, provenance, and ranking explanation fields.
 
 The MCP surface exposes `discover_resources` and `pay_resource`. It performs discovery and the HTTP 402 retry loop, but never holds a payer signing key. The wallet/smart-account signer remains client-side and applies its own allow-lists, budgets, approval rules, and spending policy to the complete authorization tree.
 
@@ -426,4 +426,4 @@ Seller helpers must validate discovery metadata before publication; buyer helper
 | Federation           | Two independently operated nodes exchange valid announcements and reject stale, replayed, and conflicting data.        |
 | Operations           | Runbook, alerts tested on testnet, deployment addresses/WASM hashes, status page, incident response contacts.          |
 
-No completion claim is made until the corresponding source, CI result, testnet/mainnet artifact, and runbook are published. That discipline—not a feature list—is what makes the system safe for agent payments and credible to ecosystem reviewers.
+No completion claim is made until the corresponding source, CI result, testnet/mainnet artifact, and runbook are published. That discipline - not a feature list - is what makes the system safe for agent payments and credible to ecosystem reviewers.

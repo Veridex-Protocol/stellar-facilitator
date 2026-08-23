@@ -6,8 +6,8 @@
  *  - `ExactStellarScheme` from `@x402/stellar`
  *  - `UptoStellarScheme` for metered Soroban contract settlement
  *
- * All protocol cryptography — authorization-entry validation, transaction
- * assembly, submission — belongs to the respective scheme modules. This wrapper
+ * All protocol cryptography - authorization-entry validation, transaction
+ * assembly, submission - belongs to the respective scheme modules. This wrapper
  * owns multi-scheme routing, signer leasing, and concurrency scheduling.
  */
 

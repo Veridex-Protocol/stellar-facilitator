@@ -7,7 +7,7 @@
  * The property that makes a receipt worth anything is that a third party can
  * recompute it: hash the exact request and result bytes, rebuild the claims,
  * and check the signature. That requires a canonicalization that actually
- * covers nested values — see `../canonical-json.ts` for why the obvious
+ * covers nested values - see `../canonical-json.ts` for why the obvious
  * `JSON.stringify(x, Object.keys(x).sort())` does not.
  */
 

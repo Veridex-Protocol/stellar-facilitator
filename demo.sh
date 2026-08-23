@@ -47,7 +47,7 @@ for port in 3001 3002 3003; do
   health=$(curl -fsS --max-time 3 "http://localhost:$port/health" 2>/dev/null || true)
   case "$health" in
     *'"status":"ok"'*|*'"status":"degraded"'*)
-      echo "     port $port already served by this stack — 'docker compose up' will reuse or replace it"
+      echo "     port $port already served by this stack - 'docker compose up' will reuse or replace it"
       ;;
     *)
       holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1)

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-08-23) — records why every capability on `/supported` and `/.well-known/x402` is confirmed against the network before the HTTP server binds, after the facilitator was found advertising an `upto` scheme with no contract, fee sponsorship from an account nobody had checked, and a capability descriptor of invented jobs.
+Accepted (2026-08-23) - records why every capability on `/supported` and `/.well-known/x402` is confirmed against the network before the HTTP server binds, after the facilitator was found advertising an `upto` scheme with no contract, fee sponsorship from an account nobody had checked, and a capability descriptor of invented jobs.
 
 ## Context
 
@@ -12,13 +12,13 @@ We were making three untrue promises, all discoverable with `curl`.
 
 **`upto` was advertised against a placeholder.** `/supported` unconditionally returned an `upto` kind with `contractId: process.env.UPTO_ESCROW_CONTRACT_ID || "upto_escrow_v1"`. The default is not a contract address; it is a string. No contract was deployed on any network. Our own go-live document stated *"`upto` is not advertised by `/supported`"* while the code advertised it on every request.
 
-**Fee sponsorship was inferred from key possession.** `feeBumpSignerSecret: process.env.FEE_BUMP_SIGNER_SECRET || config.stellar.facilitatorSecretKey` — always truthy, because `FACILITATOR_SECRET_KEY` is required to boot. So `areFeesSponsored` was structurally always `true`. Holding a secret key says nothing about whether the account behind it exists or holds XLM. An unfunded facilitator advertised sponsorship it could not perform.
+**Fee sponsorship was inferred from key possession.** `feeBumpSignerSecret: process.env.FEE_BUMP_SIGNER_SECRET || config.stellar.facilitatorSecretKey` - always truthy, because `FACILITATOR_SECRET_KEY` is required to boot. So `areFeesSponsored` was structurally always `true`. Holding a secret key says nothing about whether the account behind it exists or holds XLM. An unfunded facilitator advertised sponsorship it could not perform.
 
-**The capability descriptor was fiction.** `/.well-known/x402` returned two hardcoded jobs — `oracle/read` and `compute/session` — priced against `payTo: <facilitator key>` at `https://facilitator.veridex.io`. Every deployment of this software advertised two endpoints it did not serve, at a hostname it was not reachable at, and `compute/session` was priced in the `upto` scheme that had no contract.
+**The capability descriptor was fiction.** `/.well-known/x402` returned two hardcoded jobs - `oracle/read` and `compute/session` - priced against `payTo: <facilitator key>` at `https://facilitator.veridex.io`. Every deployment of this software advertised two endpoints it did not serve, at a hostname it was not reachable at, and `compute/session` was priced in the `upto` scheme that had no contract.
 
 The common shape: **capabilities were asserted from configuration rather than established against reality.** Configuration says what an operator intended. Only the network says what is true.
 
-This is not a hypothetical concern for us. We serve `stellar:testnet` and have never exercised `stellar:pubnet`; we hold an `upto` contract that is written but unaudited. Both are things a deployment could be configured to advertise today, and neither is ready. The discipline has to be enforced by the code, because documentation stating a restraint the binary does not implement is worth nothing — and `/supported` is checkable with one `curl`, long before anyone reads our documentation.
+This is not a hypothetical concern for us. We serve `stellar:testnet` and have never exercised `stellar:pubnet`; we hold an `upto` contract that is written but unaudited. Both are things a deployment could be configured to advertise today, and neither is ready. The discipline has to be enforced by the code, because documentation stating a restraint the binary does not implement is worth nothing - and `/supported` is checkable with one `curl`, long before anyone reads our documentation.
 
 ## Decision
 
@@ -46,13 +46,13 @@ on this network. Fund it, or set SPONSOR_FEES=false to advertise areFeesSponsore
 instead. Refusing to start rather than advertise sponsorship it cannot honour.
 ```
 
-Silently downgrading would be friendlier and worse — an operator who asked for sponsorship would get a service quietly not providing it.
+Silently downgrading would be friendlier and worse - an operator who asked for sponsorship would get a service quietly not providing it.
 
 ### 3. `upto` requires a contract that exists on this network
 
 `resolveUptoGate` reads a **network-specific** variable first (`UPTO_ESCROW_CONTRACT_ID_TESTNET` / `_PUBNET`), validates it with `StrKey.isValidContract`, then confirms the instance exists via `getContractData(..., scvLedgerKeyContractInstance(), Durability.Persistent)`.
 
-Anything short of all three and the scheme is **absent from `/supported` entirely** — not present-but-disabled, not advertised with a note. Absent.
+Anything short of all three and the scheme is **absent from `/supported` entirely** - not present-but-disabled, not advertised with a note. Absent.
 
 The per-network variable is a deliberate guard: a testnet contract id must never be inherited onto pubnet by an operator who set the generic variable and changed `STELLAR_NETWORK`.
 
@@ -64,7 +64,7 @@ The per-network variable is a deliberate guard: a testnet contract id must never
 
 `assertSupportedIsTruthful` receives the actual `/supported` body and the verified facts, and throws on any disagreement: sponsorship mismatch, an `upto` kind without a confirmed contract, a contract id that differs, a missing `exact` kind, or a signer that is not listed.
 
-This is belt-and-braces on purpose. Checks 2–4 establish truth; check 5 verifies the *serialisation* of that truth did not drift.
+This is belt-and-braces on purpose. Checks 2-4 establish truth; check 5 verifies the *serialisation* of that truth did not drift.
 
 ### 6. Honesty rules that are not configurable
 
@@ -82,7 +82,7 @@ This is belt-and-braces on purpose. Checks 2–4 establish truth; check 5 verifi
 **Costs accepted**
 
 - **Boot is slower and depends on the network.** Horizon and Soroban RPC calls before binding, so start-up is seconds not milliseconds, and a Horizon outage prevents a *restart* even though a running instance would be unaffected. Accepted: a facilitator that cannot reach Horizon cannot settle anyway.
-- **`BASE_URL` is now required.** The descriptor publishes where clients reach the service, which cannot be inferred from a `0.0.0.0` bind address. Existing deployments must set it or fail to start — a deliberate breaking change, since the alternative was the hardcoded hostname.
+- **`BASE_URL` is now required.** The descriptor publishes where clients reach the service, which cannot be inferred from a `0.0.0.0` bind address. Existing deployments must set it or fail to start - a deliberate breaking change, since the alternative was the hardcoded hostname.
 - **Capabilities are fixed at boot.** Funding the account or deploying the contract while running has no effect until restart. Re-checking periodically would mean `/supported` changing under a client mid-session, which is worse.
 - **Five XLM is arbitrary.** Enough for many Soroban settlements at current fees, not derived from a model, and not adaptive to pubnet fee conditions.
 
@@ -94,9 +94,9 @@ This is belt-and-braces on purpose. Checks 2–4 establish truth; check 5 verifi
 
 ## References
 
-- [`facilitator-service/src/startup.ts`](../../facilitator-service/src/startup.ts) — funding check, `upto` gate, truthfulness assertion
-- [`facilitator-service/src/capability-descriptor.ts`](../../facilitator-service/src/capability-descriptor.ts) — job loading and validation, the hardcoded honesty rule
-- [`facilitator-service/src/server.ts`](../../facilitator-service/src/server.ts) — `runStartupChecks`, ordered before `serve()`
-- [`facilitator-service/src/__tests__/startup.test.ts`](../../facilitator-service/src/__tests__/startup.test.ts) — including the literal `upto_escrow_v1` rejection and testnet-id-on-pubnet
-- [`jobs.example.json`](../../jobs.example.json) — the descriptor job format
-- [ADR-010](./adr-010-conformance-as-acceptance.md) — the harness check that fails if any scheme lacks a deployed contract
+- [`facilitator-service/src/startup.ts`](../../facilitator-service/src/startup.ts) - funding check, `upto` gate, truthfulness assertion
+- [`facilitator-service/src/capability-descriptor.ts`](../../facilitator-service/src/capability-descriptor.ts) - job loading and validation, the hardcoded honesty rule
+- [`facilitator-service/src/server.ts`](../../facilitator-service/src/server.ts) - `runStartupChecks`, ordered before `serve()`
+- [`facilitator-service/src/__tests__/startup.test.ts`](../../facilitator-service/src/__tests__/startup.test.ts) - including the literal `upto_escrow_v1` rejection and testnet-id-on-pubnet
+- [`jobs.example.json`](../../jobs.example.json) - the descriptor job format
+- [ADR-010](./adr-010-conformance-as-acceptance.md) - the harness check that fails if any scheme lacks a deployed contract

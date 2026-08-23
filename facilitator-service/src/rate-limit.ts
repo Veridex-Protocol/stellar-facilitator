@@ -9,7 +9,7 @@
  * A fixed-window counter in process memory, deliberately: it is a few dozen
  * lines with no dependency and no supply-chain surface, and a single-process
  * facilitator has nowhere to share state anyway. A multi-instance deployment
- * should put a real limiter in front of this at the edge — this one then still
+ * should put a real limiter in front of this at the edge - this one then still
  * serves as the per-instance backstop.
  */
 

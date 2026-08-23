@@ -55,8 +55,8 @@ describe("x402job/1 recomputable compute receipts (#3117)", () => {
   //
   // The signature previously covered `JSON.stringify(claims,
   // Object.keys(claims).sort())`. The array replacer is an allowlist applied at
-  // every level, so `settlement` — whose keys are absent from the top-level key
-  // list — serialized as `{}`. Every field below could be rewritten at will
+  // every level, so `settlement` - whose keys are absent from the top-level key
+  // list - serialized as `{}`. Every field below could be rewritten at will
   // while the signature stayed valid.
 
   it("covers settlement.tx: rewriting the transaction hash breaks the signature", () => {
