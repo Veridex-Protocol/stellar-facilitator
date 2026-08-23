@@ -15,6 +15,7 @@ import pkg from "pg";
 const { Pool } = pkg;
 import type { Pool as PoolType } from "pg";
 import {
+  type ResourceFilters,
   type SearchQuery,
   type SearchResponse,
   type SearchResult,
@@ -23,6 +24,17 @@ import {
   DEFAULT_RANKING_WEIGHTS,
 } from "./types.js";
 import { generateEmbedding } from "./embeddings.js";
+import { decodeCursor, encodeCursor, fingerprint } from "./cursor.js";
+
+/**
+ * How many candidates each leg of the hybrid search contributes before fusion.
+ *
+ * Ranking only ever sees this many rows per leg, so when a leg fills its pool
+ * there were probably matches it never considered. That is exactly what the
+ * spec's `partialResults` flag is for, and it is why the flag cannot simply be
+ * hardcoded false.
+ */
+const CANDIDATE_POOL_SIZE = 50;
 
 export class BazaarSearchEngine {
   private pool: PoolType;
@@ -46,7 +58,24 @@ export class BazaarSearchEngine {
    * Execute hybrid RRF search combining vector similarity, BM25 text match, and telemetry ranking
    */
   async search(query: SearchQuery): Promise<SearchResponse> {
-    const { query: searchText, limit, offset } = query;
+    const { query: searchText, limit } = query;
+
+    // A cursor is only valid for the query and filters that issued it, so the
+    // fingerprint covers both.
+    const queryFingerprint = fingerprint({
+      q: searchText,
+      resourceType: query.resourceType,
+      network: query.network,
+      scheme: query.scheme,
+      payTo: query.payTo,
+      extensions: query.extensions,
+      tags: query.tags,
+      minUptimeRatio: query.minUptimeRatio,
+    });
+
+    const offset = query.cursor
+      ? decodeCursor(query.cursor, queryFingerprint).offset
+      : query.offset;
 
     // Generate query embedding
     const queryEmbedding = await generateEmbedding(searchText);
@@ -72,6 +101,18 @@ export class BazaarSearchEngine {
       params.push(query.scheme);
     }
 
+    if (query.payTo) {
+      filters.push(`r.pay_to = $${paramIndex++}`);
+      params.push(query.payTo);
+    }
+
+    if (query.extensions && query.extensions.length > 0) {
+      // `?&` is "JSONB has all these top-level keys". node-postgres uses $n
+      // placeholders, so a literal `?` in the SQL is unambiguous here.
+      filters.push(`r.extensions ?& $${paramIndex++}::text[]`);
+      params.push(query.extensions);
+    }
+
     if (query.tags && query.tags.length > 0) {
       filters.push(`r.tags && $${paramIndex++}::text[]`);
       params.push(query.tags);
@@ -93,7 +134,7 @@ export class BazaarSearchEngine {
           FROM catalog_resources
           WHERE embedding IS NOT NULL
           ORDER BY embedding <=> $2::vector
-          LIMIT 50
+          LIMIT ${CANDIDATE_POOL_SIZE}
       ),
       text_search AS (
           SELECT id,
@@ -108,7 +149,7 @@ export class BazaarSearchEngine {
           FROM catalog_resources
           WHERE to_tsvector('english', description || ' ' || COALESCE(service_name, ''))
                 @@ plainto_tsquery('english', $1)
-          LIMIT 50
+          LIMIT ${CANDIDATE_POOL_SIZE}
       )
       SELECT
           r.id,
@@ -155,8 +196,11 @@ export class BazaarSearchEngine {
                 WHEN 'DEGRADED' THEN 0.3
                 ELSE 0.0
               END AS composite_score,
-          -- Count total matches for pagination
-          COUNT(*) OVER() AS total_count
+          -- Count total matches for pagination, and how full each candidate
+          -- pool was, so partialResults can be answered honestly.
+          COUNT(*) OVER() AS total_count,
+          (SELECT COUNT(*) FROM vector_search) AS vector_candidates,
+          (SELECT COUNT(*) FROM text_search) AS text_candidates
       FROM catalog_resources r
       LEFT JOIN vector_search v ON r.id = v.id
       LEFT JOIN text_search k ON r.id = k.id
@@ -212,29 +256,50 @@ export class BazaarSearchEngine {
 
     const total = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
 
+    // A saturated candidate pool means fusion ranked a truncated view of the
+    // matches, so this page is not a complete answer to the query.
+    const vectorCandidates = result.rows.length > 0 ? parseInt(result.rows[0].vector_candidates) : 0;
+    const textCandidates = result.rows.length > 0 ? parseInt(result.rows[0].text_candidates) : 0;
+    const poolSaturated =
+      vectorCandidates >= CANDIDATE_POOL_SIZE || textCandidates >= CANDIDATE_POOL_SIZE;
+
+    const hasMore = offset + results.length < total;
+
     return {
       results,
       total,
       limit,
       offset,
-      partialResults: false,
+      nextCursor: hasMore
+        ? encodeCursor({ offset: offset + results.length, limit, fingerprint: queryFingerprint })
+        : undefined,
+      partialResults: poolSaturated,
+      partialReason: poolSaturated
+        ? `More than ${CANDIDATE_POOL_SIZE} candidates matched in at least one retrieval leg, so ranking considered a truncated set. Narrow the query or apply filters for a complete ordering.`
+        : undefined,
     };
   }
 
   /**
    * List all resources with optional filters (no query ranking applied)
    */
-  async list(
-    filters: {
-      resourceType?: "http" | "mcp";
-      network?: string;
-      scheme?: string;
-      tags?: string[];
-      limit?: number;
-      offset?: number;
-    } = {}
-  ): Promise<SearchResponse> {
-    const { limit = 20, offset = 0 } = filters;
+  async list(filters: ResourceFilters = { limit: 20, offset: 0 }): Promise<SearchResponse> {
+    const limit = filters.limit ?? 20;
+
+    // Same cursor contract as search: a token is only valid for the filter set
+    // that issued it.
+    const listFingerprint = fingerprint({
+      resourceType: filters.resourceType,
+      payTo: filters.payTo,
+      network: filters.network,
+      extensions: filters.extensions,
+      scheme: filters.scheme,
+      tags: filters.tags,
+    });
+
+    const offset = filters.cursor
+      ? decodeCursor(filters.cursor, listFingerprint).offset
+      : (filters.offset ?? 0);
 
     const conditions: string[] = [];
     const params: any[] = [];
@@ -253,6 +318,17 @@ export class BazaarSearchEngine {
     if (filters.scheme) {
       conditions.push(`r.scheme = $${paramIndex++}`);
       params.push(filters.scheme);
+    }
+
+    if (filters.payTo) {
+      conditions.push(`r.pay_to = $${paramIndex++}`);
+      params.push(filters.payTo);
+    }
+
+    if (filters.extensions && filters.extensions.length > 0) {
+      // JSONB "has all these top-level keys".
+      conditions.push(`r.extensions ?& $${paramIndex++}::text[]`);
+      params.push(filters.extensions);
     }
 
     if (filters.tags && filters.tags.length > 0) {
@@ -313,16 +389,22 @@ export class BazaarSearchEngine {
       extensions: row.extensions || {},
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      compositeScore: 1.0, // Default score for listing
+      compositeScore: 1.0, // Listing applies no ranking
     }));
 
     const total = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
+    const hasMore = offset + results.length < total;
 
     return {
       results,
       total,
       limit,
       offset,
+      nextCursor: hasMore
+        ? encodeCursor({ offset: offset + results.length, limit, fingerprint: listFingerprint })
+        : undefined,
+      // Listing filters and pages over the whole catalog with no candidate
+      // truncation, so a page is always a complete view of its slice.
       partialResults: false,
     };
   }

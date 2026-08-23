@@ -2,16 +2,13 @@
  * Veridex Facilitator Service - x402 Integration Wrapper
  * License: Apache-2.0
  *
- * Bridges the Veridex channel pool to the canonical `ExactStellarScheme` from
- * `@x402/stellar`. All protocol cryptography — authorization-entry validation,
- * transaction assembly, submission — belongs to that package. This wrapper owns
- * signer selection and nothing else.
+ * Bridges the Veridex channel pool to canonical scheme implementations:
+ *  - `ExactStellarScheme` from `@x402/stellar`
+ *  - `UptoStellarScheme` for metered Soroban contract settlement
  *
- * `areFeesSponsored` is a constructor input rather than something inferred from
- * whether a key happens to be configured. Holding a secret key does not mean
- * the account behind it is funded, and `/supported` advertises this value to
- * clients as a fact. `startup.ts` establishes it against Horizon before the
- * server binds; see `FacilitatorService.start()`.
+ * All protocol cryptography — authorization-entry validation, transaction
+ * assembly, submission — belongs to the respective scheme modules. This wrapper
+ * owns multi-scheme routing, signer leasing, and concurrency scheduling.
  */
 
 import { ExactStellarScheme } from "@x402/stellar/exact/facilitator";
@@ -25,10 +22,12 @@ import type {
   Network,
 } from "@x402/core/types";
 import type { ChannelAccountPool } from "../channel/pool.js";
+import { SettleScheduler } from "../settle-scheduler.js";
 import {
   createSignersFromChannelPool,
   createSignerFromSecret,
 } from "./channel-signer-adapter.js";
+import { UptoStellarScheme } from "./upto-scheme.js";
 
 export interface X402FacilitatorConfig {
   /** Channel account pool for parallel transaction submission. */
@@ -51,24 +50,38 @@ export interface X402FacilitatorConfig {
 
   /** Ceiling on the network fee this facilitator will sponsor, in stroops. */
   maxTransactionFeeStroops?: number;
+
+  /** How long a settlement may wait for a free signer before being refused. */
+  settleQueueTimeoutMs?: number;
+
+  /** Deployed Soroban upto settlement contract ID (if enabled). */
+  uptoContractId?: string;
 }
 
 export class X402Facilitator {
-  private scheme: ExactStellarScheme;
+  private exactScheme: ExactStellarScheme;
+  private uptoScheme?: UptoStellarScheme;
   private config: X402FacilitatorConfig;
+  /**
+   * Serializes settlement per signer account. Stellar gives each account one
+   * sequence number, so two concurrent settlements from the same account race
+   * for it and one loses. See settle-scheduler.ts.
+   */
+  private readonly scheduler: SettleScheduler;
 
   constructor(config: X402FacilitatorConfig) {
     this.config = config;
-    this.scheme = this.buildScheme();
+    this.scheduler = new SettleScheduler([], config.settleQueueTimeoutMs ?? 30_000);
+    this.buildSchemes();
+    this.scheduler.setSigners([...this.exactScheme.signingAddresses]);
   }
 
   /**
-   * Rebuilds the scheme from current configuration and pool state.
+   * Rebuilds scheme handlers from current configuration and pool state.
    *
-   * @returns The configured scheme
    * @throws {Error} When no signer is available
    */
-  private buildScheme(): ExactStellarScheme {
+  private buildSchemes(): void {
     const poolSigners = createSignersFromChannelPool(
       this.config.channelPool,
       this.config.networkPassphrase,
@@ -87,23 +100,48 @@ export class X402Facilitator {
       throw new Error("No signers available for X402Facilitator");
     }
 
-    return new ExactStellarScheme(signers, {
+    this.exactScheme = new ExactStellarScheme(signers, {
       areFeesSponsored: this.config.areFeesSponsored,
       maxTransactionFeeStroops: this.config.maxTransactionFeeStroops,
       feeBumpSigner: this.config.areFeesSponsored ? feeBumpSigner : undefined,
       rpcConfig: this.config.rpcUrl ? { url: this.config.rpcUrl } : undefined,
+      selectSigner: this.scheduler.selectSigner,
     });
+
+    if (this.config.uptoContractId) {
+      this.uptoScheme = new UptoStellarScheme(signers, {
+        contractId: this.config.uptoContractId,
+        areFeesSponsored: this.config.areFeesSponsored,
+        maxTransactionFeeStroops: this.config.maxTransactionFeeStroops,
+        feeBumpSigner: this.config.areFeesSponsored ? feeBumpSigner : undefined,
+        rpcConfig: this.config.rpcUrl ? { url: this.config.rpcUrl } : undefined,
+        selectSigner: this.scheduler.selectSigner,
+      });
+    } else {
+      this.uptoScheme = undefined;
+    }
   }
 
   /**
-   * Rebuilds the scheme after the channel pool has initialized.
+   * Rebuilds the schemes after the channel pool has initialized.
    */
   public refreshSigners(): void {
-    this.scheme = this.buildScheme();
+    this.buildSchemes();
+    this.scheduler.setSigners([...this.exactScheme.signingAddresses]);
   }
 
   /**
-   * Sets whether this deployment sponsors fees and rebuilds the scheme.
+   * Sets or unsets the deployed upto settlement contract and updates routing.
+   *
+   * @param contractId - Deployed Soroban contract address or undefined
+   */
+  public setUptoContract(contractId?: string): void {
+    this.config.uptoContractId = contractId;
+    this.buildSchemes();
+  }
+
+  /**
+   * Sets whether this deployment sponsors fees and rebuilds schemes.
    *
    * Called once at startup with the result of the Horizon funding check.
    *
@@ -111,7 +149,8 @@ export class X402Facilitator {
    */
   public setFeeSponsorship(enabled: boolean): void {
     this.config.areFeesSponsored = enabled;
-    this.scheme = this.buildScheme();
+    this.buildSchemes();
+    this.scheduler.setSigners([...this.exactScheme.signingAddresses]);
   }
 
   /** Whether this deployment currently claims fee sponsorship. */
@@ -120,31 +159,78 @@ export class X402Facilitator {
   }
 
   /**
-   * Verifies a payment payload against its requirements.
+   * Routes payment verification to the appropriate scheme handler.
    *
    * @param payload - x402 payment payload
    * @param requirements - Payment requirements
-   * @returns The scheme's verification response
+   * @returns The selected scheme's verification response
    */
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<VerifyResponse> {
-    return this.scheme.verify(payload, requirements);
+    const scheme = requirements?.scheme || payload?.accepted?.scheme;
+
+    if (scheme === "exact") {
+      return this.exactScheme.verify(payload, requirements);
+    }
+
+    if (scheme === "upto") {
+      if (!this.uptoScheme) {
+        return {
+          isValid: false,
+          invalidReason: "upto_scheme_not_configured",
+        };
+      }
+      return this.uptoScheme.verify(payload, requirements);
+    }
+
+    return {
+      isValid: false,
+      invalidReason: "unsupported_scheme",
+    };
   }
 
   /**
-   * Settles a payment by submitting it to the Stellar network.
+   * Routes payment settlement to the appropriate scheme handler.
    *
    * @param payload - x402 payment payload
    * @param requirements - Payment requirements
-   * @returns The scheme's settlement response
+   * @returns The selected scheme's settlement response
    */
   async settle(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<SettleResponse> {
-    return this.scheme.settle(payload, requirements);
+    const scheme = requirements?.scheme || payload?.accepted?.scheme;
+
+    if (scheme === "exact") {
+      return this.scheduler.withSigner(() => this.exactScheme.settle(payload, requirements));
+    }
+
+    if (scheme === "upto") {
+      if (!this.uptoScheme) {
+        return {
+          success: false,
+          network: payload?.accepted?.network || "stellar:testnet",
+          transaction: "",
+          errorReason: "upto_scheme_not_configured",
+        };
+      }
+      return this.scheduler.withSigner(() => this.uptoScheme!.settle(payload, requirements));
+    }
+
+    return {
+      success: false,
+      network: payload?.accepted?.network || "stellar:testnet",
+      transaction: "",
+      errorReason: "unsupported_scheme",
+    };
+  }
+
+  /** Settlement concurrency counters, for /stats. */
+  getSchedulerStats() {
+    return this.scheduler.getStats();
   }
 
   /**
@@ -165,7 +251,7 @@ export class X402Facilitator {
    * @returns The `extra` block, including `areFeesSponsored`
    */
   getExtra(network: Network): Record<string, unknown> | undefined {
-    return this.scheme.getExtra(network);
+    return this.exactScheme.getExtra(network);
   }
 
   /**
@@ -175,12 +261,21 @@ export class X402Facilitator {
    * @returns Addresses that may appear as the source of a settlement
    */
   getSigners(network: string): string[] {
-    return this.scheme.getSigners(network);
+    return this.exactScheme.getSigners(network);
   }
 
-  /** The scheme identifier this facilitator implements. */
+  /** Primary scheme identifier this facilitator implements. */
   get schemeId(): string {
-    return this.scheme.scheme;
+    return "exact";
+  }
+
+  /** Supported scheme identifiers. */
+  get supportedSchemes(): string[] {
+    const schemes = ["exact"];
+    if (this.uptoScheme) {
+      schemes.push("upto");
+    }
+    return schemes;
   }
 }
 

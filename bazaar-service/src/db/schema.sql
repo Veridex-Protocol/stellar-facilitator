@@ -72,6 +72,12 @@ CREATE TABLE IF NOT EXISTS resource_telemetry (
 
     -- Liveness tracking
     last_heartbeat_at TIMESTAMPTZ DEFAULT now(),  -- Last P2P heartbeat received
+    -- Last confirmed settlement. A payment that settled and was served is a
+    -- stronger liveness proof than a heartbeat, and it is the only signal a
+    -- seller who does not run a P2P node ever produces. Without this, every
+    -- auto-catalogued resource is pruned to OFFLINE within minutes and
+    -- disappears from discovery.
+    last_settlement_at TIMESTAMPTZ,
     heartbeat_sequence BIGINT DEFAULT 0,  -- Monotonic sequence number
 
     -- Node identity

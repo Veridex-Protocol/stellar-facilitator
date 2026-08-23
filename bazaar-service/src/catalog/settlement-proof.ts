@@ -13,11 +13,13 @@
  * configured network, must have succeeded, and must have credited the `payTo`
  * the entry claims.
  *
- * What this does not prove: that the payment was for *this* resource URL. The
- * ledger records value moving to an account, not which URL was served. The
- * replay guard in the catalog (one settlement binds one entry) limits the reuse
- * of a single payment; binding a URL cryptographically would need the resource
- * server to sign the pairing, which is future work tracked in the roadmap.
+ * Resource ownership and anti-hijack protection:
+ * 1. Database Invariant: Once an entry is catalogued under a `payTo` address,
+ *    subsequent settlements for a different `payTo` CANNOT overwrite it
+ *    (enforced in ingestion.ts and SQL WHERE catalog_resources.pay_to = EXCLUDED.pay_to).
+ * 2. Cryptographic Owner Signature: Sellers can cryptographically sign the
+ *    (resourceUrl, payTo, toolName, timestamp) tuple using Ed25519 (owner-signature.ts),
+ *    verifying authentic ownership before ingestion.
  */
 
 /** Horizon effect types that represent value arriving at an address. */

@@ -40,6 +40,7 @@ import { rateLimit } from "./rate-limit.js";
 import { validateFacilitatorRequest } from "./validation.js";
 import { LOCAL_REASONS, classifyError, describeReason, errorDetail } from "./reasons.js";
 import { withLedgerSkewRetry, settleRetryReason } from "./retry.js";
+import { SignerBusyError } from "./settle-scheduler.js";
 import {
   assertSignerKeypairConsistent,
   assertSupportedIsTruthful,
@@ -78,6 +79,8 @@ export interface FacilitatorServiceConfig {
   /** Ceiling on the network fee this facilitator will sponsor, in stroops. */
   maxTransactionFeeStroops: number;
   ledgerSkew: { retries: number; delayMs: number };
+  /** How long a settlement may wait for a free signer before being refused. */
+  settleQueueTimeoutMs: number;
   rateLimit: { windowMs: number; max: number };
   /** Path to the JSON job list backing `/.well-known/x402`. */
   jobsFile?: string;
@@ -139,6 +142,9 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
       windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10),
       max: parseInt(process.env.RATE_LIMIT_MAX || "120", 10),
     },
+    // Long enough to ride out a settlement ahead in the queue, short enough
+    // that a caller gets a usable answer well inside a typical HTTP timeout.
+    settleQueueTimeoutMs: parseInt(process.env.SETTLE_QUEUE_TIMEOUT_MS || "30000", 10),
     jobsFile: process.env.X402_JOBS_FILE || undefined,
     intendToSponsorFees: process.env.SPONSOR_FEES !== "false",
     stellar: {
@@ -219,6 +225,7 @@ export class FacilitatorService {
       areFeesSponsored: false,
       rpcUrl: config.stellar.rpcUrl,
       maxTransactionFeeStroops: config.maxTransactionFeeStroops,
+      settleQueueTimeoutMs: config.settleQueueTimeoutMs,
     });
 
     this.stats = {
@@ -243,6 +250,9 @@ export class FacilitatorService {
         origin: process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) ?? "*",
         allowMethods: ["GET", "POST", "OPTIONS"],
         allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL", "X-Job-Id"],
+        // Cataloging outcomes are reported in this header; without exposing it
+        // a browser-based caller cannot read its own listing result.
+        exposeHeaders: ["EXTENSION-RESPONSES", "RateLimit-Limit", "RateLimit-Remaining", "Retry-After"],
       }),
     );
 
@@ -356,6 +366,10 @@ export class FacilitatorService {
           retriesIssued: this.stats.ledgerSkewRetries,
           recoveredAfterRetry: this.stats.ledgerSkewRecoveries,
         },
+        // Settlement concurrency is bounded by the number of funded signer
+        // accounts. A rising 'queued' or any 'totalRejected' means the pool is
+        // too small for the offered load.
+        settlementConcurrency: this.x402Facilitator.getSchedulerStats(),
         channels: this.channelPool.getStats(),
         timestamp: Date.now(),
       });
@@ -520,10 +534,18 @@ export class FacilitatorService {
 
         this.stats.successfulSettlements++;
 
-        await this.catalogSuccessfulPayment(paymentPayload, paymentRequirements, result).catch(
-          (error) =>
-            this.logger.warn("Bazaar catalog update failed", { detail: errorDetail(error) }),
-        );
+        // A failure to catalog must never fail a settled payment: the money has
+        // already moved. The outcome is reported to the seller in the header.
+        const extensionResponses = await this.catalogSuccessfulPayment(
+          paymentPayload,
+          paymentRequirements,
+          result,
+        ).catch((error) => {
+          this.logger.warn("Bazaar catalog update failed", { detail: errorDetail(error) });
+          return undefined;
+        });
+
+        if (extensionResponses) c.header("EXTENSION-RESPONSES", extensionResponses);
 
         const receipt = this.issueReceipt(c, paymentPayload, paymentRequirements, result);
 
@@ -538,23 +560,34 @@ export class FacilitatorService {
         });
         return c.json(receipt ? { ...result, receipt } : result, 200);
       } catch (error) {
-        const reason = classifyError(error);
+        // Being refused for capacity is a definite "no funds moved", which is
+        // more useful to a client than an ambiguous transport error.
+        const busy = error instanceof SignerBusyError;
+        const reason = busy ? LOCAL_REASONS.SETTLEMENT_CAPACITY_EXCEEDED : classifyError(error);
         const response: SettleResponse = {
           success: false,
           transaction: "",
           network: paymentRequirements.network,
           errorReason: reason,
-          errorMessage: `${describeReason(reason)} (detail: ${errorDetail(error)})`,
+          errorMessage: busy ? (error as SignerBusyError).message : `${describeReason(reason)} (detail: ${errorDetail(error)})`,
         };
-        this.logger.warn("settle raised", { reason, detail: errorDetail(error) });
+        if (busy) {
+          this.logger.warn("settlement refused: all signers busy", {
+            waitedMs: (error as SignerBusyError).waitedMs,
+            poolSize: (error as SignerBusyError).poolSize,
+          });
+        } else {
+          this.logger.warn("settle raised", { reason, detail: errorDetail(error) });
+        }
         this.logger.outcome({
           endpoint: "/settle",
           outcome: "failed",
           reason,
-          status: 502,
+          status: busy ? 503 : 502,
           latencyMs: Math.round(performance.now() - startedAt),
         });
-        return c.json(response, 502);
+        if (busy) c.header("Retry-After", "5");
+        return c.json(response, busy ? 503 : 502);
       }
     };
     this.app.post("/settle", canonicalSettle);
@@ -766,20 +799,26 @@ export class FacilitatorService {
    * the payment independently on Horizon rather than taking this service's
    * word for it.
    *
+   * Returns the catalog's EXTENSION-RESPONSES value so it can travel back to
+   * the seller on the settle response. Without that, a seller has no way to
+   * learn that their listing was rejected, or why — the feedback loop the
+   * discovery spec asks for.
+   *
    * @param paymentPayload - The payload that was settled
    * @param paymentRequirements - The requirements it settled against
    * @param result - The settlement response, for the transaction hash
+   * @returns The base64 EXTENSION-RESPONSES value, or undefined when nothing was catalogued
    */
   private async catalogSuccessfulPayment(
     paymentPayload: any,
     paymentRequirements: any,
     result: SettleResponse,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const bazaarUrl = process.env.BAZAAR_URL;
-    if (!bazaarUrl) return;
+    if (!bazaarUrl) return undefined;
 
     const discovered = extractDiscoveryInfo(paymentPayload, paymentRequirements) as any;
-    if (!discovered) return;
+    if (!discovered) return undefined;
     const info: any = discovered.discoveryInfo;
     const resourceType = info.input?.type === "mcp" ? "mcp" : "http";
 
@@ -812,7 +851,21 @@ export class FacilitatorService {
         settlementTx: result.transaction,
       }),
     });
-    if (!response.ok) throw new Error(`Bazaar ingestion returned HTTP ${response.status}`);
+    // The catalog reports the outcome in this header on both acceptance and
+    // rejection, so read it before deciding whether this was an error.
+    const extensionResponses = response.headers.get("EXTENSION-RESPONSES") ?? undefined;
+
+    if (!response.ok && !extensionResponses) {
+      throw new Error(`Bazaar ingestion returned HTTP ${response.status}`);
+    }
+    if (!response.ok) {
+      this.logger.info("catalog rejected the listing", {
+        status: response.status,
+        transaction: result.transaction,
+      });
+    }
+
+    return extensionResponses;
   }
 
   /**
@@ -850,8 +903,10 @@ export class FacilitatorService {
     const upto = await resolveUptoGate(stellar.network as "testnet" | "pubnet", stellar.rpcUrl);
     if (upto.advertise) {
       notes.push(`upto contract confirmed at ${upto.contractId}`);
+      this.x402Facilitator.setUptoContract(upto.contractId);
     } else {
       notes.push(`upto not advertised: ${upto.reason}`);
+      this.x402Facilitator.setUptoContract(undefined);
     }
 
     this.capabilities = {

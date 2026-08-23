@@ -120,3 +120,15 @@ export class LivenessCircuitBreaker {
     return Math.floor(windowMs / this.config.heartbeatIntervalMs);
   }
 }
+
+/**
+ * How long a confirmed settlement keeps a resource HEALTHY.
+ *
+ * Settlements are sparse by nature — a resource may be perfectly available and
+ * go hours between payments — so this window is far wider than the heartbeat
+ * one. Seven times this value is the point at which a resource with no other
+ * signal finally drops to OFFLINE.
+ */
+export const SETTLEMENT_LIVENESS_WINDOW_MS = Number(
+  process.env.SETTLEMENT_LIVENESS_WINDOW_MS ?? 24 * 60 * 60 * 1000,
+);

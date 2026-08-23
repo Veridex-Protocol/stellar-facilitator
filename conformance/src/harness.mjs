@@ -31,6 +31,7 @@ import { config as loadDotenv } from "dotenv";
 loadDotenv({ path: [".env", "../.env"], quiet: true });
 
 import { createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +42,8 @@ import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { wrapFetchWithPayment } from "@x402/fetch";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
+
+import { isSettled, settleUpto } from "./upto.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
@@ -56,6 +59,8 @@ const BUYER_SECRET_KEY = process.env.BUYER_SECRET_KEY;
 const SELLER_ADDRESS = process.env.SELLER_ADDRESS;
 const PAYMENT_AMOUNT = process.env.PAYMENT_AMOUNT ?? "100000";
 const PAYMENT_ASSET = process.env.PAYMENT_ASSET;
+// Only needed for the upto group, which is skipped when no contract is deployed.
+const FACILITATOR_SECRET_KEY = process.env.FACILITATOR_SECRET_KEY;
 
 if (!BUYER_SECRET_KEY || !SELLER_ADDRESS || !PAYMENT_ASSET) {
   process.stderr.write(
@@ -201,7 +206,7 @@ async function postFacilitator(path, body) {
   });
   const text = await response.text();
   try {
-    return { status: response.status, body: JSON.parse(text) };
+    return { status: response.status, body: JSON.parse(text), headers: response.headers };
   } catch {
     throw new Error(`${path} returned non-JSON (HTTP ${response.status}): ${text.slice(0, 200)}`);
   }
@@ -248,9 +253,9 @@ const buyerClient = new x402Client().register(NETWORK, clientScheme);
  * @param signedFor - Requirements the client signs against
  * @returns A complete PaymentPayload
  */
-async function signPayload(signedFor) {
+async function signPayload(signedFor, echo = null) {
   const partial = await clientScheme.createPaymentPayload(2, signedFor);
-  return { ...partial, accepted: signedFor };
+  return { ...partial, accepted: signedFor, ...(echo ?? {}) };
 }
 
 /**
@@ -399,6 +404,11 @@ group("3. A stock x402 client completes a payment");
 
 let settledTransaction = null;
 let settlementLatencyMs = null;
+let settleHeaders = null;
+let uptoPartialTransaction = null;
+let uptoZeroTransaction = null;
+/** The 402's resource block and extensions, echoed back on the direct settle. */
+let discoveryEcho = null;
 
 await check("unpaid request returns 402 with well-formed payment terms", async () => {
   const response = await fetch(`${DEMO_SERVER_URL}/paid-resource`, {
@@ -415,6 +425,12 @@ await check("unpaid request returns 402 with well-formed payment terms", async (
   const terms = paymentRequired.accepts[0];
   assert(terms.network === NETWORK, `402 offers ${terms.network}, expected ${NETWORK}`);
   assert(terms.payTo === SELLER_ADDRESS, `402 pays ${terms.payTo}, expected ${SELLER_ADDRESS}`);
+
+  // The seller declares discovery metadata in the 402; a stock client echoes it
+  // into the payment. Keep it so the direct settle below is a faithful
+  // reproduction of a real, cataloguable payment.
+  assert(paymentRequired.extensions?.bazaar, "the 402 declares no bazaar discovery extension");
+  discoveryEcho = { resource: paymentRequired.resource, extensions: paymentRequired.extensions };
   return terms;
 });
 
@@ -444,8 +460,8 @@ let receipt = null;
 
 await check("a direct /settle produces a transaction hash", async () => {
   const signedFor = requirements();
-  const paymentPayload = await signPayload(signedFor);
-  const { status, body } = await postFacilitator("/settle", {
+  const paymentPayload = await signPayload(signedFor, discoveryEcho);
+  const { status, body, headers } = await postFacilitator("/settle", {
     paymentPayload,
     paymentRequirements: signedFor,
   });
@@ -456,6 +472,7 @@ await check("a direct /settle produces a transaction hash", async () => {
 
   settledTransaction = body.transaction;
   receipt = body.receipt ?? null;
+  settleHeaders = headers;
   return { transaction: settledTransaction, explorer: `${EXPLORER}/${settledTransaction}` };
 });
 
@@ -632,6 +649,119 @@ await check("the paid resource is discoverable after settling", async () => {
   throw new Error("the settled resource never appeared in Bazaar search results");
 });
 
+await check("the spec's discovery filters are all honoured", async () => {
+  // type, payTo, network, extensions, limit, offset are named by the spec.
+  const base = `${BAZAAR_URL}/discovery/resources`;
+  const all = await (await fetch(`${base}?limit=50`)).json();
+  assert(Array.isArray(all.results), "/discovery/resources returned no results array");
+
+  const checks = {
+    type: `${base}?type=http&limit=50`,
+    payTo: `${base}?payTo=${encodeURIComponent(SELLER_ADDRESS)}&limit=50`,
+    network: `${base}?network=${encodeURIComponent(NETWORK)}&limit=50`,
+    extensions: `${base}?extensions=bazaar&limit=50`,
+  };
+
+  const applied = {};
+  for (const [name, url] of Object.entries(checks)) {
+    const response = await fetch(url);
+    assert(response.status === 200, `filter '${name}' returned HTTP ${response.status}`);
+    const body = await response.json();
+    assert(Array.isArray(body.results), `filter '${name}' returned no results array`);
+    applied[name] = body.results.length;
+  }
+
+  // A filter that matches nothing must actually narrow, not be ignored.
+  const nobody = await (await fetch(`${base}?payTo=${Keypair.random().publicKey()}&limit=50`)).json();
+  assert(
+    nobody.results.length === 0,
+    `payTo filter is not applied: an address that paid for nothing returned ${nobody.results.length} results`,
+  );
+  const wrongType = await (await fetch(`${base}?type=mcp&limit=50`)).json();
+  assert(
+    wrongType.results.every((r) => r.resourceType === "mcp"),
+    "type filter returned resources of the wrong type",
+  );
+
+  return applied;
+});
+
+await check("search pages with an opaque cursor and reports partialResults", async () => {
+  const url = `${BAZAAR_URL}/discovery/search?q=${encodeURIComponent("boring JSON object")}&limit=1&minUptimeRatio=0`;
+  const first = await (await fetch(url)).json();
+
+  assert(typeof first.partialResults === "boolean", "response carries no partialResults flag");
+  assert(Number.isInteger(first.total), "response carries no total");
+
+  if (first.total > first.results.length) {
+    assert(typeof first.nextCursor === "string", "more results exist but no nextCursor was issued");
+    assert(!first.nextCursor.includes(String(first.results.length)), "cursor leaks a readable offset");
+
+    const second = await (await fetch(`${url}&cursor=${encodeURIComponent(first.nextCursor)}`)).json();
+    assert(second.results !== undefined, "cursor did not return a page");
+    const firstIds = new Set(first.results.map((r) => r.id));
+    assert(
+      second.results.every((r) => !firstIds.has(r.id)),
+      "the second page repeats results from the first",
+    );
+  }
+  return { total: first.total, partialResults: first.partialResults, hasCursor: Boolean(first.nextCursor) };
+});
+
+await check("a cursor from another query is rejected, not silently answered", async () => {
+  const a = await (
+    await fetch(`${BAZAAR_URL}/discovery/search?q=alpha&limit=1&minUptimeRatio=0`)
+  ).json();
+  if (!a.nextCursor) return { skipped: "not enough results to page" };
+
+  const response = await fetch(
+    `${BAZAAR_URL}/discovery/search?q=beta&limit=1&minUptimeRatio=0&cursor=${encodeURIComponent(a.nextCursor)}`,
+  );
+  assert(response.status === 400, `expected 400 for a foreign cursor, got ${response.status}`);
+  const body = await response.json();
+  assert(body.error === "invalid_cursor", `expected 'invalid_cursor', got ${body.error}`);
+  return { status: response.status };
+});
+
+await check("the catalog reports outcomes in the EXTENSION-RESPONSES header", async () => {
+  // A seller has to be able to learn that a listing was rejected, and why.
+  const response = await fetch(`${BAZAAR_URL}/catalog/ingest`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resourceUrl: "https://example.test/x", resourceType: "http" }),
+  });
+
+  const header = response.headers.get("EXTENSION-RESPONSES");
+  if (response.status === 401) return { note: "ingest is authenticated; header checked on settle below" };
+
+  assert(header, "a rejected listing carried no EXTENSION-RESPONSES header");
+  const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  assert(decoded.bazaar?.status === "rejected", `header reports status ${decoded.bazaar?.status}`);
+  assert(
+    typeof decoded.bazaar?.rejectedReason === "string" && decoded.bazaar.rejectedReason.length > 10,
+    "header reports a rejection with no usable reason",
+  );
+  return decoded.bazaar;
+});
+
+await check("the settle response tells the seller whether the listing landed", async () => {
+  // The hop that matters is facilitator -> resource server: the seller calls
+  // /settle and must learn from that same response whether its listing was
+  // catalogued. Before this, the facilitator read the catalog's verdict and
+  // dropped it on the floor.
+  assert(settleHeaders, "no settle response was captured");
+  const header = settleHeaders.get("EXTENSION-RESPONSES");
+  assert(header, "the settle response carried no EXTENSION-RESPONSES header");
+
+  const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
+  assert(decoded.bazaar, "EXTENSION-RESPONSES carries no 'bazaar' entry");
+  assert(
+    ["success", "rejected"].includes(decoded.bazaar.status),
+    `unexpected cataloging status '${decoded.bazaar.status}'`,
+  );
+  return decoded.bazaar;
+});
+
 await check("the catalog refuses an entry with no settlement behind it", async () => {
   // Catalog integrity: an entry must be bound to a settlement the Bazaar can
   // confirm on Horizon itself, not to a caller's assertion that one happened.
@@ -655,6 +785,112 @@ await check("the catalog refuses an entry with no settlement behind it", async (
   return { status: response.status };
 });
 
+// ── 8. upto, when a contract is deployed ────────────────────────────────────
+
+const uptoContract = supported.kinds.find((k) => k.scheme === "upto")?.extra?.contractId;
+
+if (uptoContract) {
+  group("8. Metered settlement with upto");
+
+  const uptoBase = {
+    contractId: uptoContract,
+    rpcUrl: process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
+    horizonUrl: HORIZON,
+    payerSecret: BUYER_SECRET_KEY,
+    facilitatorSecret: FACILITATOR_SECRET_KEY,
+    payTo: SELLER_ADDRESS,
+    token: PAYMENT_ASSET,
+    requestDigest: createHash("sha256").update("conformance-request").digest(),
+    resultDigest: createHash("sha256").update("conformance-result").digest(),
+  };
+
+  /**
+   * Reads an account's native balance in stroops.
+   *
+   * @param address - Stellar address
+   * @returns The balance in atomic units
+   */
+  async function stroops(address) {
+    const account = await (await fetch(`${HORIZON}/accounts/${address}`)).json();
+    const native = account.balances?.find((b) => b.asset_type === "native");
+    return Math.round(parseFloat(native?.balance ?? "0") * 1e7);
+  }
+
+  const partialId = randomBytes(32);
+
+  await check("a partial settlement pays exactly the amount charged", async () => {
+    const before = await stroops(SELLER_ADDRESS);
+    const settled = await settleUpto({
+      ...uptoBase,
+      maxAmount: 1_000_000,
+      actual: 250_000,
+      settlementId: partialId,
+    });
+    const after = await stroops(SELLER_ADDRESS);
+
+    assert(
+      after - before === 250_000,
+      `recipient moved by ${after - before}, expected exactly 250000 of a 1000000 ceiling`,
+    );
+    uptoPartialTransaction = settled.hash;
+    return { transaction: settled.hash, ledger: settled.ledger, credited: after - before };
+  });
+
+  await check("a zero settlement moves nothing and still consumes the authorization", async () => {
+    // Zero is terminal, not a no-op: a metered job that cost nothing must still
+    // consume the authorization so it cannot be presented again.
+    const zeroId = randomBytes(32);
+    const before = await stroops(SELLER_ADDRESS);
+    const settled = await settleUpto({
+      ...uptoBase,
+      maxAmount: 1_000_000,
+      actual: 0,
+      settlementId: zeroId,
+    });
+    const after = await stroops(SELLER_ADDRESS);
+
+    assert(after - before === 0, `recipient moved by ${after - before}, expected 0`);
+
+    const consumed = await isSettled({
+      contractId: uptoContract,
+      rpcUrl: uptoBase.rpcUrl,
+      readerSecret: FACILITATOR_SECRET_KEY,
+      payer: buyerAddress,
+      settlementId: zeroId,
+    });
+    assert(consumed === true, "a zero settlement left the authorization unconsumed");
+
+    uptoZeroTransaction = settled.hash;
+    return { transaction: settled.hash, ledger: settled.ledger };
+  });
+
+  await check("an authorization cannot settle twice", async () => {
+    // Enforced in contract storage, so it holds for any payer regardless of
+    // how that payer authenticates.
+    let rejected = false;
+    try {
+      await settleUpto({ ...uptoBase, maxAmount: 1_000_000, actual: 250_000, settlementId: partialId });
+    } catch (error) {
+      rejected = /Contract, #10|AlreadySettled/.test(String(error.message));
+      if (!rejected) throw new Error(`rejected for the wrong reason: ${error.message}`);
+    }
+    assert(rejected, "a replayed settlement id was accepted");
+    return { reason: "AlreadySettled" };
+  });
+
+  await check("the contract reports an unused authorization as unsettled", async () => {
+    const unused = await isSettled({
+      contractId: uptoContract,
+      rpcUrl: uptoBase.rpcUrl,
+      readerSecret: FACILITATOR_SECRET_KEY,
+      payer: buyerAddress,
+      settlementId: randomBytes(32),
+    });
+    assert(unused === false, "an authorization that was never used reports as settled");
+    return { unused };
+  });
+}
+
 // ─── report ──────────────────────────────────────────────────────────────────
 
 const passed = results.filter((result) => result.passed).length;
@@ -672,6 +908,9 @@ const report = {
   stockClientPackages: pinned,
   settledTransaction,
   explorerUrl: settledTransaction ? `${EXPLORER}/${settledTransaction}` : null,
+  uptoContract: uptoContract ?? null,
+  uptoPartialTransaction,
+  uptoZeroTransaction,
   paidRequestLatencyMs: settlementLatencyMs,
   receipt,
   passed,

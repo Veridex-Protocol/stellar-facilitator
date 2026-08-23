@@ -57,10 +57,16 @@ export const SearchQuerySchema = z.object({
   resourceType: z.enum(["http", "mcp"]).optional(),
   network: z.string().optional(),
   scheme: z.string().optional(),
+  /** Filter to resources paying this Stellar address. */
+  payTo: z.string().optional(),
+  /** Filter to resources declaring all of these extensions. */
+  extensions: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
   minUptimeRatio: z.number().min(0).max(1).default(0.9),
   limit: z.number().int().min(1).max(100).default(20),
   offset: z.number().int().min(0).default(0),
+  /** Opaque continuation token from a previous response. Supersedes `offset`. */
+  cursor: z.string().optional(),
 });
 
 export type SearchQuery = z.infer<typeof SearchQuerySchema>;
@@ -88,10 +94,42 @@ export const SearchResponseSchema = z.object({
   total: z.number().int(),
   limit: z.number().int(),
   offset: z.number().int(),
+  /**
+   * Opaque token for the next page, absent on the last page. Clients page by
+   * echoing this back as `cursor` rather than computing an offset.
+   */
+  nextCursor: z.string().optional(),
+  /**
+   * True when this response is not a complete view of what matched: the
+   * candidate pool was truncated before ranking, or a leg of the hybrid search
+   * was unavailable and the query fell back. Never defaulted to false blindly.
+   */
   partialResults: z.boolean().default(false),
+  /** Why `partialResults` is set, when it is. */
+  partialReason: z.string().optional(),
 });
 
 export type SearchResponse = z.infer<typeof SearchResponseSchema>;
+
+/**
+ * Filters for `GET /discovery/resources`.
+ *
+ * `type`, `payTo`, `network`, `extensions`, `limit` and `offset` are the filters
+ * the x402 discovery spec names; `scheme` and `tags` are supported extras.
+ */
+export const ResourceFiltersSchema = z.object({
+  resourceType: z.enum(["http", "mcp"]).optional(),
+  payTo: z.string().optional(),
+  network: z.string().optional(),
+  extensions: z.array(z.string()).optional(),
+  scheme: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+  offset: z.number().int().min(0).default(0),
+  cursor: z.string().optional(),
+});
+
+export type ResourceFilters = z.infer<typeof ResourceFiltersSchema>;
 
 /**
  * Composite ranking weights

@@ -23,6 +23,7 @@ export function makeConfig(
     baseUrl: "http://localhost:3002",
     maxTransactionFeeStroops: 1_000_000,
     ledgerSkew: { retries: 2, delayMs: 1 },
+    settleQueueTimeoutMs: 200,
     rateLimit: { windowMs: 60_000, max: 1000 },
     intendToSponsorFees: true,
     stellar: {

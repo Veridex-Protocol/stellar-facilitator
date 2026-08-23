@@ -19,6 +19,7 @@ export const LOCAL_REASONS = {
   INVALID_REQUEST_BODY: "invalid_request_body",
   UNSUPPORTED_SCHEME_OR_NETWORK: "unsupported_scheme_or_network",
   UPSTREAM_RPC_UNAVAILABLE: "upstream_rpc_unavailable",
+  SETTLEMENT_CAPACITY_EXCEEDED: "settlement_capacity_exceeded",
   FACILITATOR_INTERNAL_ERROR: "facilitator_internal_error",
 } as const;
 
@@ -42,6 +43,8 @@ export const REASON_MESSAGES: Readonly<Record<string, string>> = {
     "This facilitator does not handle the requested scheme/network pair. See GET /supported for what it does handle.",
   [LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE]:
     "The Soroban RPC endpoint could not be reached, so the payment could not be simulated or submitted. This is a facilitator-side outage, not a problem with your payment.",
+  [LOCAL_REASONS.SETTLEMENT_CAPACITY_EXCEEDED]:
+    "Every settlement signer this facilitator holds was already submitting a transaction, and none freed up in time. Nothing was submitted and no funds moved; retry shortly. Concurrency is bounded by the number of funded channel accounts the operator has provisioned.",
   [LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR]:
     "The facilitator hit an unexpected internal error while processing this request. The payment was not settled.",
 
