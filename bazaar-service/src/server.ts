@@ -358,9 +358,19 @@ export class BazaarService {
       }
     });
 
-    // Accept P2P announcements via HTTP
+    // Accept P2P announcements via HTTP (Authenticated)
     this.app.post("/announce", async (c) => {
       try {
+        if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+          return c.json(
+            {
+              error: "unauthorized",
+              message: "/announce requires the internal bearer token to publish gossip announcements",
+            },
+            401,
+          );
+        }
+
         const body = await c.req.json();
         const message = AnnounceMessageSchema.parse(body);
 

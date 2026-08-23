@@ -354,6 +354,64 @@ export class CatalogIngestionWorker {
       }
     }
 
+    // 6. Validate inputSpec and outputSpec against schema injection (reject external $ref/$id)
+    if (extension.inputSpec && typeof extension.inputSpec === "object") {
+      const specResult = this.validateJsonSpec(extension.inputSpec);
+      if (!specResult.valid) {
+        return { valid: false, reason: `inputSpec validation failed: ${specResult.reason}` };
+      }
+    }
+
+    if (extension.outputSpec && typeof extension.outputSpec === "object") {
+      const specResult = this.validateJsonSpec(extension.outputSpec);
+      if (!specResult.valid) {
+        return { valid: false, reason: `outputSpec validation failed: ${specResult.reason}` };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Validate JSON Schema specifications against injection attacks (e.g., external $ref/$id)
+   */
+  private validateJsonSpec(spec: unknown, depth = 0): { valid: boolean; reason?: string } {
+    if (depth > 16) {
+      return { valid: false, reason: "spec exceeds maximum nesting depth of 16" };
+    }
+    if (spec === null || typeof spec !== "object") {
+      return { valid: true };
+    }
+
+    if (Array.isArray(spec)) {
+      for (const item of spec) {
+        const itemResult = this.validateJsonSpec(item, depth + 1);
+        if (!itemResult.valid) return itemResult;
+      }
+      return { valid: true };
+    }
+
+    for (const [key, value] of Object.entries(spec as Record<string, unknown>)) {
+      // Reject dangerous JSON Schema keywords referencing external/network resources
+      if (key === "$ref" || key === "$id" || key === "$schema") {
+        if (typeof value === "string") {
+          const lower = value.toLowerCase();
+          if (
+            lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("ftp://") ||
+            lower.startsWith("//") ||
+            lower.startsWith("file://")
+          ) {
+            return { valid: false, reason: `external URI reference not allowed in ${key}: ${value}` };
+          }
+        }
+      }
+
+      const valResult = this.validateJsonSpec(value, depth + 1);
+      if (!valResult.valid) return valResult;
+    }
+
     return { valid: true };
   }
 

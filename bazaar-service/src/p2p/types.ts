@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { canonicalize } from "./canonical.js";
 
 /**
  * GossipSub topic for Bazaar announcements
