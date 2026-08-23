@@ -1,131 +1,438 @@
 openapi: 3.0.3
 info:
-  title: Veridex Stellar x402 v2 APIs
-  version: 0.2.0
-  license:
-    name: Apache-2.0
+  title: Veridex x402 facilitator API
+  version: 0.3.0
+  description: >
+    Canonical x402 v2 facilitator for Stellar. Every capability advertised here
+    is confirmed against the network before the server binds: the process
+    refuses to start rather than advertise fee sponsorship from an unfunded
+    account, and a scheme with no deployed contract is omitted entirely rather
+    than advertised against a placeholder.
+  license: { name: Apache-2.0, url: 'https://www.apache.org/licenses/LICENSE-2.0' }
+
 servers:
   - url: http://localhost:3002
-    description: Facilitator
+    description: Local stack started by npm run demo
+
+tags:
+  - name: protocol
+    description: The canonical x402 v2 surface
+  - name: descriptor
+    description: Capability advertisement
+  - name: ops
+    description: Health, statistics and lookups
+  - name: legacy
+    description: Pre-canonical shapes, retained for existing integrations
+
 paths:
   /supported:
     get:
-      summary: Return canonical x402 v2 capabilities
+      tags: [protocol]
+      summary: Schemes, networks, signers and fee sponsorship
+      description: >
+        Everything in this response was confirmed at boot. areFeesSponsored
+        reflects a Horizon balance check rather than the presence of a key, and
+        the upto entry appears only when a contract instance was confirmed
+        on-chain for the network being served.
       responses:
         '200':
-          description: Supported payment kinds and Stellar signers
+          description: Supported kinds
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/SupportedResponse'
+              schema: { $ref: '#/components/schemas/SupportedResponse' }
+              examples:
+                exactOnly:
+                  summary: No upto contract deployed
+                  value:
+                    kinds:
+                      - { x402Version: 2, scheme: exact, network: 'stellar:testnet', extra: { areFeesSponsored: true } }
+                    extensions: [bazaar]
+                    signers: { 'stellar:*': ['GA6TXRL7J6IXYJODVUNPKTHUTI4YJZAS2RGOM2SV2FJGCRTXACDAIIMZ'] }
+                withUpto:
+                  summary: An upto contract confirmed on-chain
+                  value:
+                    kinds:
+                      - { x402Version: 2, scheme: exact, network: 'stellar:testnet', extra: { areFeesSponsored: true } }
+                      - { x402Version: 2, scheme: upto, network: 'stellar:testnet', extra: { contractId: CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2 } }
+                    extensions: [bazaar]
+                    signers: { 'stellar:*': ['GA6TXRL7J6IXYJODVUNPKTHUTI4YJZAS2RGOM2SV2FJGCRTXACDAIIMZ'] }
+
   /verify:
     post:
-      summary: Verify a canonical x402 v2 payment payload
+      tags: [protocol]
+      summary: Verify a payment before settling it
+      description: >
+        A rejection is a valid protocol answer rather than a transport failure,
+        so an invalid payment returns 200 with isValid false. Every rejection
+        carries both a machine-readable reason and a sentence explaining it.
       requestBody:
-        $ref: '#/components/requestBodies/PaymentRequest'
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FacilitatorRequest' }
       responses:
         '200':
-          description: Valid payment
+          description: Verified, or rejected with a reason
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerifyResponse' }
         '400':
-          description: Invalid payment or request
+          description: The request body is not a well-formed x402 envelope
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VerifyResponse' }
+              example:
+                isValid: false
+                invalidReason: invalid_request_body
+                invalidMessage: >-
+                  'paymentRequirements.asset' must be the SEP-41 token contract address (C...)
+                  being paid. Classic asset identifiers such as 'native' are not valid in x402 v2.
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502':
+          description: Soroban RPC was unreachable, so the payment could not be simulated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerifyResponse' }
+
   /settle:
     post:
-      summary: Settle a canonical x402 v2 payment on Stellar
+      tags: [protocol]
+      summary: Settle a verified payment on Stellar
       requestBody:
-        $ref: '#/components/requestBodies/PaymentRequest'
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FacilitatorRequest' }
       responses:
         '200':
-          description: Settlement result
+          description: Settled, or failed with a reason
+          headers:
+            EXTENSION-RESPONSES:
+              description: >
+                Present when the payment carried the Bazaar discovery extension.
+                Base64 JSON reporting whether the listing landed, forwarded from
+                the catalog so a seller learns the outcome from the same call
+                that settled the payment.
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SettleResponse' }
-        '400': { description: Invalid payment or request }
-        '500': { description: Settlement failure }
-  /x402/verify:
-    post:
-      deprecated: true
-      summary: Compatibility alias for /verify
-      requestBody: { $ref: '#/components/requestBodies/PaymentRequest' }
-      responses: { '200': { description: Verification result } }
-  /x402/settle:
-    post:
-      deprecated: true
-      summary: Compatibility alias for /settle
-      requestBody: { $ref: '#/components/requestBodies/PaymentRequest' }
-      responses: { '200': { description: Settlement result } }
+        '400':
+          description: The request body is not a well-formed x402 envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettleResponse' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502':
+          description: An unexpected error, or Soroban RPC unreachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettleResponse' }
+        '503':
+          description: >
+            Every settlement signer was busy and none freed up within
+            SETTLE_QUEUE_TIMEOUT_MS. Nothing was submitted and no funds moved,
+            so this is always safe to retry.
+          headers:
+            Retry-After: { schema: { type: integer }, description: Seconds }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SettleResponse' }
+              example:
+                success: false
+                transaction: ''
+                network: 'stellar:testnet'
+                errorReason: settlement_capacity_exceeded
+                errorMessage: >-
+                  All 3 settlement signers were busy for 30000ms. Nothing was submitted and no
+                  funds moved; retry, or raise throughput by funding more channel accounts in
+                  CHANNEL_SECRET_KEYS.
+
+  /.well-known/x402:
+    get:
+      tags: [descriptor]
+      summary: Capability descriptor (x402ccd/0)
+      description: >
+        Jobs come from configuration and default to none, which is correct for a
+        facilitator that sells nothing itself. A configured job is validated at
+        boot against the network served and the schemes advertised, and a
+        mismatch aborts the boot rather than being served.
+      responses:
+        '200':
+          description: Descriptor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityDescriptor' }
+
   /health:
     get:
-      summary: Facilitator health
-      responses: { '200': { description: Healthy } }
+      tags: [ops]
+      summary: Liveness and the facts this deployment claims
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  network: { type: string }
+                  facilitator: { type: string }
+                  areFeesSponsored: { type: boolean }
+                  startupChecksPassed:
+                    type: boolean
+                    description: False means nothing advertised here has been confirmed yet
+                  channels: { type: object, additionalProperties: true }
+
   /stats:
     get:
-      summary: Facilitator runtime statistics
-      responses: { '200': { description: Statistics } }
+      tags: [ops]
+      summary: In-process counters since boot
+      description: >
+        These reset on restart. They can back a dashboard but not a published
+        claim; derive published figures from the request_outcome log lines
+        instead, which is what scripts/summarize-outcomes.mjs does.
+      responses:
+        '200':
+          description: Counters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uptime: { type: integer }
+                  note: { type: string }
+                  verifications: { $ref: '#/components/schemas/CounterPair' }
+                  settlements: { $ref: '#/components/schemas/CounterPair' }
+                  ledgerSkew:
+                    type: object
+                    properties:
+                      retriesIssued: { type: integer }
+                      recoveredAfterRetry: { type: integer }
+                  settlementConcurrency:
+                    type: object
+                    description: >
+                      Settlement concurrency is bounded by the number of funded
+                      signer accounts. A rising queued, or any totalRejected,
+                      means the pool is too small for the offered load.
+                    properties:
+                      poolSize: { type: integer }
+                      inFlight: { type: integer }
+                      queued: { type: integer }
+                      totalQueued: { type: integer }
+                      totalRejected: { type: integer }
+                      maxObservedWaitMs: { type: integer }
+
+  /transaction/{hash}:
+    get:
+      tags: [ops]
+      summary: Look up a settlement by transaction hash
+      parameters:
+        - { in: path, name: hash, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Transaction status }
+        '404': { description: Not found }
+
+  /x402/verify:
+    post:
+      tags: [protocol]
+      summary: Compatibility alias for /verify
+      responses: { '200': { description: See /verify } }
+
+  /x402/settle:
+    post:
+      tags: [protocol]
+      summary: Compatibility alias for /settle
+      responses: { '200': { description: See /settle } }
+
+  /legacy/verify:
+    post:
+      tags: [legacy]
+      summary: Pre-canonical verification, classic payment operations only
+      responses: { '200': { description: Verified }, '400': { description: Rejected } }
+
+  /legacy/settle:
+    post:
+      tags: [legacy]
+      summary: Pre-canonical settlement, classic payment operations only
+      responses: { '200': { description: Settled }, '400': { description: Rejected } }
+
 components:
-  requestBodies:
-    PaymentRequest:
-      required: true
+  responses:
+    RateLimited:
+      description: >
+        Rate limited. Settlement spends real XLM from this facilitator's own
+        account, so request rate is capped per instance.
+      headers:
+        Retry-After: { schema: { type: integer } }
+        RateLimit-Limit: { schema: { type: integer } }
+        RateLimit-Remaining: { schema: { type: integer } }
       content:
         application/json:
           schema:
             type: object
-            required: [paymentPayload, paymentRequirements]
             properties:
-              paymentPayload: { type: object, additionalProperties: true }
-              paymentRequirements: { $ref: '#/components/schemas/PaymentRequirements' }
+              error: { type: string, enum: [rate_limited] }
+              message: { type: string }
+
   schemas:
+    SupportedResponse:
+      type: object
+      required: [kinds, signers]
+      properties:
+        kinds:
+          type: array
+          items:
+            type: object
+            properties:
+              x402Version: { type: integer, enum: [2] }
+              scheme: { type: string, enum: [exact, upto] }
+              network: { type: string, example: 'stellar:testnet' }
+              extra:
+                type: object
+                description: >
+                  For exact, carries areFeesSponsored. For upto, carries the
+                  deployed contractId, which clients must read rather than
+                  assume because each operator deploys their own instance.
+                additionalProperties: true
+        extensions: { type: array, items: { type: string } }
+        signers:
+          type: object
+          description: Addresses that may appear as the source of a settlement
+          additionalProperties: { type: array, items: { type: string } }
+
+    FacilitatorRequest:
+      type: object
+      required: [paymentPayload, paymentRequirements]
+      properties:
+        paymentPayload: { $ref: '#/components/schemas/PaymentPayload' }
+        paymentRequirements: { $ref: '#/components/schemas/PaymentRequirements' }
+
+    PaymentPayload:
+      type: object
+      required: [x402Version, accepted, payload]
+      properties:
+        x402Version: { type: integer, enum: [2] }
+        accepted: { $ref: '#/components/schemas/PaymentRequirements' }
+        payload:
+          type: object
+          required: [transaction]
+          properties:
+            transaction:
+              type: string
+              description: >
+                Base64 signed Stellar transaction, passed to @x402/stellar
+                byte-for-byte as the client produced it. This service never
+                inspects, normalises or re-encodes it.
+        resource: { type: object, additionalProperties: true }
+        extensions:
+          type: object
+          additionalProperties: true
+          description: Carries the Bazaar discovery extension when the seller declared one
+
     PaymentRequirements:
       type: object
-      required: [scheme, network, amount, asset, payTo]
+      required: [scheme, network, asset, amount, payTo, maxTimeoutSeconds]
       properties:
-        scheme: { type: string, enum: [exact] }
-        network: { type: string, enum: ['stellar:testnet', 'stellar:pubnet'] }
-        amount: { type: string, pattern: '^[0-9]+$' }
-        asset: { type: string, description: SEP-41 token contract address }
-        payTo: { type: string, description: Stellar recipient address }
-        maxTimeoutSeconds: { type: integer }
+        scheme: { type: string, example: exact }
+        network: { type: string, example: 'stellar:testnet' }
+        asset:
+          type: string
+          description: >
+            SEP-41 token contract address. Classic identifiers such as 'native'
+            are rejected.
+          pattern: '^C[A-Z2-7]{55}$'
+        amount: { type: string, pattern: '^\d+$', description: Atomic units }
+        payTo: { type: string }
+        maxTimeoutSeconds: { type: number }
         extra: { type: object, additionalProperties: true }
+
     VerifyResponse:
       type: object
       required: [isValid]
       properties:
         isValid: { type: boolean }
         payer: { type: string }
-        invalidReason: { type: string }
-        invalidMessage: { type: string }
+        invalidReason: { type: string, description: Never null on a rejection }
+        invalidMessage: { type: string, description: A sentence explaining the reason }
+
     SettleResponse:
       type: object
-      required: [success, network]
+      required: [success, transaction, network]
       properties:
         success: { type: boolean }
-        transaction: { type: string }
+        transaction: { type: string, description: Hash, empty when nothing was submitted }
         network: { type: string }
         payer: { type: string }
         errorReason: { type: string }
         errorMessage: { type: string }
-    SupportedResponse:
+        receipt: { $ref: '#/components/schemas/JobReceipt' }
+
+    JobReceipt:
       type: object
-      required: [kinds, extensions, signers]
+      description: >
+        An x402job/1 receipt, present when the settlement named a payer. Signed
+        over the RFC 8785 canonical form of the claims, so a third party can
+        recompute both digests and check the signature independently.
       properties:
-        kinds:
-          type: array
-          items:
-            type: object
-            required: [x402Version, scheme, network]
-            properties:
-              x402Version: { type: integer, enum: [2] }
-              scheme: { type: string, enum: [exact] }
-              network: { type: string }
-              extra: { type: object, additionalProperties: true }
-        extensions: { type: array, items: { type: string } }
-        signers:
+        claims:
           type: object
-          additionalProperties:
-            type: array
-            items: { type: string }
+          properties:
+            v: { type: string, enum: [x402job/1] }
+            service: { type: string }
+            job: { type: string }
+            requestDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            resultDigest: { type: string, pattern: '^sha256:[0-9a-f]{64}$' }
+            settlement:
+              type: object
+              properties:
+                tx: { type: string }
+                payer: { type: string }
+                asset: { type: string }
+                amount: { type: string }
+                network: { type: string }
+            signer: { type: string }
+            issuedAt: { type: integer }
+        signature: { type: string, description: Ed25519 over the canonical claims, hex }
+        canonicalClaims:
+          type: string
+          description: >
+            The exact bytes signed, published so a verifier need not guess the
+            encoding. Verification re-canonicalizes the claims rather than
+            trusting this field.
+
+    CapabilityDescriptor:
+      type: object
+      properties:
+        ccd: { type: string, enum: [x402ccd/0] }
+        service: { type: string }
+        baseUrl: { type: string, description: From BASE_URL, which is required at boot }
+        network: { type: string }
+        runtime:
+          type: object
+          properties:
+            attested:
+              type: boolean
+              enum: [false]
+              description: >
+                Hardcoded false. Proposal #3117's honesty rule requires it be
+                false absent a verifiable TEE claim, and this deployment
+                produces none, so it is not configurable.
+            platform: { type: string }
+            note: { type: string }
+        receipts:
+          type: object
+          properties:
+            format: { type: string, enum: [x402job/1] }
+            signer: { type: string }
+            canonicalization: { type: string, enum: [RFC8785] }
+        schemes: { type: array, items: { type: string } }
+        jobs: { type: array, items: { type: object, additionalProperties: true } }
+
+    CounterPair:
+      type: object
+      properties:
+        total: { type: integer }
+        successful: { type: integer }
+        successRate: { type: number }

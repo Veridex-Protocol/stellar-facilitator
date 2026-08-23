@@ -1,130 +1,329 @@
 # Stellar `upto` payment scheme for x402 v2
 
-**Status:** draft — not advertised or deployed until the release gates below pass
-
-**Network family:** `stellar:*`
-
+**Status:** Draft for the x402 Technical Steering Committee
+**Networks:** `stellar:testnet`, `stellar:pubnet`
 **Scheme identifier:** `upto`
-**Authoritative architecture:** [architecture.md](../architecture.md#7-upto-metered-settlement-with-one-payer-signature)
+**Reference implementation:** [`contracts/upto-settlement`](../../contracts/upto-settlement)
+**Reference deployment:** [`CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2`](https://stellar.expert/explorer/testnet/contract/CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2) on `stellar:testnet`, wasm SHA-256 `c157c24c6d8e90267230932a6d1f88e04e0343e6e8d3df6836ad60c8c9972959`
 
 ## Purpose
 
-`upto` lets a payer authorize one resource payment with a maximum amount while
-the resource server settles the measured amount. The payer signs the maximum,
-not the final amount. Settlement transfers only the measured integer amount,
-bounded by that maximum, directly from payer to recipient.
+The `exact` scheme settles a price fixed before the work happens. Metered
+services cannot use it, because the cost of a request is not known until the
+request has been served. Token billing, compute time and per-row query pricing
+all have this shape.
 
-This is intentionally not an escrow protocol. The settlement contract never
-holds funds, has no admin or withdrawal path, and does not maintain a persistent
-nonce table. Replay protection comes from the Soroban host's consumed
-authorization-entry nonce.
+`upto` lets a payer authorize a ceiling and lets the facilitator settle the
+amount actually used, with the remainder returned in the same transaction.
+
+The discretion over the final amount sits with the facilitator. Every property
+in this document exists to bound that discretion or to make its exercise
+publicly attributable.
+
+## Why this needs a contract
+
+SEP-41 allowances alone are insufficient, and the RFP is explicit that a
+contract-free design must say so.
+
+An `approve` grants a spender an amount. It does not bind that spender to a
+particular recipient, so a facilitator holding an allowance may transfer to
+anyone. It does not bind the authorization to a single settlement, so an
+allowance that is not fully consumed remains spendable afterwards. It carries no
+notion of a refund, so the unused remainder is not returned atomically.
+
+The recipient binding and single-settlement guarantees the scheme requires are
+therefore enforced by a settlement contract.
 
 ## Requirements
 
-An `upto` requirement uses the standard x402 v2 fields:
+A conforming implementation MUST satisfy the following.
 
-```json
-{
-  "scheme": "upto",
-  "network": "stellar:testnet",
-  "asset": "C...",
-  "amount": "1000000",
-  "payTo": "G...",
-  "maxTimeoutSeconds": 60,
-  "extra": {
-    "contractId": "C...",
-    "deadlineLedger": 123456,
-    "areFeesSponsored": true
-  }
-}
-```
-
-`amount` is the maximum amount in atomic units. `asset` and `extra.contractId`
-are valid Stellar contract addresses. `deadlineLedger` is bounded by the
-facilitator's configured maximum authorization lifetime.
+1. **Ceiling.** The settled amount MUST be at most the authorized `max_amount`.
+   Zero is a valid settled amount and is terminal.
+2. **Recipient binding.** The payer's authorization MUST cover the recipient. A
+   facilitator MUST NOT be able to redirect the payment.
+3. **Single settlement.** An authorization MUST settle at most once, for every
+   payer, regardless of how that payer authenticates.
+4. **Atomic refund.** `max_amount - actual` MUST return to the payer in the same
+   transaction that pays the recipient.
+5. **Bounded validity.** The authorization MUST be valid only within a ledger
+   range.
+6. **Attributable amount.** The facilitator MUST authorize the amount it charges,
+   so the choice is recorded on-ledger rather than only in the facilitator's own
+   logs.
+7. **No privileged party.** The settlement contract MUST NOT have an
+   administrator, an upgrade path, or any configuration that a deployer controls
+   after deployment.
 
 ## Authorization and invocation shape
 
-The payment transaction contains exactly one `invokeHostFunction` operation
-targeting the advertised `upto` contract and calling:
+### Contract interface
 
-```text
-settle(payer, token, payTo, maxAmount, actualAmount, liveUntilLedger)
+```
+settle(payer: Address, terms: PayerTerms, attestation: FacilitatorAttestation) -> Settlement
+is_settled(payer: Address, settlement_id: BytesN<32>) -> bool
 ```
 
-The payer's signed authorization tree has one root and one allowed subcall:
+`settle` is the only state-changing entry point. There is no `initialize`.
 
-```text
-root: settle(token, payTo, maxAmount) on UptoSettlement
-  └─ sub: approve(payer, UptoSettlement, maxAmount, liveUntilLedger) on token
+### What the payer authorizes
+
+```
+PayerTerms {
+    pay_to:         Address       // the recipient
+    token:          Address       // SEP-41 token contract
+    max_amount:     i128          // the ceiling, strictly positive
+    valid_after:    u32           // first ledger at which this may settle
+    deadline:       u32           // last ledger at which this may settle
+    facilitator:    Address       // the only party that may settle it
+    settlement_id:  BytesN<32>    // unique per authorization, per payer
+    request_digest: BytesN<32>    // digest of the request being paid for
+}
 ```
 
-The root is created with `require_auth_for_args((token, payTo, maxAmount))`.
-`actualAmount` is deliberately not in the signed argument list. It is supplied
-at settlement and the contract rejects it unless `0 <= actualAmount <=
-maxAmount`. `liveUntilLedger` is authorized through the `approve` subcall, and
-the facilitator requires it to be no later than the auth-entry expiration.
+The payer's authorization is taken with `require_auth_for_args` over all eight
+fields:
 
-The resulting allowance is usable only by the settlement contract, which still
-requires a fresh payer authorization to establish it. The residual allowance
-therefore expires unused and is not a reusable seller allowance.
+```
+payer.require_auth_for_args(
+    (pay_to, token, max_amount, valid_after, deadline,
+     facilitator, settlement_id, request_digest)
+)
+```
+
+This is the mechanism that satisfies requirement 2. A bare `require_auth()`
+authorizes the invocation rather than the terms, and a facilitator holding such
+an authorization could vary the recipient or the ceiling. Implementations MUST
+bind the arguments.
+
+`request_digest` binds an authorization to one job. It prevents a facilitator
+reusing a signed authorization for different work, and it is the payer's half of
+requirement 6.
+
+### What the facilitator attests
+
+```
+FacilitatorAttestation {
+    settlement_id:  BytesN<32>    // MUST equal terms.settlement_id
+    actual:         i128          // the amount charged, 0 <= actual <= max_amount
+    result_digest:  BytesN<32>    // digest of the result delivered
+}
+```
+
+```
+facilitator.require_auth_for_args((settlement_id, actual, result_digest))
+```
+
+The payer signs before the work exists and therefore cannot commit to a result
+it has not seen. The facilitator signs the half the payer cannot: what it
+delivered, and what it is charging for it. Together these satisfy requirement 6,
+and they are why `actual` is deliberately absent from the payer's signed
+argument list.
+
+### Auth tree
+
+The payer's authorization has exactly one sub-invocation, the token `approve`:
+
+```
+payer → settle(pay_to, token, max_amount, valid_after, deadline,
+               facilitator, settlement_id, request_digest)
+        └── token.approve(payer, settlementContract, max_amount, deadline)
+
+facilitator → settle(settlement_id, actual, result_digest)
+```
+
+Nesting the approval under the payer's authorization means that signature cannot
+authorize a standalone allowance.
 
 ## Contract invariants
 
-The deployed contract must enforce all of the following:
+A conforming contract MUST enforce all of the following, and MUST fail the whole
+invocation atomically if any does not hold.
 
-1. `payTo`, `token`, and `maxAmount` are covered by the payer's root signature.
-2. `actualAmount` is an integer with `0 <= actualAmount <= maxAmount`.
-3. The direct payout is `transfer_from(settlementContract, payer, payTo, actualAmount)`;
-   the contract never receives or stores a token balance.
-4. The allowance is exactly `maxAmount`, names the settlement contract as the
-   spender, and expires no later than the authorization entry.
-5. The auth entry's host-managed nonce is consumed exactly once, making a signed
-   authorization non-replayable without a contract nonce table.
-6. A zero settlement is not submitted by a sponsoring facilitator. The unsigned
-   no-op expires without consuming sponsor fees.
+1. `max_amount > 0`, `actual >= 0`, `actual <= max_amount`.
+2. `attestation.settlement_id == terms.settlement_id`.
+3. `valid_after <= deadline`, and the current ledger is within `[valid_after, deadline]` inclusive.
+4. The payer is neither the facilitator nor the settlement contract; the
+   recipient and the token are not the settlement contract.
+5. `(payer, settlement_id)` has not settled before. It is recorded in contract
+   storage before any value moves.
+6. The allowance the contract requested is exactly `max_amount`, and is exactly
+   zero after the pull.
+7. Balances move by exactly `actual` and nothing else. The payer's balance
+   decreases by `actual`, the recipient's increases by `actual`, and the
+   contract's is unchanged. Where payer and recipient are the same account, that
+   account's balance is unchanged.
 
-## Facilitator verification
+### On replay protection
 
-The facilitator rejects a payload unless all of these hold:
+Soroban's auth-entry nonce prevents replay for a payer using a classic keypair.
+It does not extend that guarantee to a payer authenticating through a custom
+`__check_auth`, whose deduplication behaviour is that account's own business.
 
-1. x402 version, scheme, and CAIP-2 network match the requirement.
-2. There is exactly one contract invocation and it targets the configured
-   advertised `upto` contract; routers and additional operations are rejected.
-3. Root token, recipient, and maximum equal `asset`, `payTo`, and `amount` in
-   the payment requirement.
-4. `actualAmount` is within the signed maximum. The verifier never substitutes
-   `actualAmount` for the signed maximum while verifying the auth signature.
-5. The auth tree contains exactly the root and `approve` subcall shown above;
-   no extra sub-invocations or pending signatures are permitted.
-6. The allowance spender is the configured settlement contract, its amount
-   matches the root maximum, and `liveUntilLedger <= signatureExpirationLedger`.
-7. The signature is valid, the auth-entry expiry is within policy, and enforcing
-   simulation succeeds within configured resource and sponsor-fee ceilings.
-8. Simulated effects show only the approved payer-to-`payTo` token transfer and
-   expected contract events.
+Smart accounts are the payer this scheme is designed for, so requirement 3 cannot
+rest on the host nonce alone. Implementations MUST record `(payer, settlement_id)`
+in contract storage. The entry's time to live SHOULD be bounded by `deadline`,
+so the guard costs no rent beyond the window it protects.
 
-`/settle` independently repeats signature/tree, bound, expiry, and simulation
-validation against fresh ledger state.
+`is_settled(payer, settlement_id)` exposes the guard for clients that want to
+check before signing.
 
-## Responses and conformance vectors
+## Settlement flow
 
-Successful settlement uses the standard x402 v2 response and includes the
-actual atomic amount settled. Failures use stable reasons such as
-`authorization_expired`, `amount_exceeds_max`, `invalid_authorization_tree`,
-`unexpected_contract_target`, `allowance_expiry_invalid`, and
-`simulation_failed`.
+The contract pulls the full ceiling and pays out of it, rather than transferring
+`actual` directly. This is what makes the allowance provably consumed:
 
-Conformance coverage must include partial, full-cap, and zero settlement;
-over-cap amount; altered recipient/token/max; root containing actual amount;
-unexpected operation/subcall; stale/replayed auth; allowance expiry beyond auth
-expiry; failed simulation; timeout/retry idempotency; and a transaction effect
-assertion that the contract never receives a token balance.
+1. Record `(payer, settlement_id)` as settled.
+2. Capture the payer, recipient and contract balances.
+3. `approve(payer, contract, max_amount, deadline)`, then assert the allowance equals `max_amount`.
+4. `transfer_from(contract, payer, contract, max_amount)`.
+5. If `actual > 0`, `transfer(contract, pay_to, actual)`.
+6. If `max_amount - actual > 0`, `transfer(contract, payer, max_amount - actual)`.
+7. Assert the allowance is zero, and assert the balance invariants in §7 above.
+
+Step 7 is what defends against a token that does not behave as its interface
+claims. A fee-taking or rebasing token breaks the equalities rather than quietly
+shortchanging the recipient.
+
+## The settlement event
+
+```
+Settled {
+    payer:          Address     // topic
+    pay_to:         Address     // topic
+    settlement_id:  BytesN<32>  // topic
+    token:          Address
+    facilitator:    Address
+    max_amount:     i128
+    actual:         i128
+    refunded:       i128
+    request_digest: BytesN<32>
+    result_digest:  BytesN<32>
+}
+```
+
+The event carries every field an independent verifier needs to confirm what
+happened without trusting the facilitator that submitted it. This matters for a
+federated catalog, which must be able to confirm an `upto` settlement it did not
+perform. Topics allow an indexer to subscribe by payer, recipient or settlement.
+
+Implementations SHOULD emit an event of this shape. A verifier that can read
+only the amounts, and not the digests, cannot tie a settlement to the work it
+paid for.
+
+## Facilitator behaviour
+
+On `/verify`, a facilitator MUST confirm that the terms are internally
+consistent, that the current ledger is within the validity window, that the
+payer's authorization covers all eight terms, and that
+`is_settled(payer, settlement_id)` is false.
+
+On `/settle`, the facilitator supplies `actual` and `result_digest`, signs the
+attestation, and submits. It MUST NOT substitute `max_amount` for `actual`, and
+it MUST NOT settle an authorization whose `request_digest` does not correspond to
+the work it performed.
+
+A facilitator advertising this scheme on `/supported` MUST carry the deployed
+contract address:
+
+```json
+{
+  "x402Version": 2,
+  "scheme": "upto",
+  "network": "stellar:testnet",
+  "extra": { "contractId": "C..." }
+}
+```
+
+Clients MUST read `extra.contractId` rather than assuming one. Each operator
+deploys their own instance, and because the contract is stateless with no
+privileged party, instances of the same wasm are behaviourally identical.
+
+A facilitator SHOULD confirm the contract exists on-chain at the configured
+address before advertising the scheme, and SHOULD additionally verify that the
+deployed wasm hash matches the audited artifact. Confirming an address exists
+proves something is deployed; it does not prove what.
+
+## Rejection reasons
+
+Every rejection MUST carry a non-null machine-readable reason. The reference
+implementation returns these contract errors:
+
+| Error | Meaning |
+| --- | --- |
+| `InvalidMaximum` | `max_amount` is not strictly positive |
+| `NegativeActual` | `actual` is negative |
+| `ActualExceedsMaximum` | `actual` exceeds the authorized ceiling |
+| `InvalidTimeWindow` | `valid_after` is after `deadline` |
+| `NotYetValid` | The current ledger precedes `valid_after` |
+| `Expired` | The current ledger is past `deadline` |
+| `InvalidPayer` | The payer is the facilitator or the contract |
+| `InvalidRecipient` | The recipient is the contract |
+| `InvalidToken` | The token is the contract |
+| `AlreadySettled` | This `(payer, settlement_id)` has settled, or the attestation names a different settlement |
+| `UnexpectedAllowance` | The token did not grant the requested allowance |
+| `AllowanceNotConsumed` | The allowance was not fully consumed |
+| `BalanceInvariantViolated` | Balances did not move by exactly the settled amounts |
+| `ArithmeticOverflow` | An arithmetic operation overflowed |
+
+## Conformance vectors
+
+An implementation claiming conformance SHOULD demonstrate all of these, and the
+reference implementation covers each in
+[`test.rs`](../../contracts/upto-settlement/src/test.rs).
+
+| Vector | Expectation |
+| --- | --- |
+| Partial settlement | `actual < max_amount`; recipient credited `actual`, payer refunded the remainder, contract balance zero |
+| Full settlement | `actual == max_amount`; no refund |
+| Zero settlement | `actual == 0`; nothing paid, everything refunded, authorization consumed |
+| Every amount in range | Invariants hold for each `actual` from 0 to `max_amount` |
+| Payer equals recipient | The account's balance is unchanged |
+| Replay | A second settlement of the same `(payer, settlement_id)` fails |
+| Redirected recipient | An authorization for one `pay_to` cannot settle to another |
+| Inflated ceiling | An authorization for one `max_amount` cannot settle a larger one |
+| Different request | An authorization for one `request_digest` cannot settle another |
+| Inflated charge | A facilitator cannot charge more than it attested |
+| Window boundaries | `valid_after` and `deadline` are inclusive |
+| Underfunded payer | Fails atomically, and the authorization remains usable |
+
+## Composition with smart account policies
+
+Because the payer's authorization is taken over explicit argument values, a
+Stellar smart account implementing `__check_auth` can apply a policy to those
+arguments directly: a per-recipient ceiling, a rolling budget, an allowlist of
+tokens, or a cap on `max_amount` per settlement.
+
+The account sees the terms it is being asked to authorize, not merely that a call
+is being made. This is the composition the RFP asks about, and it is a further
+reason the argument binding in §"What the payer authorizes" is required rather
+than recommended.
+
+Note that a policy which reserves `max_amount` at authorization time should
+reconcile against `actual` when the settlement event is observed, since the
+difference is refunded.
 
 ## Deployment gate
 
-The prototype in `contracts/upto-settlement` is not this design: it signs the
-actual amount with `require_auth()` and keeps persistent nonce/admin state. It
-must be replaced, property-tested, independently reviewed, reproducibly built,
-and demonstrated with public testnet artifacts before `upto` is added to
-`/supported` or deployed on pubnet.
+This scheme is a draft. Until the Technical Steering Committee accepts an ABI
+and a security review is complete, an implementation SHOULD advertise `upto` on
+testnet only, and SHOULD refuse to advertise it at all when no contract is
+confirmed on-chain for the network being served.
+
+Network-specific configuration is recommended, so that a testnet contract address
+cannot be inherited by a mainnet deployment.
+
+## Open questions for the committee
+
+1. **Event shape.** Should the settlement event be normative rather than
+   recommended? A federated catalog cannot verify a settlement it did not perform
+   without one.
+2. **Digest algorithm.** This document does not mandate how `request_digest` and
+   `result_digest` are computed. The reference implementation uses SHA-256 over
+   RFC 8785 canonical JSON, matching the `x402job/1` receipt format, so a receipt
+   and a settlement can be checked against each other.
+3. **Refund destination.** The remainder returns to the payer. Whether a distinct
+   refund address is ever useful is unresolved.
+4. **Multiple settlements against one authorization.** Deliberately forbidden
+   here. A streaming variant would need a different scheme rather than a relaxed
+   `upto`.
