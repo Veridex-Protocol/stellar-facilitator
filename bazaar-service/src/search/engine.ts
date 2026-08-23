@@ -126,30 +126,51 @@ export class BazaarSearchEngine {
     const filterClause = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
 
     // Hybrid RRF Query with Composite Telemetry Ranking
+    // Filters are pushed into both CTEs and total_matches to avoid candidate truncation (VDX-04)
     const searchQuery = `
       WITH vector_search AS (
-          SELECT id,
-                 RANK() OVER (ORDER BY embedding <=> $2::vector) AS rank,
-                 (1 - (embedding <=> $2::vector)) AS vec_score
-          FROM catalog_resources
-          WHERE embedding IS NOT NULL
-          ORDER BY embedding <=> $2::vector
+          SELECT r.id,
+                 RANK() OVER (ORDER BY r.embedding <=> $2::vector) AS rank,
+                 (1 - (r.embedding <=> $2::vector)) AS vec_score
+          FROM catalog_resources r
+          LEFT JOIN resource_telemetry t ON r.id = t.resource_id
+          WHERE r.embedding IS NOT NULL
+            AND r.soft_dropped = false
+            AND COALESCE(t.liveness_status, 'HEALTHY') <> 'OFFLINE'
+            ${filterClause}
+          ORDER BY r.embedding <=> $2::vector
           LIMIT ${CANDIDATE_POOL_SIZE}
       ),
       text_search AS (
-          SELECT id,
+          SELECT r.id,
                  RANK() OVER (ORDER BY ts_rank_cd(
-                   to_tsvector('english', description || ' ' || COALESCE(service_name, '')),
+                   to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, '')),
                    plainto_tsquery('english', $1)
                  ) DESC) AS rank,
                  ts_rank_cd(
-                   to_tsvector('english', description || ' ' || COALESCE(service_name, '')),
+                   to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, '')),
                    plainto_tsquery('english', $1)
                  ) AS text_score
-          FROM catalog_resources
-          WHERE to_tsvector('english', description || ' ' || COALESCE(service_name, ''))
+          FROM catalog_resources r
+          LEFT JOIN resource_telemetry t ON r.id = t.resource_id
+          WHERE to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, ''))
                 @@ plainto_tsquery('english', $1)
+            AND r.soft_dropped = false
+            AND COALESCE(t.liveness_status, 'HEALTHY') <> 'OFFLINE'
+            ${filterClause}
           LIMIT ${CANDIDATE_POOL_SIZE}
+      ),
+      total_matches AS (
+          SELECT COUNT(DISTINCT r.id) AS count
+          FROM catalog_resources r
+          LEFT JOIN resource_telemetry t ON r.id = t.resource_id
+          WHERE r.soft_dropped = false
+            AND COALESCE(t.liveness_status, 'HEALTHY') <> 'OFFLINE'
+            AND (
+              r.embedding IS NOT NULL
+              OR to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, '')) @@ plainto_tsquery('english', $1)
+            )
+            ${filterClause}
       )
       SELECT
           r.id,
@@ -198,7 +219,7 @@ export class BazaarSearchEngine {
               END AS composite_score,
           -- Count total matches for pagination, and how full each candidate
           -- pool was, so partialResults can be answered honestly.
-          COUNT(*) OVER() AS total_count,
+          (SELECT count FROM total_matches) AS total_count,
           (SELECT COUNT(*) FROM vector_search) AS vector_candidates,
           (SELECT COUNT(*) FROM text_search) AS text_candidates
       FROM catalog_resources r
