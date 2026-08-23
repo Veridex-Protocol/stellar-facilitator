@@ -76,7 +76,9 @@ export type SearchQuery = z.infer<typeof SearchQuerySchema>;
  */
 export const SearchResultSchema = CatalogResourceSchema.extend({
   compositeScore: z.number(),
+  rrfScore: z.number().optional(),
   vectorScore: z.number().optional(),
+  textScore: z.number().optional(),
   bm25Score: z.number().optional(),
   uptimeScore: z.number().optional(),
   latencyScore: z.number().optional(),
@@ -132,22 +134,26 @@ export const ResourceFiltersSchema = z.object({
 export type ResourceFilters = z.infer<typeof ResourceFiltersSchema>;
 
 /**
- * Composite ranking weights
+ * Composite ranking weights for Reciprocal Rank Fusion (RRF) & Telemetry
  */
 export interface RankingWeights {
-  vector: number;      // Feature-hash vector similarity weight (default: 0.35)
-  bm25: number;        // Keyword match weight (default: 0.25)
-  uptime: number;      // Node uptime weight (default: 0.15)
-  latency: number;     // Response latency weight (default: 0.15)
-  reliability: number; // Settlement success weight (default: 0.10)
+  vector: number;      // Feature-hash vector RRF weight (default: 1.0)
+  text: number;        // Text cover-density RRF weight (default: 1.0)
+  bm25?: number;       // Backward-compat alias for text weight
+  uptime: number;      // Node uptime modulation weight (default: 0.15)
+  latency: number;     // Response latency modulation weight (default: 0.15)
+  reliability: number; // Settlement success modulation weight (default: 0.10)
+  rrfK?: number;       // RRF smoothing constant k (default: 60)
 }
 
 export const DEFAULT_RANKING_WEIGHTS: RankingWeights = {
-  vector: 0.35,
-  bm25: 0.25,
+  vector: 1.0,
+  text: 1.0,
+  bm25: 1.0,
   uptime: 0.15,
   latency: 0.15,
   reliability: 0.10,
+  rrfK: 60,
 };
 
 /**

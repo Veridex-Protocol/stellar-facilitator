@@ -68,7 +68,7 @@ export function getConfig(): MCPServerConfig {
  * Discover resources tool schema
  */
 export const DiscoverResourcesSchema = z.object({
-  query: z.string().describe("Search query (keyword; ranking fuses BM25, feature-hash vectors, and telemetry)"),
+  query: z.string().describe("Search query (ranking fuses full-text match, feature-hash vectors, and telemetry via Reciprocal Rank Fusion)"),
   network: z.string().optional().describe("Network filter (e.g., 'stellar:pubnet')"),
   limit: z.number().optional().describe("Maximum results (default: 20)"),
 });
@@ -118,7 +118,7 @@ export class VeridexMCPServer {
         {
           name: "discover_resources",
           description:
-            "Search the Veridex Bazaar catalog for x402 resources. Ranking fuses BM25 keyword match, feature-hash vector similarity, and live telemetry. " +
+            "Search the Veridex Bazaar catalog for x402 resources. Ranking fuses full-text cover-density match, feature-hash vector similarity, and live telemetry via Reciprocal Rank Fusion (RRF). " +
             "Returns ranked results with telemetry (uptime, latency, reliability).",
           inputSchema: {
             type: "object",

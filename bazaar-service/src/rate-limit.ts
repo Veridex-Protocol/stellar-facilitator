@@ -1,16 +1,6 @@
 /**
- * Veridex Facilitator Service - Rate Limiting
+ * Veridex Bazaar Service - Rate Limiting & Proxy Protection
  * License: Apache-2.0
- *
- * The facilitator pays real network fees out of its own account on every
- * settlement, so an unlimited `/settle` is an unlimited withdrawal from it. Cap
- * how fast anyone can make that happen.
- *
- * A fixed-window counter in process memory, deliberately: it is a few dozen
- * lines with no dependency and no supply-chain surface, and a single-process
- * facilitator has nowhere to share state anyway. A multi-instance deployment
- * should put a real limiter in front of this at the edge — this one then still
- * serves as the per-instance backstop.
  */
 
 import type { Context, MiddlewareHandler, Next } from "hono";
@@ -20,7 +10,7 @@ export interface RateLimitOptions {
   max: number;
   /** Number of trusted reverse proxies in front of this service (default from TRUSTED_PROXY_COUNT or 0). */
   trustedProxyCount?: number;
-  /** Derives the bucket key; defaults to the client IP. */
+  /** Derives the bucket key; defaults to the secure client IP. */
   keyOf?: (c: Context) => string;
   /** Called when a request is rejected, for the outcome log. */
   onRejected?: (c: Context, key: string) => void;
@@ -79,8 +69,6 @@ export function rateLimit(options: RateLimitOptions): MiddlewareHandler {
   const windows = new Map<string, Window>();
   const keyOf = options.keyOf ?? ((c) => getClientIp(c, options.trustedProxyCount));
 
-  // Windows are only created on request, so a periodic sweep is enough to keep
-  // the map from growing with the client population over a long uptime.
   const sweep = setInterval(() => {
     const now = Date.now();
     for (const [key, window] of windows) {
@@ -113,7 +101,7 @@ export function rateLimit(options: RateLimitOptions): MiddlewareHandler {
       return c.json(
         {
           error: "rate_limited",
-          message: `Too many requests to this facilitator. The limit is ${options.max} per ${Math.round(
+          message: `Too many requests to this Bazaar service. The limit is ${options.max} per ${Math.round(
             options.windowMs / 1000,
           )}s; retry in ${resetSeconds}s.`,
         },

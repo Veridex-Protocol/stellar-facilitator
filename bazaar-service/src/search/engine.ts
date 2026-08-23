@@ -200,18 +200,25 @@ export class BazaarSearchEngine {
           t.failed_settlement_count,
           t.liveness_status,
           -- Individual ranking components
+          (
+            COALESCE(${this.weights.vector} / (${this.weights.rrfK || 60}.0 + v.rank), 0.0) +
+            COALESCE(${this.weights.text || this.weights.bm25 || 1.0} / (${this.weights.rrfK || 60}.0 + k.rank), 0.0)
+          ) AS rrf_score,
           COALESCE(v.vec_score, 0.0) AS vector_score,
+          COALESCE(k.text_score, 0.0) AS text_score,
           LEAST(1.0, COALESCE(k.text_score, 0.0)) AS bm25_score,
           COALESCE(t.uptime_ratio, 0.5) AS uptime_score,
           EXP(-COALESCE(t.avg_response_time_ms, 1000.0) / 500.0) AS latency_score,
           LEAST(1.0, LN(COALESCE(t.settlement_count, 0) + 1) / 3.0) AS reliability_score,
-          -- Composite Quality Score (Φ)
+          -- Composite Quality Score (Φ) combining RRF relevance with telemetry modulation
           (
-            ${this.weights.vector} * COALESCE(v.vec_score, 0.0) +
-            ${this.weights.bm25} * LEAST(1.0, COALESCE(k.text_score, 0.0)) +
-            ${this.weights.uptime} * COALESCE(t.uptime_ratio, 0.5) +
-            ${this.weights.latency} * EXP(-COALESCE(t.avg_response_time_ms, 1000.0) / 500.0) +
-            ${this.weights.reliability} * LEAST(1.0, LN(COALESCE(t.settlement_count, 0) + 1) / 3.0)
+            COALESCE(${this.weights.vector} / (${this.weights.rrfK || 60}.0 + v.rank), 0.0) +
+            COALESCE(${this.weights.text || this.weights.bm25 || 1.0} / (${this.weights.rrfK || 60}.0 + k.rank), 0.0)
+          ) * (
+            1.0 +
+            ${this.weights.uptime} * (COALESCE(t.uptime_ratio, 0.5) - 0.5) +
+            ${this.weights.latency} * (EXP(-COALESCE(t.avg_response_time_ms, 1000.0) / 500.0) - 0.5) +
+            ${this.weights.reliability} * LEAST(0.5, LN(COALESCE(t.settlement_count, 0) + 1) / 6.0)
           ) * CASE COALESCE(t.liveness_status, 'HEALTHY')
                 WHEN 'HEALTHY' THEN 1.0
                 WHEN 'DEGRADED' THEN 0.3
@@ -256,7 +263,9 @@ export class BazaarSearchEngine {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       compositeScore: parseFloat(row.composite_score),
+      rrfScore: row.rrf_score ? parseFloat(row.rrf_score) : undefined,
       vectorScore: parseFloat(row.vector_score),
+      textScore: parseFloat(row.text_score),
       bm25Score: parseFloat(row.bm25_score),
       uptimeScore: parseFloat(row.uptime_score),
       latencyScore: parseFloat(row.latency_score),

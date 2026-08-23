@@ -131,7 +131,7 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
     port,
     host,
     baseUrl,
-    maxTransactionFeeStroops: parseInt(process.env.MAX_TRANSACTION_FEE_STROOPS || "1000000", 10),
+    maxTransactionFeeStroops: parseInt(process.env.MAX_TRANSACTION_FEE_STROOPS || "50000", 10),
     ledgerSkew: {
       retries: parseInt(process.env.LEDGER_SKEW_RETRIES || "2", 10),
       // Must outlast one ledger close (~5s) or every attempt re-observes the
@@ -881,6 +881,12 @@ export class FacilitatorService {
     const notes: string[] = [];
 
     assertSignerKeypairConsistent(stellar.facilitatorSecretKey, stellar.facilitatorPublicKey);
+
+    if (this.config.maxTransactionFeeStroops > 50000) {
+      console.warn(
+        `[Facilitator] Warning: maxTransactionFeeStroops is configured at ${this.config.maxTransactionFeeStroops} stroops, exceeding the spec default of 50000 stroops (0.005 XLM).`,
+      );
+    }
 
     // 1. Fee sponsorship: a claim about an account balance, so ask the network.
     let feesAreSponsored = false;

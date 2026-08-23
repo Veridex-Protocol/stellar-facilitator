@@ -24,6 +24,8 @@ import { BazaarSearchEngine } from "./search/engine.js";
 import { CatalogIngestionWorker } from "./catalog/ingestion.js";
 import { AnnounceMessageSchema } from "./p2p/types.js";
 import { InvalidCursorError } from "./search/cursor.js";
+import { rateLimit } from "./rate-limit.js";
+import { bodyLimit } from "hono/body-limit";
 import type { P2PNodeConfig } from "./p2p/types.js";
 import type { ResourceMetadata } from "./p2p/announcer.js";
 
@@ -145,6 +147,18 @@ function clampLimit(value?: string): number {
 }
 
 /**
+ * Bounds the page offset so a negative offset cannot reach the database.
+ *
+ * @param value - Raw query parameter
+ * @returns A non-negative offset (>= 0)
+ */
+function clampOffset(value?: string): number {
+  const parsed = parseInt(value || "0", 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed);
+}
+
+/**
  * Encodes an EXTENSION-RESPONSES payload for a rejection raised at the route.
  *
  * @param status - Cataloging outcome
@@ -218,6 +232,15 @@ export class BazaarService {
       origin: "*",
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization"],
+    }));
+
+    // Body size limit (1MB max to prevent memory exhaustion / DoS)
+    this.app.use("*", bodyLimit({ maxSize: 1024 * 1024 }));
+
+    // Rate limiting (120 req/min with trusted proxy support)
+    this.app.use("*", rateLimit({
+      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10),
+      max: parseInt(process.env.RATE_LIMIT_MAX || "120", 10),
     }));
 
     // Logging
@@ -312,7 +335,7 @@ export class BazaarService {
           tags: parseList(c.req.query("tags")),
           minUptimeRatio: parseFloat(c.req.query("minUptimeRatio") || "0"),
           limit: clampLimit(c.req.query("limit")),
-          offset: parseInt(c.req.query("offset") || "0", 10),
+          offset: clampOffset(c.req.query("offset")),
           cursor: c.req.query("cursor"),
         });
         return c.json(results);
@@ -342,7 +365,7 @@ export class BazaarService {
           scheme: c.req.query("scheme"),
           tags: parseList(c.req.query("tags")),
           limit: clampLimit(c.req.query("limit")),
-          offset: parseInt(c.req.query("offset") || "0", 10),
+          offset: clampOffset(c.req.query("offset")),
           cursor: c.req.query("cursor"),
         });
         return c.json(results);
