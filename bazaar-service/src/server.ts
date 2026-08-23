@@ -23,6 +23,7 @@ import { TelemetryTracker } from "./telemetry/tracker.js";
 import { BazaarSearchEngine } from "./search/engine.js";
 import { CatalogIngestionWorker } from "./catalog/ingestion.js";
 import { AnnounceMessageSchema } from "./p2p/types.js";
+import { InvalidCursorError } from "./search/cursor.js";
 import type { P2PNodeConfig } from "./p2p/types.js";
 import type { ResourceMetadata } from "./p2p/announcer.js";
 
@@ -107,6 +108,53 @@ function requireInternalToken(): string {
     );
   }
   return token;
+}
+
+/**
+ * Parses a comma-separated query parameter into a list.
+ *
+ * @param value - Raw query parameter
+ * @returns The non-empty entries, or undefined when the parameter was absent
+ */
+function parseList(value?: string): string[] | undefined {
+  if (!value) return undefined;
+  const items = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+/**
+ * Parses the spec's `type` filter.
+ *
+ * @param value - Raw query parameter
+ * @returns The resource type, or undefined when absent or unrecognised
+ */
+function parseResourceType(value?: string): "http" | "mcp" | undefined {
+  return value === "http" || value === "mcp" ? value : undefined;
+}
+
+/**
+ * Bounds the page size so a client cannot ask for the whole catalog at once.
+ *
+ * @param value - Raw query parameter
+ * @returns A limit between 1 and 100
+ */
+function clampLimit(value?: string): number {
+  const parsed = parseInt(value || "20", 10);
+  if (!Number.isFinite(parsed)) return 20;
+  return Math.min(100, Math.max(1, parsed));
+}
+
+/**
+ * Encodes an EXTENSION-RESPONSES payload for a rejection raised at the route.
+ *
+ * @param status - Cataloging outcome
+ * @param reason - Why it was rejected
+ * @returns The base64 header value
+ */
+function encodeExtensionResponse(status: "success" | "rejected", reason?: string): string {
+  return Buffer.from(
+    JSON.stringify({ bazaar: { status, ...(reason && { rejectedReason: reason }) } }),
+  ).toString("base64");
 }
 
 function parseAnnouncedResources(value?: string): ResourceMetadata[] {
@@ -253,17 +301,26 @@ export class BazaarService {
           return c.json({ error: "Missing query parameter 'q'" }, 400);
         }
 
-        const searchQuery = {
+        const results = await this.searchEngine.search({
           query,
-          network: c.req.query("network") || "stellar:pubnet",
-          minUptimeRatio: parseFloat(c.req.query("minUptimeRatio") || "0.9"),
-          limit: parseInt(c.req.query("limit") || "20", 10),
+          // The spec's filters, named as it names them.
+          resourceType: parseResourceType(c.req.query("type")),
+          payTo: c.req.query("payTo"),
+          network: c.req.query("network"),
+          scheme: c.req.query("scheme"),
+          extensions: parseList(c.req.query("extensions")),
+          tags: parseList(c.req.query("tags")),
+          minUptimeRatio: parseFloat(c.req.query("minUptimeRatio") || "0"),
+          limit: clampLimit(c.req.query("limit")),
           offset: parseInt(c.req.query("offset") || "0", 10),
-        };
-
-        const results = await this.searchEngine.search(searchQuery);
+          cursor: c.req.query("cursor"),
+        });
         return c.json(results);
       } catch (error) {
+        // A bad cursor is the client's mistake, and saying so beats a 500.
+        if (error instanceof InvalidCursorError) {
+          return c.json({ error: "invalid_cursor", message: error.message }, 400);
+        }
         console.error("[Bazaar Service] Search error:", error);
         return c.json({
           error: "Search failed",
@@ -275,15 +332,24 @@ export class BazaarService {
     // List resources
     this.app.get("/discovery/resources", async (c) => {
       try {
-        const filters = {
+        const results = await this.searchEngine.list({
+          // type, payTo, network, extensions, limit, offset are the filters the
+          // discovery spec names; scheme and tags are supported extras.
+          resourceType: parseResourceType(c.req.query("type")),
+          payTo: c.req.query("payTo"),
           network: c.req.query("network"),
-          limit: parseInt(c.req.query("limit") || "20", 10),
+          extensions: parseList(c.req.query("extensions")),
+          scheme: c.req.query("scheme"),
+          tags: parseList(c.req.query("tags")),
+          limit: clampLimit(c.req.query("limit")),
           offset: parseInt(c.req.query("offset") || "0", 10),
-        };
-
-        const results = await this.searchEngine.list(filters);
+          cursor: c.req.query("cursor"),
+        });
         return c.json(results);
       } catch (error) {
+        if (error instanceof InvalidCursorError) {
+          return c.json({ error: "invalid_cursor", message: error.message }, 400);
+        }
         console.error("[Bazaar Service] List error:", error);
         return c.json({
           error: "List failed",
@@ -331,17 +397,18 @@ export class BazaarService {
         const body = await c.req.json();
 
         if (typeof body?.settlementTx !== "string" || body.settlementTx.length === 0) {
-          return c.json(
-            {
-              status: "rejected",
-              reason:
-                "settlementTx is required: a catalog entry must name the settlement that backs it, which this service confirms on Horizon.",
-            },
-            400,
-          );
+          const reason =
+            "settlementTx is required: a catalog entry must name the settlement that backs it, which this service confirms on Horizon.";
+          c.header("EXTENSION-RESPONSES", encodeExtensionResponse("rejected", reason));
+          return c.json({ status: "rejected", reason }, 400);
         }
 
         const result = await this.ingestionWorker.ingest(body);
+
+        // The spec reports cataloging outcomes in this header so a seller can
+        // tell whether a listing landed, and why not. It travels back to the
+        // seller on the facilitator's settle response.
+        c.header("EXTENSION-RESPONSES", result.extensionResponse);
 
         if (result.status === "success") {
           return c.json({
@@ -349,13 +416,12 @@ export class BazaarService {
             resourceId: result.resourceId,
             extensionResponse: result.extensionResponse,
           });
-        } else {
-          return c.json({
-            status: "rejected",
-            reason: result.rejectedReason,
-            extensionResponse: result.extensionResponse,
-          }, 400);
         }
+        return c.json({
+          status: "rejected",
+          reason: result.rejectedReason,
+          extensionResponse: result.extensionResponse,
+        }, 400);
       } catch (error) {
         console.error("[Bazaar Service] Ingestion error:", error);
         return c.json({
