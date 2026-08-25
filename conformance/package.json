@@ -1,0 +1,19 @@
+{
+  "name": "@veridex/conformance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Stock-client x402 conformance harness. Imports nothing from this repository.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/harness.mjs"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "13.3.0",
+    "@x402/core": "2.21.0",
+    "@x402/fetch": "2.21.0",
+    "@x402/stellar": "2.21.0",
+    "dotenv": "17.2.3"
+  }
+}

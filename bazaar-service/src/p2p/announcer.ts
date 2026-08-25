@@ -76,18 +76,7 @@ export class Announcer {
     const sequence = this.sequenceCounter++;
     const timestamp = Date.now();
 
-    // Create signature payload: "${resourceUrl}:${timestamp}:${sequence}"
-    const payload = createSignaturePayload(
-      metadata.resourceUrl,
-      timestamp,
-      sequence
-    );
-
-    // Sign with Ed25519
-    const signature = this.sign(payload);
-
-    // Construct message
-    const message: AnnounceMessage = {
+    const baseMessage: Omit<AnnounceMessage, "signature"> = {
       nodeId: this.keypair.publicKey(),
       resourceUrl: metadata.resourceUrl,
       toolName: metadata.toolName,
@@ -107,10 +96,23 @@ export class Announcer {
       timestamp,
       sequence,
       telemetry,
-      signature,
     };
 
-    return message;
+    // Create signature payload covering full metadata
+    const payload = createSignaturePayload(
+      metadata.resourceUrl,
+      timestamp,
+      sequence,
+      baseMessage
+    );
+
+    // Sign with Ed25519
+    const signature = this.sign(payload);
+
+    return {
+      ...baseMessage,
+      signature,
+    };
   }
 
   /**

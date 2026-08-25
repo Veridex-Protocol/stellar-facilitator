@@ -379,6 +379,24 @@ export class ChannelAccountPool {
   }
 
   /**
+   * Resynchronize sequence number for a channel account (e.g. after tx_bad_seq error)
+   */
+  async resyncSequence(publicKey: string): Promise<void> {
+    const channel = this.channels.get(publicKey);
+    if (!channel) return;
+
+    try {
+      const account = await this.server.loadAccount(publicKey);
+      channel.sequence = account.sequence;
+      console.log(`[Channel Pool] Resynced sequence for ${publicKey}: ${account.sequence}`);
+    } catch (error) {
+      console.error(`[Channel Pool] Failed to resync sequence for ${publicKey}:`, error);
+      channel.state = State.ERROR;
+      channel.error = error instanceof Error ? error.message : "Sequence resync failed";
+    }
+  }
+
+  /**
    * Get pool statistics
    */
   getStats(): {

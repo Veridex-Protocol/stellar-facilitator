@@ -8,7 +8,7 @@
 import { createEd25519Signer, getUsdcAddress } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import type { PaymentRequirements } from "@x402/core/types";
-import type { X402PaymentRequest, X402PaymentResponse, FacilitatorScheme } from "./types.js";
+import type { X402PaymentRequest, X402PaymentResponse, FacilitatorScheme, SmartAccountSigner } from "./types.js";
 
 /**
  * Facilitator Client Configuration
@@ -20,8 +20,19 @@ export interface FacilitatorClientConfig {
   /** Stellar network */
   network: "pubnet" | "testnet" | "futurenet";
 
-  /** Client secret key for signing transactions */
+  /** Client secret key for standard Ed25519 signing */
   clientSecretKey?: string;
+
+  /** Custom Smart Account / Passkey signer (for C... contract IDs) */
+  customSigner?: SmartAccountSigner;
+
+  /** Custom authorizeEntry function override */
+  authorizeEntry?: (
+    entry: any,
+    signer: any,
+    expiration: number,
+    networkPassphrase?: string
+  ) => Promise<any>;
 
   /** Request timeout (ms) */
   timeout?: number;
@@ -33,18 +44,24 @@ export interface FacilitatorClientConfig {
  * Execute x402 payments via Stellar facilitator.
  */
 export class FacilitatorClient {
-  private config: Required<FacilitatorClientConfig>;
+  private config: FacilitatorClientConfig;
   private exactScheme?: ExactStellarScheme;
 
   constructor(config: FacilitatorClientConfig) {
     this.config = {
-      facilitatorUrl: config.facilitatorUrl,
-      network: config.network,
+      ...config,
       clientSecretKey: config.clientSecretKey || "",
       timeout: config.timeout || 30000,
     };
 
-    if (config.clientSecretKey) {
+    if (config.customSigner) {
+      // Initialize with Smart Account signer (supports C... addresses and custom authorizeEntry)
+      const options: Record<string, unknown> = {};
+      if (config.authorizeEntry || config.customSigner.authorizeEntry) {
+        options.authorizeEntry = config.authorizeEntry || config.customSigner.authorizeEntry;
+      }
+      this.exactScheme = new ExactStellarScheme(config.customSigner as any, options as any);
+    } else if (config.clientSecretKey) {
       const network = this.getNetwork();
       this.exactScheme = new ExactStellarScheme(createEd25519Signer(config.clientSecretKey, network));
     }
@@ -73,6 +90,20 @@ export class FacilitatorClient {
       extensions: string[];
       signers: Record<string, string[]>;
     };
+  }
+
+  /**
+   * Fetch compute capability descriptor (x402ccd/0) per proposal #3117
+   */
+  async getCapabilityDescriptor(): Promise<import("./types.js").ComputeCapabilityDescriptor> {
+    const url = new URL("/.well-known/x402", this.config.facilitatorUrl);
+    const response = await fetch(url.toString());
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch capability descriptor: ${response.statusText}`);
+    }
+
+    return (await response.json()) as import("./types.js").ComputeCapabilityDescriptor;
   }
 
   /**
@@ -134,6 +165,7 @@ export class FacilitatorClient {
           status: "error",
           error: error.errorMessage || error.error || `Payment failed: ${response.statusText}`,
           errorCode: error.errorReason || error.errorCode || "UNKNOWN",
+          extra: error.extra,
         };
       }
 
@@ -144,6 +176,8 @@ export class FacilitatorClient {
         ledger: result.ledger,
         error: result.errorMessage,
         errorCode: result.errorReason,
+        receipt: result.receipt,
+        extra: result.extra,
       };
     } finally {
       clearTimeout(timeoutId);
@@ -269,6 +303,30 @@ export class FacilitatorClient {
     }
     return this.config.network === "pubnet" ? "stellar:pubnet" : "stellar:testnet";
   }
+}
+
+/**
+ * Helper to create a Smart Account / Contract (`C...`) signer for Soroban custom authorization
+ *
+ * @param address - Smart Account contract address (C...) or public key
+ * @param signAuthEntryFn - Function signing Soroban authorization entries returning custom ScVal / signature
+ * @param authorizeEntryFn - Optional custom authorizeEntry override
+ */
+export function createSmartAccountSigner(
+  address: string,
+  signAuthEntryFn: (entryXdr: string) => Promise<{ signedAuthEntry?: string; signatureScVal?: any }>,
+  authorizeEntryFn?: (
+    entry: any,
+    signer: any,
+    expiration: number,
+    networkPassphrase?: string
+  ) => Promise<any>
+): SmartAccountSigner {
+  return {
+    address,
+    signAuthEntry: signAuthEntryFn,
+    authorizeEntry: authorizeEntryFn,
+  };
 }
 
 /**

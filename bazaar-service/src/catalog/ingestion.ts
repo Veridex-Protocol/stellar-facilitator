@@ -4,7 +4,8 @@
  *
  * Automatically indexes resources during x402 payment settlement:
  * - Parses Bazaar extension from PaymentPayload
- * - Validates metadata against soft-drop rules
+ * - Validates metadata against soft-drop rules and cryptographic owner signatures
+ * - Enforces resource ownership invariants (prevents metadata hijack attacks)
  * - Generates vector embeddings
  * - Stores in PostgreSQL catalog
  * - Returns EXTENSION-RESPONSES header
@@ -16,6 +17,8 @@ import type { Pool as PoolType } from "pg";
 import { z } from "zod";
 import { isIP } from "node:net";
 import { generateResourceEmbedding } from "../search/embeddings.js";
+import { verifySettlement } from "./settlement-proof.js";
+import { verifyOwnerSignature } from "./owner-signature.js";
 import type { DatabaseConfig } from "../search/types.js";
 
 /**
@@ -30,6 +33,9 @@ const BazaarExtensionSchema = z.object({
   mimeType: z.string().max(64).optional().default("application/json"),
   inputSpec: z.record(z.any()),
   outputSpec: z.record(z.any()).optional(),
+  ownerSignature: z.string().optional(),
+  ownerPublicKey: z.string().optional(),
+  signatureTimestamp: z.number().optional(),
 });
 
 export type BazaarExtension = z.infer<typeof BazaarExtensionSchema>;
@@ -46,7 +52,12 @@ export interface IngestionRequest {
   scheme: string;
   bazaarExtension: BazaarExtension;
   extensions?: Record<string, any>;
-  settlementSucceeded?: boolean;
+  /**
+   * Hash of the settlement that backs this entry. Required: the catalog
+   * confirms it on Horizon rather than trusting the caller that a payment
+   * happened. See settlement-proof.ts.
+   */
+  settlementTx: string;
 }
 
 /**
@@ -64,8 +75,10 @@ export interface IngestionResult {
  */
 export class CatalogIngestionWorker {
   private pool: PoolType;
+  private horizonUrl: string;
 
-  constructor(config: DatabaseConfig) {
+  constructor(config: DatabaseConfig, options: { horizonUrl: string }) {
+    this.horizonUrl = options.horizonUrl;
     this.pool = new Pool({
       host: config.host,
       port: config.port,
@@ -86,8 +99,8 @@ export class CatalogIngestionWorker {
     try {
       await client.query("BEGIN");
 
-      // Validate Bazaar extension
-      const validationResult = this.validateExtension(request.bazaarExtension);
+      // 1. Validate Bazaar extension and cryptographic owner signature if provided
+      const validationResult = this.validateExtension(request.bazaarExtension, request);
       if (!validationResult.valid) {
         await client.query("ROLLBACK");
         return {
@@ -97,21 +110,59 @@ export class CatalogIngestionWorker {
         };
       }
 
-      // Generate vector embedding
+      // 2. Confirm a real settlement backs this entry on Horizon.
+      const settlement = await verifySettlement(request.settlementTx, request.payTo, {
+        horizonUrl: this.horizonUrl,
+      });
+      if (!settlement.valid) {
+        await client.query("ROLLBACK");
+        const reason = settlement.reason ?? "settlement could not be confirmed";
+        console.warn(`[Catalog Ingestion] Rejected ${request.resourceUrl}: ${reason}`);
+        return {
+          status: "rejected",
+          rejectedReason: reason,
+          extensionResponse: this.encodeExtensionResponse("rejected", reason),
+        };
+      }
+
+      // 3. Security invariant (VDX-02 Anti-Hijack Guard):
+      // An incoming settlement for payTo B must NEVER overwrite an existing catalog
+      // entry previously registered to payTo A.
+      const existing = await client.query(
+        `SELECT id, pay_to FROM catalog_resources
+         WHERE resource_url = $1 AND tool_name_key = COALESCE($2, '')`,
+        [request.resourceUrl, request.toolName || ""]
+      );
+
+      if (existing.rows.length > 0) {
+        const existingPayTo = existing.rows[0].pay_to;
+        if (existingPayTo !== request.payTo) {
+          await client.query("ROLLBACK");
+          const reason = `metadata_hijack_detected: resource '${request.resourceUrl}' is already registered to payTo ${existingPayTo}; incoming settlement credited different payTo ${request.payTo}`;
+          console.warn(`[Catalog Ingestion] Hijack attempt blocked for ${request.resourceUrl}: ${reason}`);
+          return {
+            status: "rejected",
+            rejectedReason: reason,
+            extensionResponse: this.encodeExtensionResponse("rejected", reason),
+          };
+        }
+      }
+
+      // 4. Generate vector embedding
       const embedding = await generateResourceEmbedding(
         request.bazaarExtension.description,
         request.bazaarExtension.serviceName,
         request.bazaarExtension.tags
       );
 
-      // Insert or update catalog entry
+      // 5. Insert or update catalog entry with strict pay_to constraint
       const result = await client.query(
         `INSERT INTO catalog_resources (
           resource_url, resource_type, tool_name, service_name, description,
           mime_type, pay_to, network, scheme, tags, icon_url, route_template,
-          input_spec, output_spec, extensions, embedding
+          input_spec, output_spec, extensions, embedding, settlement_tx
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         ON CONFLICT ON CONSTRAINT unique_resource_tool_entry
         DO UPDATE SET
           service_name = EXCLUDED.service_name,
@@ -124,7 +175,10 @@ export class CatalogIngestionWorker {
           output_spec = EXCLUDED.output_spec,
           extensions = EXCLUDED.extensions,
           embedding = EXCLUDED.embedding,
+          settlement_tx = EXCLUDED.settlement_tx,
+          last_seen = NOW(),
           updated_at = NOW()
+        WHERE catalog_resources.pay_to = EXCLUDED.pay_to
         RETURNING id`,
         [
           request.resourceUrl,
@@ -143,21 +197,33 @@ export class CatalogIngestionWorker {
           request.bazaarExtension.outputSpec ? JSON.stringify(request.bazaarExtension.outputSpec) : null,
           request.extensions ? JSON.stringify(request.extensions) : "{}",
           `[${embedding.join(",")}]`,
+          request.settlementTx,
         ]
       );
 
+      if (!result.rows[0]) {
+        await client.query("ROLLBACK");
+        const reason = "metadata_hijack_detected: resource update rejected because existing pay_to does not match";
+        return {
+          status: "rejected",
+          rejectedReason: reason,
+          extensionResponse: this.encodeExtensionResponse("rejected", reason),
+        };
+      }
+
       const resourceId = result.rows[0].id;
 
-      if (request.settlementSucceeded) {
-        await client.query(
-          `INSERT INTO resource_telemetry (resource_id, settlement_count)
-           VALUES ($1, 1)
-           ON CONFLICT (resource_id) DO UPDATE SET
-             settlement_count = resource_telemetry.settlement_count + 1,
-             updated_at = now()`,
-          [resourceId]
-        );
-      }
+      // 6. Update telemetry liveness
+      await client.query(
+        `INSERT INTO resource_telemetry (resource_id, settlement_count, last_settlement_at, liveness_status)
+         VALUES ($1, 1, now(), 'HEALTHY')
+         ON CONFLICT (resource_id) DO UPDATE SET
+           settlement_count = resource_telemetry.settlement_count + 1,
+           last_settlement_at = now(),
+           liveness_status = 'HEALTHY',
+           updated_at = now()`,
+        [resourceId]
+      );
 
       await client.query("COMMIT");
 
@@ -168,8 +234,22 @@ export class CatalogIngestionWorker {
         resourceId,
         extensionResponse: this.encodeExtensionResponse("success"),
       };
-    } catch (error) {
+    } catch (error: any) {
       await client.query("ROLLBACK");
+
+      // One settlement binds one catalog entry. Reusing a valid payment to
+      // list a second resource trips the unique index, and that is a rejection
+      // with a reason rather than an internal error.
+      if (error?.code === "23505" && String(error?.constraint).includes("settlement_tx")) {
+        const reason = "settlementTx has already been used to list a different resource";
+        console.warn(`[Catalog Ingestion] Rejected ${request.resourceUrl}: ${reason}`);
+        return {
+          status: "rejected",
+          rejectedReason: reason,
+          extensionResponse: this.encodeExtensionResponse("rejected", reason),
+        };
+      }
+
       console.error("[Catalog Ingestion] Error ingesting resource:", error);
 
       return {
@@ -183,10 +263,28 @@ export class CatalogIngestionWorker {
   }
 
   /**
-   * Validate Bazaar extension metadata (soft-drop rules)
+   * Validate Bazaar extension metadata (soft-drop rules and owner signatures)
    */
-  private validateExtension(extension: BazaarExtension): { valid: boolean; reason?: string } {
-    // Validate serviceName (printable ASCII, max 32 chars)
+  private validateExtension(
+    extension: BazaarExtension,
+    context?: IngestionRequest,
+  ): { valid: boolean; reason?: string } {
+    // 1. Cryptographic owner signature validation (if present)
+    if (extension.ownerSignature && context) {
+      const sigResult = verifyOwnerSignature(
+        extension.ownerSignature,
+        context.resourceUrl,
+        context.payTo,
+        context.toolName,
+        extension.signatureTimestamp,
+        extension.ownerPublicKey,
+      );
+      if (!sigResult.valid) {
+        return { valid: false, reason: `invalid_owner_signature: ${sigResult.reason}` };
+      }
+    }
+
+    // 2. Validate serviceName (printable ASCII, max 32 chars)
     if (extension.serviceName) {
       if (!/^[\x20-\x7e]+$/.test(extension.serviceName)) {
         return { valid: false, reason: "serviceName contains non-printable characters" };
@@ -196,7 +294,7 @@ export class CatalogIngestionWorker {
       }
     }
 
-    // Validate tags (printable ASCII, max 32 chars each, max 5 tags)
+    // 3. Validate tags (printable ASCII, max 32 chars each, max 5 tags)
     if (extension.tags) {
       if (extension.tags.length > 5) {
         return { valid: false, reason: "too many tags (max 5)" };
@@ -211,7 +309,7 @@ export class CatalogIngestionWorker {
       }
     }
 
-    // Validate iconUrl (no IP literals, localhost, decimal/hex IPs)
+    // 4. Validate iconUrl (no IP literals, localhost, decimal/hex IPs)
     if (extension.iconUrl) {
       const url = new URL(extension.iconUrl);
 
@@ -238,7 +336,7 @@ export class CatalogIngestionWorker {
       }
     }
 
-    // Validate routeTemplate (no path traversal, no scheme injection)
+    // 5. Validate routeTemplate (no path traversal, no scheme injection)
     if (extension.routeTemplate) {
       let decoded: string;
       try {
@@ -254,6 +352,64 @@ export class CatalogIngestionWorker {
       if (decoded.includes("://")) {
         return { valid: false, reason: "routeTemplate contains URL scheme injection (://)" };
       }
+    }
+
+    // 6. Validate inputSpec and outputSpec against schema injection (reject external $ref/$id)
+    if (extension.inputSpec && typeof extension.inputSpec === "object") {
+      const specResult = this.validateJsonSpec(extension.inputSpec);
+      if (!specResult.valid) {
+        return { valid: false, reason: `inputSpec validation failed: ${specResult.reason}` };
+      }
+    }
+
+    if (extension.outputSpec && typeof extension.outputSpec === "object") {
+      const specResult = this.validateJsonSpec(extension.outputSpec);
+      if (!specResult.valid) {
+        return { valid: false, reason: `outputSpec validation failed: ${specResult.reason}` };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Validate JSON Schema specifications against injection attacks (e.g., external $ref/$id)
+   */
+  private validateJsonSpec(spec: unknown, depth = 0): { valid: boolean; reason?: string } {
+    if (depth > 16) {
+      return { valid: false, reason: "spec exceeds maximum nesting depth of 16" };
+    }
+    if (spec === null || typeof spec !== "object") {
+      return { valid: true };
+    }
+
+    if (Array.isArray(spec)) {
+      for (const item of spec) {
+        const itemResult = this.validateJsonSpec(item, depth + 1);
+        if (!itemResult.valid) return itemResult;
+      }
+      return { valid: true };
+    }
+
+    for (const [key, value] of Object.entries(spec as Record<string, unknown>)) {
+      // Reject dangerous JSON Schema keywords referencing external/network resources
+      if (key === "$ref" || key === "$id" || key === "$schema") {
+        if (typeof value === "string") {
+          const lower = value.toLowerCase();
+          if (
+            lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("ftp://") ||
+            lower.startsWith("//") ||
+            lower.startsWith("file://")
+          ) {
+            return { valid: false, reason: `external URI reference not allowed in ${key}: ${value}` };
+          }
+        }
+      }
+
+      const valResult = this.validateJsonSpec(value, depth + 1);
+      if (!valResult.valid) return valResult;
     }
 
     return { valid: true };

@@ -1,0 +1,8 @@
+# Pinned so the wasm artifact is reproducible: a different compiler produces a
+# different hash, and the hash is what a facilitator verifies before it will
+# advertise the scheme.
+[toolchain]
+channel = "1.96.1"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32v1-none"]
+profile = "minimal"

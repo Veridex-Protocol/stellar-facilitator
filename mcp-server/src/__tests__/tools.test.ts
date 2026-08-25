@@ -1,0 +1,223 @@
+import { Keypair } from "@stellar/stellar-sdk";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  DiscoverResourcesSchema,
+  PayResourceSchema,
+  VeridexMCPServer,
+  getConfig,
+} from "../index.js";
+
+const CONFIG = {
+  bazaarUrl: "http://bazaar.test",
+  facilitatorUrl: "http://facilitator.test",
+  stellar: { network: "testnet" as const },
+};
+
+/**
+ * Replaces global fetch with a recording stub.
+ *
+ * @param handler - Returns the response for a given URL
+ * @returns The list of URLs the code under test requested
+ */
+function stubFetch(handler: (url: string) => unknown): string[] {
+  const seen: string[] = [];
+  vi.stubGlobal("fetch", async (input: string | URL) => {
+    const url = String(input);
+    seen.push(url);
+    return new Response(JSON.stringify(handler(url)), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  return seen;
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("tool input schemas", () => {
+  it("requires a query for discovery", () => {
+    expect(DiscoverResourcesSchema.safeParse({}).success).toBe(false);
+    expect(DiscoverResourcesSchema.safeParse({ query: "weather" }).success).toBe(true);
+  });
+
+  it("accepts the optional discovery filters an agent would use", () => {
+    const parsed = DiscoverResourcesSchema.parse({
+      query: "weather",
+      network: "stellar:testnet",
+      limit: 5,
+    });
+    expect(parsed).toMatchObject({ query: "weather", network: "stellar:testnet", limit: 5 });
+  });
+
+  it("requires a resource URL to pay", () => {
+    expect(PayResourceSchema.safeParse({}).success).toBe(false);
+    expect(PayResourceSchema.safeParse({ resourceUrl: "http://x.test/a" }).success).toBe(true);
+  });
+
+  it("defaults the method to GET so an agent need not supply one", () => {
+    expect(PayResourceSchema.parse({ resourceUrl: "http://x.test/a" }).method).toBe("GET");
+  });
+
+  it("rejects a method the resource server would not accept", () => {
+    expect(
+      PayResourceSchema.safeParse({ resourceUrl: "http://x.test/a", method: "TRACE" }).success,
+    ).toBe(false);
+  });
+
+  it("carries a spending ceiling when one is given", () => {
+    // An agent paying automatically needs to be able to bound what it spends.
+    const parsed = PayResourceSchema.parse({
+      resourceUrl: "http://x.test/a",
+      maxAmount: "100000",
+    });
+    expect(parsed.maxAmount).toBe("100000");
+  });
+});
+
+describe("discover_resources", () => {
+  it("queries the configured Bazaar and passes the search terms through", async () => {
+    const seen = stubFetch(() => ({ results: [], total: 0 }));
+    const server = new VeridexMCPServer(CONFIG);
+
+    await server.handleDiscoverResources({ query: "weather forecast", limit: 5 });
+
+    expect(seen).toHaveLength(1);
+    const url = new URL(seen[0]);
+    expect(url.origin).toBe("http://bazaar.test");
+    expect(url.pathname).toBe("/discovery/search");
+    expect(url.searchParams.get("q")).toBe("weather forecast");
+    expect(url.searchParams.get("limit")).toBe("5");
+  });
+
+  it("applies a network filter when the agent supplies one", async () => {
+    const seen = stubFetch(() => ({ results: [], total: 0 }));
+    const server = new VeridexMCPServer(CONFIG);
+
+    await server.handleDiscoverResources({ query: "x", network: "stellar:testnet" });
+
+    expect(new URL(seen[0]).searchParams.get("network")).toBe("stellar:testnet");
+  });
+
+  it("returns results an agent can act on", async () => {
+    stubFetch(() => ({
+      results: [
+        {
+          resourceUrl: "http://seller.test/forecast",
+          serviceName: "Acme forecasts",
+          description: "Hourly weather forecast for a named city.",
+          payTo: "GCNNJJV3XUXWCVV3WBKILBCUUGKSDZ2BL4HHNV7AISYMW6PJQX47DZYU",
+          network: "stellar:testnet",
+          scheme: "exact",
+        },
+      ],
+      total: 1,
+    }));
+    const server = new VeridexMCPServer(CONFIG);
+
+    const result = await server.handleDiscoverResources({ query: "weather" });
+    const text = JSON.stringify(result);
+
+    expect(text).toContain("http://seller.test/forecast");
+    expect(result.isError).toBeFalsy();
+  });
+
+  it("rejects a call with no query rather than searching for nothing", async () => {
+    stubFetch(() => ({ results: [] }));
+    const server = new VeridexMCPServer(CONFIG);
+
+    await expect(server.handleDiscoverResources({})).rejects.toThrow();
+  });
+});
+
+describe("pay_resource", () => {
+  it("refuses to pay when no signing key is configured, and says so", async () => {
+    // An agent runtime with no key must get a stated reason rather than a
+    // request that fails somewhere further in.
+    stubFetch(() => ({ ok: true }));
+    const server = new VeridexMCPServer(CONFIG);
+
+    await expect(
+      server.handlePayResource({ resourceUrl: "http://seller.test/forecast" }),
+    ).rejects.toThrow(/STELLAR_CLIENT_SECRET_KEY not configured/);
+  });
+
+  it("requests the resource once a signing key is present", async () => {
+    const seen = stubFetch(() => ({ ok: true }));
+    const server = new VeridexMCPServer({
+      ...CONFIG,
+      stellar: { ...CONFIG.stellar, clientSecretKey: Keypair.random().secret() },
+    });
+
+    await server.handlePayResource({ resourceUrl: "http://seller.test/forecast" }).catch(() => {});
+
+    expect(seen.some((url) => url.startsWith("http://seller.test/forecast"))).toBe(true);
+  });
+
+  it("rejects SSRF target URLs (localhost, cloud metadata, private IPs)", async () => {
+    const server = new VeridexMCPServer({
+      ...CONFIG,
+      stellar: { ...CONFIG.stellar, clientSecretKey: Keypair.random().secret() },
+    });
+
+    const saved = process.env.MCP_ALLOW_LOCAL_URLS;
+    const savedNodeEnv = process.env.NODE_ENV;
+    process.env.MCP_ALLOW_LOCAL_URLS = "false";
+    process.env.NODE_ENV = "production";
+
+    try {
+      await expect(
+        server.handlePayResource({ resourceUrl: "http://169.254.169.254/latest/meta-data" }),
+      ).rejects.toThrow(/SSRF Blocked/);
+
+      await expect(
+        server.handlePayResource({ resourceUrl: "http://127.0.0.1:8080/admin" }),
+      ).rejects.toThrow(/SSRF Blocked/);
+
+      await expect(
+        server.handlePayResource({ resourceUrl: "http://10.0.0.1/private" }),
+      ).rejects.toThrow(/SSRF Blocked/);
+
+      await expect(
+        server.handlePayResource({ resourceUrl: "http://192.168.1.1/router" }),
+      ).rejects.toThrow(/SSRF Blocked/);
+    } finally {
+      process.env.MCP_ALLOW_LOCAL_URLS = saved;
+      process.env.NODE_ENV = savedNodeEnv;
+    }
+  });
+
+  it("rejects a call with no resource URL", async () => {
+    stubFetch(() => ({}));
+    const server = new VeridexMCPServer(CONFIG);
+
+    await expect(server.handlePayResource({})).rejects.toThrow();
+  });
+});
+
+describe("configuration", () => {
+  it("defaults to the local stack", () => {
+    const saved = { ...process.env };
+    delete process.env.BAZAAR_URL;
+    delete process.env.FACILITATOR_URL;
+    delete process.env.STELLAR_NETWORK;
+    try {
+      const config = getConfig();
+      expect(config.bazaarUrl).toBe("http://localhost:3001");
+      expect(config.facilitatorUrl).toBe("http://localhost:3002");
+      expect(config.stellar.network).toBe("testnet");
+    } finally {
+      process.env = saved;
+    }
+  });
+
+  it("refuses a network it cannot serve", () => {
+    const saved = process.env.STELLAR_NETWORK;
+    process.env.STELLAR_NETWORK = "futurenet";
+    try {
+      expect(() => getConfig()).toThrow(/must be 'testnet' or 'pubnet'/);
+    } finally {
+      if (saved === undefined) delete process.env.STELLAR_NETWORK;
+      else process.env.STELLAR_NETWORK = saved;
+    }
+  });
+});

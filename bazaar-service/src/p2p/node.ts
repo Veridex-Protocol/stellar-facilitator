@@ -369,31 +369,39 @@ export class P2PNode {
   /**
    * Verify Ed25519 signature using Stellar SDK
    *
-   * Signature is over: `${resourceUrl}:${timestamp}:${sequence}`
+   * Signature is over canonical announcement digest (covering all metadata fields).
+   * Supports legacy format for backward compatibility with v1 heartbeats.
    */
   private verifySignature(message: AnnounceMessage): boolean {
     try {
-      // Create signature payload
-      const payload = createSignaturePayload(
-        message.resourceUrl,
-        message.timestamp,
-        message.sequence
-      );
-
-      // Convert payload to Buffer
-      const payloadBuffer = Buffer.from(payload, "utf-8");
-
       // Parse signature (base64 or hex)
       const signatureBuffer = Buffer.from(message.signature, "base64");
       if (signatureBuffer.length !== 64) return false;
 
+      let keypair: Keypair;
       try {
-        const keypair = Keypair.fromPublicKey(message.nodeId);
-        return keypair.verify(payloadBuffer, signatureBuffer);
+        keypair = Keypair.fromPublicKey(message.nodeId);
       } catch {
         console.warn(`[P2P Node] Cannot verify signature: nodeId is not a Stellar G-address`);
         return false;
       }
+
+      // 1. Verify against canonical full announcement payload (v2)
+      const canonicalPayload = createSignaturePayload(
+        message.resourceUrl,
+        message.timestamp,
+        message.sequence,
+        message
+      );
+      const canonicalPayloadBuffer = Buffer.from(canonicalPayload, "utf-8");
+      if (keypair.verify(canonicalPayloadBuffer, signatureBuffer)) {
+        return true;
+      }
+
+      // 2. Backward compatibility fallback for legacy v1 heartbeat signatures
+      const legacyPayload = `${message.resourceUrl}:${message.timestamp}:${message.sequence}`;
+      const legacyPayloadBuffer = Buffer.from(legacyPayload, "utf-8");
+      return keypair.verify(legacyPayloadBuffer, signatureBuffer);
     } catch (error) {
       console.error("[P2P Node] Signature verification error:", error);
       return false;

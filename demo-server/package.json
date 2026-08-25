@@ -1,0 +1,32 @@
+{
+  "name": "@veridex/demo-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "A minimal x402 resource server, so the conformance harness has something real to buy",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "1.19.17",
+    "@stellar/stellar-sdk": "13.3.0",
+    "@x402/core": "2.21.0",
+    "@x402/extensions": "2.21.0",
+    "@x402/hono": "2.21.0",
+    "@x402/stellar": "2.21.0",
+    "dotenv": "17.2.3",
+    "hono": "4.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsx": "4.23.11",
+    "typescript": "5.9.3"
+  }
+}

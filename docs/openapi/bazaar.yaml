@@ -1,55 +1,421 @@
 openapi: 3.0.3
 info:
-  title: Veridex Bazaar v2 API
-  version: 0.2.0
-  license: { name: Apache-2.0 }
+  title: Veridex Bazaar discovery API
+  version: 0.3.0
+  description: >
+    Catalog and discovery for x402 resources on Stellar. Every listing names a
+    settlement that this service confirms on Horizon itself before listing
+    anything, so an entry is auditable by a third party from its transaction
+    hash alone.
+  license: { name: Apache-2.0, url: 'https://www.apache.org/licenses/LICENSE-2.0' }
+
 servers:
   - url: http://localhost:3001
+    description: Local stack started by npm run demo
+
+tags:
+  - name: discovery
+    description: Read paths an agent or client uses to find resources
+  - name: catalog
+    description: Write path used by a facilitator after a settlement
+  - name: mesh
+    description: Peer-to-peer federation between independent catalogs
+  - name: ops
+    description: Health and statistics
+
 paths:
   /discovery/search:
     get:
-      summary: Search live x402 resources using text, vector, and telemetry ranking
+      tags: [discovery]
+      summary: Search resources, ranked by relevance and live telemetry
+      description: >
+        Fuses BM25 keyword match, feature-hash vector similarity, and live
+        telemetry into a composite score. Resources whose liveness is OFFLINE
+        are excluded and DEGRADED resources are demoted, because handing an
+        agent a dead endpoint is a failed task rather than a ranking
+        inaccuracy.
       parameters:
-        - { in: query, name: q, required: true, schema: { type: string } }
-        - { in: query, name: network, schema: { type: string, default: 'stellar:pubnet' } }
-        - { in: query, name: minUptimeRatio, schema: { type: number, minimum: 0, maximum: 1, default: 0.9 } }
-        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
-        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: q, required: true, description: Natural-language query, schema: { type: string, minLength: 1 } }
+        - $ref: '#/components/parameters/Type'
+        - $ref: '#/components/parameters/PayTo'
+        - $ref: '#/components/parameters/Network'
+        - $ref: '#/components/parameters/Extensions'
+        - $ref: '#/components/parameters/Scheme'
+        - $ref: '#/components/parameters/Tags'
+        - { in: query, name: minUptimeRatio, schema: { type: number, minimum: 0, maximum: 1, default: 0 } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Cursor'
       responses:
-        '200': { description: Ranked resource results }
-        '400': { description: Missing query }
+        '200':
+          description: A ranked page of results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResponse' }
+        '400':
+          description: Missing query, or a cursor that does not belong to this query
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryError' }
+              examples:
+                invalidCursor:
+                  value:
+                    error: invalid_cursor
+                    message: >-
+                      cursor belongs to a different query or filter set; a cursor may only be
+                      used to continue the search that produced it
+
   /discovery/resources:
     get:
+      tags: [discovery]
       summary: List catalog resources
+      description: >
+        Applies filters and paging but no query ranking, so a page is always a
+        complete view of its slice and partialResults is always false.
       parameters:
-        - { in: query, name: network, schema: { type: string } }
-        - { in: query, name: limit, schema: { type: integer, default: 20 } }
-        - { in: query, name: offset, schema: { type: integer, default: 0 } }
-      responses: { '200': { description: Catalog page } }
-  /announce:
-    post:
-      summary: Validate and relay a signed P2P announcement
+        - $ref: '#/components/parameters/Type'
+        - $ref: '#/components/parameters/PayTo'
+        - $ref: '#/components/parameters/Network'
+        - $ref: '#/components/parameters/Extensions'
+        - $ref: '#/components/parameters/Scheme'
+        - $ref: '#/components/parameters/Tags'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/Cursor'
       responses:
-        '200': { description: Announcement published }
-        '400': { description: Invalid announcement }
+        '200':
+          description: A page of catalog entries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResponse' }
+        '400':
+          description: A cursor that does not belong to this filter set
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscoveryError' }
+
   /catalog/ingest:
     post:
-      summary: Ingest verified Bazaar discovery metadata
-      security: [{ bearerAuth: [] }]
+      tags: [catalog]
+      summary: Catalog a resource against a confirmed settlement
+      description: >
+        Called by a facilitator after a payment settles. Authentication answers
+        whether the caller may write here; it does not answer whether the claim
+        is true, so settlementTx is independently confirmed on Horizon before
+        anything is written. Verification fails closed: if Horizon cannot be
+        reached, nothing is listed.
+      security: [{ internalToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IngestRequest' }
       responses:
-        '200': { description: Resource indexed }
-        '400': { description: Metadata soft-dropped }
-        '401': { description: Invalid internal token }
+        '200':
+          description: Listed
+          headers:
+            EXTENSION-RESPONSES: { $ref: '#/components/headers/ExtensionResponses' }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [success] }
+                  resourceId: { type: string, format: uuid }
+                  extensionResponse: { type: string, description: Base64 of the same payload as the header }
+        '400':
+          description: >
+            Rejected. The reason is in both the body and the EXTENSION-RESPONSES
+            header, so a seller learns why its listing did not land.
+          headers:
+            EXTENSION-RESPONSES: { $ref: '#/components/headers/ExtensionResponses' }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [rejected] }
+                  reason: { type: string }
+              examples:
+                missingSettlement:
+                  value:
+                    status: rejected
+                    reason: >-
+                      settlementTx is required: a catalog entry must name the settlement that
+                      backs it, which this service confirms on Horizon.
+                unconfirmed:
+                  value:
+                    status: rejected
+                    reason: settlementTx does not exist on this network
+                wrongRecipient:
+                  value:
+                    status: rejected
+                    reason: >-
+                      settlementTx succeeded but credited no value to G..., so it does not back
+                      this catalog entry
+                reused:
+                  value:
+                    status: rejected
+                    reason: settlementTx has already been used to list a different resource
+        '401':
+          description: Missing or wrong bearer token
+
+  /announce:
+    post:
+      tags: [mesh]
+      summary: Publish a signed announcement to the peer mesh
+      description: >
+        A signed announcement proves who said it, not that anyone paid. An
+        announcement reaches the catalog only when it names a settlement, which
+        the receiving node confirms itself; otherwise it counts only as liveness
+        telemetry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AnnounceMessage' }
+      responses:
+        '200': { description: Published to the mesh }
+        '400': { description: Malformed or unsigned announcement }
+
   /health:
     get:
-      summary: Database and P2P health
-      responses: { '200': { description: Health status } }
+      tags: [ops]
+      summary: Liveness, database and mesh status
+      responses:
+        '200':
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, degraded] }
+                  timestamp: { type: integer }
+                  database:
+                    type: object
+                    properties:
+                      connected: { type: boolean }
+                      extensions: { type: array, items: { type: string } }
+                  p2p:
+                    type: object
+                    properties:
+                      peerId: { type: string }
+                      connectedPeers: { type: integer }
+                      uptime: { type: integer }
+
   /stats:
     get:
+      tags: [ops]
       summary: Mesh and telemetry statistics
-      responses: { '200': { description: Statistics } }
+      responses:
+        '200': { description: Statistics since boot }
+
+  /.well-known/x402:
+    get:
+      tags: [ops]
+      summary: Capability descriptor
+      description: >
+        The Bazaar sells nothing, so it advertises no jobs and no receipt
+        signer. Returns 503 when BAZAAR_BASE_URL is unset, because the
+        descriptor states the origin clients reach this service at and that
+        cannot be inferred from a bind address.
+      responses:
+        '200': { description: Descriptor }
+        '503': { description: BAZAAR_BASE_URL is not configured }
+
 components:
   securitySchemes:
-    bearerAuth:
+    internalToken:
       type: http
       scheme: bearer
+      description: >
+        Shared secret from BAZAAR_INTERNAL_TOKEN, at least 24 characters. The
+        service refuses to start without it, because this guards a write
+        endpoint on a public catalog.
+
+  headers:
+    ExtensionResponses:
+      description: >
+        Base64 JSON reporting the cataloging outcome, present on both acceptance
+        and rejection. Decodes to {"bazaar":{"status":…,"rejectedReason":…}}.
+        The facilitator forwards this to the seller on its settle response.
+      schema: { type: string }
+
+  parameters:
+    Type:
+      in: query
+      name: type
+      description: Resource type
+      schema: { type: string, enum: [http, mcp] }
+    PayTo:
+      in: query
+      name: payTo
+      description: Only resources paying this Stellar address
+      schema: { type: string }
+    Network:
+      in: query
+      name: network
+      description: CAIP-2 network identifier
+      schema: { type: string, example: 'stellar:testnet' }
+    Extensions:
+      in: query
+      name: extensions
+      description: Comma-separated; matches resources declaring all of them
+      schema: { type: string, example: bazaar }
+    Scheme:
+      in: query
+      name: scheme
+      description: Payment scheme, beyond the spec's named filter set
+      schema: { type: string, example: exact }
+    Tags:
+      in: query
+      name: tags
+      description: Comma-separated; matches resources carrying any of them
+      schema: { type: string }
+    Limit:
+      in: query
+      name: limit
+      description: Page size, clamped to 100
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Offset:
+      in: query
+      name: offset
+      description: Row offset. Superseded by cursor when both are present
+      schema: { type: integer, minimum: 0, default: 0 }
+    Cursor:
+      in: query
+      name: cursor
+      description: >
+        Opaque continuation token from a previous response. Bound to the query
+        and filters that issued it: presenting it against a different query
+        returns 400 rather than a silently wrong page.
+      schema: { type: string }
+
+  schemas:
+    SearchResponse:
+      type: object
+      required: [results, total, limit, offset, partialResults]
+      properties:
+        results: { type: array, items: { $ref: '#/components/schemas/SearchResult' } }
+        total: { type: integer, description: Total matches, not the page size }
+        limit: { type: integer }
+        offset: { type: integer }
+        nextCursor:
+          type: string
+          description: Continuation token, absent on the last page
+        partialResults:
+          type: boolean
+          description: >
+            True when a retrieval leg filled its candidate pool, meaning ranking
+            considered a truncated set and this page is not a complete answer.
+            Computed rather than defaulted.
+        partialReason:
+          type: string
+          description: Why partialResults is set, when it is
+
+    SearchResult:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        resourceUrl: { type: string, format: uri }
+        resourceType: { type: string, enum: [http, mcp] }
+        toolName: { type: string, description: Present for MCP tools }
+        serviceName: { type: string, maxLength: 32 }
+        description: { type: string }
+        mimeType: { type: string }
+        payTo: { type: string }
+        network: { type: string }
+        scheme: { type: string }
+        tags: { type: array, items: { type: string } }
+        iconUrl: { type: string }
+        routeTemplate: { type: string }
+        inputSpec: { type: object, additionalProperties: true }
+        outputSpec: { type: object, additionalProperties: true }
+        extensions: { type: object, additionalProperties: true }
+        compositeScore: { type: number }
+        vectorScore: { type: number, description: Feature-hash similarity, lexical rather than semantic }
+        bm25Score: { type: number }
+        uptimeScore: { type: number }
+        latencyScore: { type: number }
+        reliabilityScore: { type: number }
+        telemetry: { $ref: '#/components/schemas/Telemetry' }
+
+    Telemetry:
+      type: object
+      properties:
+        nodeId: { type: string }
+        lastHeartbeatAt: { type: string, format: date-time }
+        avgResponseTimeMs: { type: number }
+        uptimeRatio: { type: number }
+        settlementCount: { type: integer }
+        failedSettlementCount: { type: integer }
+        livenessStatus:
+          type: string
+          enum: [HEALTHY, DEGRADED, OFFLINE]
+          description: >
+            Derived from the more recent of a P2P heartbeat or a confirmed
+            settlement. A settlement keeps a resource HEALTHY far longer,
+            because settlements are demand-driven and their absence is not
+            evidence of a problem.
+
+    IngestRequest:
+      type: object
+      required: [resourceUrl, resourceType, payTo, network, scheme, bazaarExtension, settlementTx]
+      properties:
+        resourceUrl: { type: string, format: uri }
+        resourceType: { type: string, enum: [http, mcp] }
+        toolName: { type: string, description: Required for MCP tools, which key on url plus tool name }
+        payTo: { type: string }
+        network: { type: string }
+        scheme: { type: string }
+        settlementTx:
+          type: string
+          pattern: '^[0-9a-fA-F]{64}$'
+          description: >
+            The settlement backing this listing. Confirmed on Horizon: it must
+            exist, have succeeded, be recent, and have credited payTo. One
+            settlement lists one resource.
+        bazaarExtension: { $ref: '#/components/schemas/BazaarExtension' }
+        extensions: { type: object, additionalProperties: true }
+
+    BazaarExtension:
+      type: object
+      required: [description, inputSpec]
+      properties:
+        serviceName: { type: string, maxLength: 32, description: Printable ASCII only }
+        description: { type: string }
+        tags: { type: array, maxItems: 5, items: { type: string, maxLength: 32 } }
+        iconUrl: { type: string, maxLength: 2048, description: Rejected for IP literals and loopback forms }
+        routeTemplate: { type: string, description: Percent-decoded before traversal and scheme-injection checks }
+        mimeType: { type: string, default: application/json }
+        inputSpec: { type: object, additionalProperties: true }
+        outputSpec: { type: object, additionalProperties: true }
+
+    AnnounceMessage:
+      type: object
+      required: [nodeId, resourceUrl, timestamp, sequence, telemetry, signature]
+      properties:
+        nodeId: { type: string }
+        resourceUrl: { type: string, format: uri }
+        toolName: { type: string }
+        timestamp: { type: integer }
+        sequence: { type: integer }
+        settlementTx:
+          type: string
+          description: >
+            Required for the announcement to reach the catalog. Without it the
+            message counts as liveness telemetry only.
+        telemetry:
+          type: object
+          properties:
+            avgResponseTimeMs: { type: number }
+            uptime30d: { type: number, minimum: 0, maximum: 100 }
+            successfulSettlements: { type: integer }
+        signature: { type: string, description: Ed25519 over resourceUrl, timestamp and sequence }
+
+    DiscoveryError:
+      type: object
+      properties:
+        error: { type: string, example: invalid_cursor }
+        message: { type: string }

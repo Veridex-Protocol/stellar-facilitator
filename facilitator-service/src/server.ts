@@ -2,21 +2,28 @@
  * Veridex Facilitator Service - HTTP Server
  * License: Apache-2.0
  *
- * x402 Facilitator endpoints:
- * - POST /verify - Verify transaction before settlement
- * - POST /settle - Submit transaction to Stellar network
- * - GET /supported - List supported payment schemes
- * - GET /health - Health check
- * - GET /stats - Channel pool and settlement statistics
+ * Canonical x402 v2 facilitator for Stellar:
+ * - POST /verify              verify a payment before settling it
+ * - POST /settle              submit a verified payment to the network
+ * - GET  /supported           schemes, networks, signers, fee sponsorship
+ * - GET  /.well-known/x402    capability descriptor (x402ccd/0)
+ * - GET  /health              liveness plus the facts this deployment claims
+ * - GET  /stats               in-process counters since boot
+ *
+ * Everything advertised here is checked against the network at boot. See
+ * `startup.ts`: the process refuses to start rather than advertise a scheme
+ * with no contract behind it, or fee sponsorship from an unfunded account.
  */
 
 import { Hono } from "hono";
 import { serve, type ServerType } from "@hono/node-server";
 import { cors } from "hono/cors";
-import { logger as honoLogger } from "hono/logger";
+import { secureHeaders } from "hono/secure-headers";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { Keypair, Networks } from "@stellar/stellar-sdk";
 import { extractDiscoveryInfo } from "@x402/extensions/bazaar";
+import type { SettleResponse, VerifyResponse } from "@x402/core/types";
 import { ChannelAccountPool, createChannelPool } from "./channel/pool.js";
 import {
   StellarTransactionVerifier,
@@ -24,17 +31,30 @@ import {
   X402Facilitator,
   createVerifier,
   createSettler,
+  generateJobReceipt,
 } from "./stellar/index.js";
-import type {
-  X402StellarRequest,
-  X402StellarResponse,
-  StellarNetworkConfig,
-} from "./stellar/types.js";
+import type { X402StellarResponse, StellarNetworkConfig } from "./stellar/types.js";
 import type { ChannelPoolConfig } from "./channel/types.js";
+import { createLogger, type Logger } from "./logger.js";
+import { rateLimit } from "./rate-limit.js";
+import { validateFacilitatorRequest } from "./validation.js";
+import { LOCAL_REASONS, classifyError, describeReason, errorDetail } from "./reasons.js";
+import { withLedgerSkewRetry, settleRetryReason } from "./retry.js";
+import { SignerBusyError } from "./settle-scheduler.js";
+import {
+  assertSignerKeypairConsistent,
+  assertSupportedIsTruthful,
+  checkSponsorFunding,
+  resolveUptoGate,
+  type SupportedKind,
+} from "./startup.js";
+import {
+  buildCapabilityDescriptor,
+  loadCapabilityJobs,
+  type CapabilityJob,
+} from "./capability-descriptor.js";
 
-/**
- * x402 Stellar Request Schema (Zod)
- */
+/** Legacy (pre-canonical) Stellar request, served only under /legacy/*. */
 const X402StellarRequestSchema = z.object({
   scheme: z.literal("stellar"),
   network: z.string(),
@@ -49,23 +69,30 @@ const X402StellarRequestSchema = z.object({
     .optional(),
 });
 
-/**
- * Facilitator Service configuration
- */
 export interface FacilitatorServiceConfig {
-  // HTTP server
   port: number;
   host: string;
-
-  // Stellar network
+  /** Public origin this deployment is reachable at. Advertised in the descriptor. */
+  baseUrl: string;
   stellar: StellarNetworkConfig;
-
-  // Channel pool
   channelPool: Partial<ChannelPoolConfig>;
+  /** Ceiling on the network fee this facilitator will sponsor, in stroops. */
+  maxTransactionFeeStroops: number;
+  ledgerSkew: { retries: number; delayMs: number };
+  /** How long a settlement may wait for a free signer before being refused. */
+  settleQueueTimeoutMs: number;
+  rateLimit: { windowMs: number; max: number };
+  /** Path to the JSON job list backing `/.well-known/x402`. */
+  jobsFile?: string;
+  /** Whether this deployment intends to sponsor fees; confirmed against Horizon at boot. */
+  intendToSponsorFees: boolean;
 }
 
 /**
- * Get default configuration from environment
+ * Builds configuration from the environment.
+ *
+ * @returns Validated service configuration
+ * @throws {Error} When a required variable is missing or malformed
  */
 export function getDefaultConfig(): FacilitatorServiceConfig {
   const configuredNetwork = process.env.STELLAR_NETWORK || "testnet";
@@ -78,26 +105,48 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
     process.env.FACILITATOR_PUBLIC_KEY ||
     (facilitatorSecretKey ? Keypair.fromSecret(facilitatorSecretKey).publicKey() : "");
 
-  const networkPassphrase =
-    network === "pubnet"
-      ? Networks.PUBLIC
-      : Networks.TESTNET;
+  const networkPassphrase = network === "pubnet" ? Networks.PUBLIC : Networks.TESTNET;
 
   const horizonUrl =
     process.env.HORIZON_URL ||
-    (network === "pubnet"
-      ? "https://horizon.stellar.org"
-      : "https://horizon-testnet.stellar.org");
+    (network === "pubnet" ? "https://horizon.stellar.org" : "https://horizon-testnet.stellar.org");
 
   const rpcUrl =
     process.env.SOROBAN_RPC_URL ||
-    (network === "pubnet"
-      ? "https://mainnet.sorobanrpc.com"
-      : "https://soroban-testnet.stellar.org");
+    (network === "pubnet" ? "https://mainnet.sorobanrpc.com" : "https://soroban-testnet.stellar.org");
+
+  const port = parseInt(process.env.FACILITATOR_PORT || "3002", 10);
+  const host = process.env.FACILITATOR_HOST || "0.0.0.0";
+
+  // The descriptor publishes this to clients as where to reach the service, so
+  // it cannot be guessed from a bind address that is usually 0.0.0.0.
+  const baseUrl = process.env.BASE_URL?.replace(/\/+$/, "") || "";
+  if (!baseUrl) {
+    throw new Error(
+      "BASE_URL is required: it is the public origin advertised in /.well-known/x402. Set it to the URL clients reach this facilitator at (e.g. http://localhost:3002 for local runs).",
+    );
+  }
 
   return {
-    port: parseInt(process.env.FACILITATOR_PORT || "3002", 10),
-    host: process.env.FACILITATOR_HOST || "0.0.0.0",
+    port,
+    host,
+    baseUrl,
+    maxTransactionFeeStroops: parseInt(process.env.MAX_TRANSACTION_FEE_STROOPS || "50000", 10),
+    ledgerSkew: {
+      retries: parseInt(process.env.LEDGER_SKEW_RETRIES || "2", 10),
+      // Must outlast one ledger close (~5s) or every attempt re-observes the
+      // same divergence. See retry.ts.
+      delayMs: parseInt(process.env.LEDGER_SKEW_RETRY_DELAY_MS || "6000", 10),
+    },
+    rateLimit: {
+      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10),
+      max: parseInt(process.env.RATE_LIMIT_MAX || "120", 10),
+    },
+    // Long enough to ride out a settlement ahead in the queue, short enough
+    // that a caller gets a usable answer well inside a typical HTTP timeout.
+    settleQueueTimeoutMs: parseInt(process.env.SETTLE_QUEUE_TIMEOUT_MS || "30000", 10),
+    jobsFile: process.env.X402_JOBS_FILE || undefined,
+    intendToSponsorFees: process.env.SPONSOR_FEES !== "false",
     stellar: {
       network,
       networkPassphrase,
@@ -124,11 +173,18 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
   };
 }
 
-/**
- * Facilitator Service
- *
- * x402 payment facilitator for Stellar network.
- */
+/** What this deployment has established about itself, as opposed to intends. */
+interface VerifiedCapabilities {
+  /** True only once Horizon has confirmed the sponsoring account is funded. */
+  feesAreSponsored: boolean;
+  /** Set only once a contract has been confirmed deployed at the configured id. */
+  uptoContractId?: string;
+  jobs: CapabilityJob[];
+  /** Whether the boot-time checks have run. False means nothing here is confirmed. */
+  checked: boolean;
+  notes: string[];
+}
+
 export class FacilitatorService {
   private app: Hono;
   private config: FacilitatorServiceConfig;
@@ -136,88 +192,160 @@ export class FacilitatorService {
   private verifier: StellarTransactionVerifier;
   private settler: StellarTransactionSettler;
   private x402Facilitator: X402Facilitator;
+  private logger: Logger;
   private httpServer?: ServerType;
+  private capabilities: VerifiedCapabilities;
   private stats: {
     totalVerifications: number;
     successfulVerifications: number;
     totalSettlements: number;
     successfulSettlements: number;
+    ledgerSkewRetries: number;
+    ledgerSkewRecoveries: number;
     startTime: number;
   };
 
-  constructor(config: FacilitatorServiceConfig) {
+  constructor(config: FacilitatorServiceConfig, logger: Logger = createLogger()) {
     this.config = config;
+    this.logger = logger;
     this.app = new Hono();
 
-    // Initialize components
     this.channelPool = createChannelPool(config.channelPool);
     this.verifier = createVerifier(config.stellar);
     this.settler = createSettler(config.stellar, this.channelPool);
 
-    // Initialize x402 canonical facilitator wrapper
+    // Nothing is confirmed until start() runs, so the service claims nothing.
+    this.capabilities = { feesAreSponsored: false, jobs: [], checked: false, notes: [] };
+
     this.x402Facilitator = new X402Facilitator({
       channelPool: this.channelPool,
       networkPassphrase: config.stellar.networkPassphrase,
       feeBumpSignerSecret:
         process.env.FEE_BUMP_SIGNER_SECRET || config.stellar.facilitatorSecretKey,
+      areFeesSponsored: false,
       rpcUrl: config.stellar.rpcUrl,
+      maxTransactionFeeStroops: config.maxTransactionFeeStroops,
+      settleQueueTimeoutMs: config.settleQueueTimeoutMs,
     });
 
-    // Initialize stats
     this.stats = {
       totalVerifications: 0,
       successfulVerifications: 0,
       totalSettlements: 0,
       successfulSettlements: 0,
+      ledgerSkewRetries: 0,
+      ledgerSkewRecoveries: 0,
       startTime: Date.now(),
     };
 
-    // Setup routes
     this.setupMiddleware();
     this.setupRoutes();
   }
 
-  /**
-   * Setup middleware
-   */
   private setupMiddleware(): void {
-    // CORS
+    this.app.use("*", secureHeaders());
     this.app.use(
       "*",
       cors({
-        origin: "*",
+        origin: process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) ?? "*",
         allowMethods: ["GET", "POST", "OPTIONS"],
-        allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL"],
-      })
+        allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL", "X-Job-Id"],
+        // Cataloging outcomes are reported in this header; without exposing it
+        // a browser-based caller cannot read its own listing result.
+        exposeHeaders: ["EXTENSION-RESPONSES", "RateLimit-Limit", "RateLimit-Remaining", "Retry-After"],
+      }),
     );
 
-    // Logging
-    this.app.use("*", honoLogger());
+    // A signed Stellar envelope is a few KB. Anything approaching this ceiling
+    // is not a payment.
+    this.app.use("*", bodyLimit({ maxSize: 256 * 1024, onError: (c) =>
+      c.json(
+        {
+          error: "payload_too_large",
+          message: "Request body exceeds 256KB. An x402 payment envelope is a few kilobytes.",
+        },
+        413,
+      ),
+    }));
+
+    // Settlement spends real XLM from this facilitator's own account, so cap
+    // how fast anyone can make it do that.
+    this.app.use(
+      "*",
+      rateLimit({
+        windowMs: this.config.rateLimit.windowMs,
+        max: this.config.rateLimit.max,
+        onRejected: (c) =>
+          this.logger.outcome({
+            endpoint: c.req.path,
+            outcome: "rate_limited",
+            status: 429,
+            latencyMs: 0,
+          }),
+      }),
+    );
   }
 
   /**
-   * Setup HTTP routes
+   * Builds the `/supported` body from what has actually been confirmed.
+   *
+   * @returns The response served at GET /supported
    */
-  private setupRoutes(): void {
-    // Health check
-    this.app.get("/health", (c) => {
-      const channelStats = this.channelPool.getStats();
+  private buildSupported(): { kinds: SupportedKind[]; extensions: string[]; signers: Record<string, string[]> } {
+    const network = `stellar:${this.config.stellar.network}`;
+    const kinds: SupportedKind[] = [
+      {
+        x402Version: 2,
+        scheme: "exact",
+        network,
+        extra: this.x402Facilitator.getExtra(network as any),
+      },
+    ];
 
-      return c.json({
+    // `upto` appears only when startup confirmed a real contract on this
+    // network. It is otherwise absent entirely - not advertised against a
+    // placeholder id, and not advertised as "coming".
+    if (this.capabilities.uptoContractId) {
+      kinds.push({
+        x402Version: 2,
+        scheme: "upto",
+        network,
+        extra: { contractId: this.capabilities.uptoContractId },
+      });
+    }
+
+    return {
+      kinds,
+      extensions: ["bazaar"],
+      signers: { "stellar:*": this.x402Facilitator.getSigners(network) },
+    };
+  }
+
+  /** Schemes this deployment actually advertises right now. */
+  private advertisedSchemes(): string[] {
+    return this.buildSupported().kinds.map((kind) => kind.scheme);
+  }
+
+  private setupRoutes(): void {
+    this.app.get("/health", (c) =>
+      c.json({
         status: "ok",
         timestamp: Date.now(),
-        channels: channelStats,
-        network: this.config.stellar.network,
-      });
-    });
+        network: `stellar:${this.config.stellar.network}`,
+        facilitator: this.config.stellar.facilitatorPublicKey,
+        areFeesSponsored: this.capabilities.feesAreSponsored,
+        startupChecksPassed: this.capabilities.checked,
+        channels: this.channelPool.getStats(),
+      }),
+    );
 
-    // Statistics
     this.app.get("/stats", (c) => {
-      const channelStats = this.channelPool.getStats();
       const uptime = Date.now() - this.stats.startTime;
-
       return c.json({
         uptime,
+        // These reset on restart. Published reliability figures must come from
+        // the structured request_outcome log lines, not from here.
+        note: "In-process counters since boot. They reset on restart; derive published figures from the request_outcome log lines.",
         verifications: {
           total: this.stats.totalVerifications,
           successful: this.stats.successfulVerifications,
@@ -234,292 +362,466 @@ export class FacilitatorService {
               ? this.stats.successfulSettlements / this.stats.totalSettlements
               : 0,
         },
-        channels: channelStats,
+        ledgerSkew: {
+          retriesIssued: this.stats.ledgerSkewRetries,
+          recoveredAfterRetry: this.stats.ledgerSkewRecoveries,
+        },
+        // Settlement concurrency is bounded by the number of funded signer
+        // accounts. A rising 'queued' or any 'totalRejected' means the pool is
+        // too small for the offered load.
+        settlementConcurrency: this.x402Facilitator.getSchedulerStats(),
+        channels: this.channelPool.getStats(),
         timestamp: Date.now(),
       });
     });
 
-    // Supported schemes
-    this.app.get("/supported", (c) => {
-      const network = `stellar:${this.config.stellar.network}`;
-      return c.json({
-        kinds: [
-          {
-            x402Version: 2,
-            scheme: "exact",
-            network,
-            extra: this.x402Facilitator.getExtra(network as any),
-          },
-        ],
-        extensions: [],
-        signers: {
-          "stellar:*": this.x402Facilitator.getSigners(network),
-        },
-      });
-    });
+    this.app.get("/supported", (c) => c.json(this.buildSupported()));
 
-    // Canonical x402 verification endpoint
+    this.app.get("/.well-known/x402", (c) =>
+      c.json(
+        buildCapabilityDescriptor({
+          baseUrl: this.config.baseUrl,
+          network: `stellar:${this.config.stellar.network}`,
+          receiptSigner: this.config.stellar.facilitatorPublicKey,
+          advertisedSchemes: this.advertisedSchemes(),
+          jobs: this.capabilities.jobs,
+        }),
+      ),
+    );
+
     const canonicalVerify = async (c: any) => {
+      const startedAt = performance.now();
+      let body: unknown;
       try {
-        const body = await c.req.json();
-        const paymentPayload = body.paymentPayload || body.payload;
-        const paymentRequirements = body.paymentRequirements || body.requirements;
+        body = await c.req.json();
+      } catch {
+        body = undefined;
+      }
 
-        if (!paymentPayload || !paymentRequirements) {
-          return c.json(
-            {
-              isValid: false,
-              invalidReason: "invalid_request",
-              invalidMessage: "Missing paymentPayload or paymentRequirements",
+      const invalidRequest = validateFacilitatorRequest(body);
+      if (invalidRequest) {
+        const response: VerifyResponse = {
+          isValid: false,
+          invalidReason: LOCAL_REASONS.INVALID_REQUEST_BODY,
+          invalidMessage: invalidRequest,
+        };
+        this.logger.outcome({
+          endpoint: "/verify",
+          outcome: "invalid",
+          reason: response.invalidReason,
+          status: 400,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
+        return c.json(response, 400);
+      }
+
+      const { paymentPayload, paymentRequirements } = body as any;
+      this.stats.totalVerifications++;
+
+      try {
+        let attempts = 0;
+        const result = this.withVerifyReason(
+          await withLedgerSkewRetry(
+            () => {
+              attempts++;
+              return this.x402Facilitator.verify(paymentPayload, paymentRequirements);
             },
-            400
-          );
-        }
-
-        this.stats.totalVerifications++;
-        const result = await this.x402Facilitator.verify(paymentPayload, paymentRequirements);
-
-        if (result.isValid) {
-          this.stats.successfulVerifications++;
-          return c.json(result);
-        } else {
-          return c.json(result, 400);
-        }
-      } catch (error: any) {
-        console.error("[Facilitator] x402 verification error:", error);
-        return c.json(
-          {
-            isValid: false,
-            invalidReason: "internal_error",
-            invalidMessage: error instanceof Error ? error.message : "Unknown verification error",
-          },
-          500
+            (r) => (r.isValid ? undefined : r.invalidReason),
+            this.config.ledgerSkew,
+            this.logger,
+            "/verify",
+          ),
         );
+        this.recordSkew(attempts, result.isValid);
+
+        if (result.isValid) this.stats.successfulVerifications++;
+
+        this.logger.outcome({
+          endpoint: "/verify",
+          outcome: result.isValid ? "valid" : "invalid",
+          reason: result.invalidReason,
+          payer: (result as any).payer,
+          status: 200,
+          latencyMs: Math.round(performance.now() - startedAt),
+          skewRetries: attempts - 1,
+        });
+        // A rejection is a valid protocol answer, not a transport failure. The
+        // body carries the reason; the status stays 200 so stock clients read it.
+        return c.json(result, 200);
+      } catch (error) {
+        const reason = classifyError(error);
+        const isClientFault = reason === LOCAL_REASONS.UNSUPPORTED_SCHEME_OR_NETWORK;
+        const response: VerifyResponse = {
+          isValid: false,
+          invalidReason: reason,
+          invalidMessage: `${describeReason(reason)} (detail: ${errorDetail(error)})`,
+        };
+        this.logger.warn("verify raised", { reason, detail: errorDetail(error) });
+        this.logger.outcome({
+          endpoint: "/verify",
+          outcome: isClientFault ? "invalid" : "error",
+          reason,
+          status: isClientFault ? 200 : 502,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
+        return c.json(response, isClientFault ? 200 : 502);
       }
     };
     this.app.post("/verify", canonicalVerify);
     this.app.post("/x402/verify", canonicalVerify);
 
-    // Canonical x402 settlement endpoint
     const canonicalSettle = async (c: any) => {
+      const startedAt = performance.now();
+      let body: unknown;
       try {
-        const body = await c.req.json();
-        const paymentPayload = body.paymentPayload || body.payload;
-        const paymentRequirements = body.paymentRequirements || body.requirements;
+        body = await c.req.json();
+      } catch {
+        body = undefined;
+      }
 
-        if (!paymentPayload || !paymentRequirements) {
-          return c.json(
-            {
-              success: false,
-              errorReason: "invalid_request",
-              errorMessage: "Missing paymentPayload or paymentRequirements",
-              transaction: "",
-              network: body.network || "stellar:testnet",
+      const invalidRequest = validateFacilitatorRequest(body);
+      if (invalidRequest) {
+        const response: SettleResponse = {
+          success: false,
+          transaction: "",
+          network: (body as any)?.paymentRequirements?.network ?? `stellar:${this.config.stellar.network}`,
+          errorReason: LOCAL_REASONS.INVALID_REQUEST_BODY,
+          errorMessage: invalidRequest,
+        };
+        this.logger.outcome({
+          endpoint: "/settle",
+          outcome: "failed",
+          reason: response.errorReason,
+          status: 400,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
+        return c.json(response, 400);
+      }
+
+      const { paymentPayload, paymentRequirements } = body as any;
+      this.stats.totalSettlements++;
+
+      try {
+        let attempts = 0;
+        const result = this.withSettleReason(
+          await withLedgerSkewRetry(
+            () => {
+              attempts++;
+              return this.x402Facilitator.settle(paymentPayload, paymentRequirements);
             },
-            400
-          );
-        }
-
-        this.stats.totalSettlements++;
-        const result = await this.x402Facilitator.settle(paymentPayload, paymentRequirements);
-
-        if (result.success) {
-          this.stats.successfulSettlements++;
-          await this.catalogSuccessfulPayment(paymentPayload, paymentRequirements).catch((error) =>
-            console.error("[Facilitator] Bazaar catalog update failed:", error)
-          );
-          return c.json(result);
-        } else {
-          return c.json(result, 500);
-        }
-      } catch (error: any) {
-        console.error("[Facilitator] x402 settlement error:", error);
-        return c.json(
-          {
-            success: false,
-            errorReason: "internal_error",
-            errorMessage: error instanceof Error ? error.message : "Unknown settlement error",
-            transaction: "",
-            network: "stellar:testnet",
-          },
-          500
+            // Never retry a failure carrying a transaction hash: it reached the
+            // network, and retrying risks settling the same payment twice.
+            settleRetryReason,
+            this.config.ledgerSkew,
+            this.logger,
+            "/settle",
+          ),
         );
+        this.recordSkew(attempts, result.success);
+
+        if (!result.success) {
+          this.logger.outcome({
+            endpoint: "/settle",
+            outcome: "failed",
+            reason: result.errorReason,
+            transaction: result.transaction || undefined,
+            status: 200,
+            latencyMs: Math.round(performance.now() - startedAt),
+            skewRetries: attempts - 1,
+          });
+          return c.json(result, 200);
+        }
+
+        this.stats.successfulSettlements++;
+
+        // A failure to catalog must never fail a settled payment: the money has
+        // already moved. The outcome is reported to the seller in the header.
+        const extensionResponses = await this.catalogSuccessfulPayment(
+          paymentPayload,
+          paymentRequirements,
+          result,
+        ).catch((error) => {
+          this.logger.warn("Bazaar catalog update failed", { detail: errorDetail(error) });
+          return undefined;
+        });
+
+        if (extensionResponses) c.header("EXTENSION-RESPONSES", extensionResponses);
+
+        const receipt = this.issueReceipt(c, paymentPayload, paymentRequirements, result);
+
+        this.logger.outcome({
+          endpoint: "/settle",
+          outcome: "settled",
+          transaction: result.transaction,
+          payer: (result as any).payer,
+          status: 200,
+          latencyMs: Math.round(performance.now() - startedAt),
+          skewRetries: attempts - 1,
+        });
+        return c.json(receipt ? { ...result, receipt } : result, 200);
+      } catch (error) {
+        // Being refused for capacity is a definite "no funds moved", which is
+        // more useful to a client than an ambiguous transport error.
+        const busy = error instanceof SignerBusyError;
+        const reason = busy ? LOCAL_REASONS.SETTLEMENT_CAPACITY_EXCEEDED : classifyError(error);
+        const response: SettleResponse = {
+          success: false,
+          transaction: "",
+          network: paymentRequirements.network,
+          errorReason: reason,
+          errorMessage: busy ? (error as SignerBusyError).message : `${describeReason(reason)} (detail: ${errorDetail(error)})`,
+        };
+        if (busy) {
+          this.logger.warn("settlement refused: all signers busy", {
+            waitedMs: (error as SignerBusyError).waitedMs,
+            poolSize: (error as SignerBusyError).poolSize,
+          });
+        } else {
+          this.logger.warn("settle raised", { reason, detail: errorDetail(error) });
+        }
+        this.logger.outcome({
+          endpoint: "/settle",
+          outcome: "failed",
+          reason,
+          status: busy ? 503 : 502,
+          latencyMs: Math.round(performance.now() - startedAt),
+        });
+        if (busy) c.header("Retry-After", "5");
+        return c.json(response, busy ? 503 : 502);
       }
     };
     this.app.post("/settle", canonicalSettle);
     this.app.post("/x402/settle", canonicalSettle);
 
-    // Verify transaction (Legacy format)
+    this.setupLegacyRoutes();
+
+    this.app.get("/transaction/:hash", async (c) => {
+      try {
+        const status = await this.settler.getTransactionStatus(c.req.param("hash"));
+        if (!status.found) return c.json({ error: "Transaction not found" }, 404);
+        return c.json(status);
+      } catch (error) {
+        return c.json({ error: errorDetail(error) }, 500);
+      }
+    });
+
+    this.app.notFound((c) =>
+      c.json(
+        {
+          error: "not_found",
+          message:
+            "Unknown endpoint. This facilitator serves POST /verify, POST /settle, GET /supported, GET /.well-known/x402, GET /health and GET /stats.",
+        },
+        404,
+      ),
+    );
+
+    this.app.onError((error, c) => {
+      const reason = classifyError(error);
+      this.logger.error("unhandled error", { reason, detail: errorDetail(error) });
+      return c.json(
+        { error: reason, message: `${describeReason(reason)} (detail: ${errorDetail(error)})` },
+        500,
+      );
+    });
+  }
+
+  /**
+   * Guarantees a verify rejection carries both a code and a sentence.
+   *
+   * @param response - Response from the scheme
+   * @returns The response with both fields populated when invalid
+   */
+  private withVerifyReason(response: VerifyResponse): VerifyResponse {
+    if (response.isValid) return response;
+    const invalidReason = response.invalidReason?.trim() || LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR;
+    return {
+      ...response,
+      invalidReason,
+      invalidMessage: response.invalidMessage?.trim() || describeReason(invalidReason),
+    };
+  }
+
+  /**
+   * Guarantees a settle failure carries both a code and a sentence.
+   *
+   * @param response - Response from the scheme
+   * @returns The response with both fields populated when failed
+   */
+  private withSettleReason(response: SettleResponse): SettleResponse {
+    if (response.success) return response;
+    const errorReason = response.errorReason?.trim() || LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR;
+    return {
+      ...response,
+      errorReason,
+      errorMessage: response.errorMessage?.trim() || describeReason(errorReason),
+    };
+  }
+
+  /**
+   * Records whether a ledger-skew retry fired and whether it recovered.
+   *
+   * @param attempts - How many attempts the operation took
+   * @param succeeded - Whether the final attempt succeeded
+   */
+  private recordSkew(attempts: number, succeeded: boolean): void {
+    if (attempts <= 1) return;
+    this.stats.ledgerSkewRetries += attempts - 1;
+    if (succeeded) this.stats.ledgerSkewRecoveries++;
+  }
+
+  /**
+   * Issues an `x402job/1` receipt for a settled payment.
+   *
+   * Returns undefined rather than inventing a value when the settlement does
+   * not name a payer: a receipt asserting the wrong payer is worse than no
+   * receipt, and the previous implementation substituted `payTo` - the
+   * recipient - when the payer was unknown.
+   *
+   * @param c - Request context, read for an optional caller-supplied job id
+   * @param paymentPayload - The exact payload received
+   * @param paymentRequirements - The requirements it was settled against
+   * @param result - The settlement response
+   * @returns A signed receipt, or undefined when one cannot be issued truthfully
+   */
+  private issueReceipt(
+    c: any,
+    paymentPayload: unknown,
+    paymentRequirements: any,
+    result: SettleResponse,
+  ) {
+    const payer = (result as any).payer;
+    if (!payer) {
+      this.logger.debug("no receipt issued: settlement did not name a payer", {
+        transaction: result.transaction,
+      });
+      return undefined;
+    }
+
+    try {
+      return generateJobReceipt({
+        serviceUrl: this.config.baseUrl,
+        // The job the facilitator performed is the settlement itself, unless
+        // the caller names the job the payment bought.
+        jobId: c.req.header("X-Job-Id") || "x402/settle",
+        requestBody: paymentPayload,
+        resultBody: result,
+        txHash: result.transaction,
+        payer,
+        asset: paymentRequirements.asset,
+        amount: paymentRequirements.amount,
+        network: paymentRequirements.network,
+        signerSecretKey: this.config.stellar.facilitatorSecretKey,
+        signerPublicKey: this.config.stellar.facilitatorPublicKey,
+      });
+    } catch (error) {
+      this.logger.warn("receipt generation failed", { detail: errorDetail(error) });
+      return undefined;
+    }
+  }
+
+  private setupLegacyRoutes(): void {
+    // Pre-canonical shape, kept for existing integrations. Classic payment
+    // operations only; the canonical v2 path above is the supported one.
     this.app.post("/legacy/verify", async (c) => {
       try {
-        const body = await c.req.json();
-        const request = X402StellarRequestSchema.parse(body);
-
+        const request = X402StellarRequestSchema.parse(await c.req.json());
         this.stats.totalVerifications++;
-
-        // Extract expected amount from headers or metadata
-        const expectedAmount = c.req.header("X-Expected-Amount");
-
-        // Verify transaction
-        const result = await this.verifier.verify(request, expectedAmount);
+        const result = await this.verifier.verify(request, c.req.header("X-Expected-Amount"));
 
         if (result.valid) {
           this.stats.successfulVerifications++;
-
           return c.json({
             status: "success",
             valid: true,
             facilitatorAccount: result.facilitatorAccount,
             expectedAmount: result.expectedAmount,
           });
-        } else {
-          return c.json(
-            {
-              status: "error",
-              valid: false,
-              error: result.error,
-            },
-            400
-          );
         }
+        return c.json({ status: "error", valid: false, error: result.error }, 400);
       } catch (error) {
-        console.error("[Facilitator] Verification error:", error);
-
         if (error instanceof z.ZodError) {
           return c.json(
-            {
-              status: "error",
-              error: "Invalid request format",
-              details: error.errors,
-            },
-            400
+            { status: "error", error: "Invalid request format", details: error.errors },
+            400,
           );
         }
-
-        return c.json(
-          {
-            status: "error",
-            error: error instanceof Error ? error.message : "Unknown verification error",
-          },
-          500
-        );
+        return c.json({ status: "error", error: errorDetail(error) }, 500);
       }
     });
 
-    // Settle transaction
     this.app.post("/legacy/settle", async (c) => {
       try {
-        const body = await c.req.json();
-        const request = X402StellarRequestSchema.parse(body);
-
+        const request = X402StellarRequestSchema.parse(await c.req.json());
         this.stats.totalSettlements++;
-
-        // Extract expected amount
         const expectedAmount = c.req.header("X-Expected-Amount");
 
-        // Verify first
         const verifyResult = await this.verifier.verify(request, expectedAmount);
-
         if (!verifyResult.valid) {
-          return c.json(
-            {
-              status: "error",
-              error: `Verification failed: ${verifyResult.error}`,
-            },
-            400
-          );
+          return c.json({ status: "error", error: `Verification failed: ${verifyResult.error}` }, 400);
         }
-
         if (!verifyResult.transaction) {
-          return c.json(
-            {
-              status: "error",
-              error: "Transaction parsing failed",
-            },
-            500
-          );
+          return c.json({ status: "error", error: "Transaction parsing failed" }, 500);
         }
 
-        // Settle transaction
         const settleResult = await this.settler.settle(verifyResult.transaction);
-
         if (settleResult.success) {
           this.stats.successfulSettlements++;
-
           const response: X402StellarResponse = {
             status: "success",
             transactionHash: settleResult.transactionHash,
             ledger: settleResult.ledger,
           };
-
           return c.json(response);
-        } else {
-          const response: X402StellarResponse = {
-            status: "error",
-            error: settleResult.error,
-            errorCode: settleResult.errorCode,
-          };
-
-          return c.json(response, 500);
         }
+        const response: X402StellarResponse = {
+          status: "error",
+          error: settleResult.error,
+          errorCode: settleResult.errorCode,
+        };
+        return c.json(response, 500);
       } catch (error) {
-        console.error("[Facilitator] Settlement error:", error);
-
         if (error instanceof z.ZodError) {
           return c.json(
-            {
-              status: "error",
-              error: "Invalid request format",
-              details: error.errors,
-            },
-            400
+            { status: "error", error: "Invalid request format", details: error.errors },
+            400,
           );
         }
-
-        return c.json(
-          {
-            status: "error",
-            error: error instanceof Error ? error.message : "Unknown settlement error",
-          },
-          500
-        );
-      }
-    });
-
-    // Transaction status lookup
-    this.app.get("/transaction/:hash", async (c) => {
-      try {
-        const hash = c.req.param("hash");
-        const status = await this.settler.getTransactionStatus(hash);
-
-        if (!status.found) {
-          return c.json({ error: "Transaction not found" }, 404);
-        }
-
-        return c.json(status);
-      } catch (error) {
-        console.error("[Facilitator] Transaction lookup error:", error);
-        return c.json(
-          {
-            error: error instanceof Error ? error.message : "Unknown error",
-          },
-          500
-        );
+        return c.json({ status: "error", error: errorDetail(error) }, 500);
       }
     });
   }
 
+  /**
+   * Posts a settled payment's discovery metadata to the Bazaar catalog.
+   *
+   * The settlement transaction hash goes with it so the catalog can confirm
+   * the payment independently on Horizon rather than taking this service's
+   * word for it.
+   *
+   * Returns the catalog's EXTENSION-RESPONSES value so it can travel back to
+   * the seller on the settle response. Without that, a seller has no way to
+   * learn that their listing was rejected, or why - the feedback loop the
+   * discovery spec asks for.
+   *
+   * @param paymentPayload - The payload that was settled
+   * @param paymentRequirements - The requirements it settled against
+   * @param result - The settlement response, for the transaction hash
+   * @returns The base64 EXTENSION-RESPONSES value, or undefined when nothing was catalogued
+   */
   private async catalogSuccessfulPayment(
     paymentPayload: any,
-    paymentRequirements: any
-  ): Promise<void> {
+    paymentRequirements: any,
+    result: SettleResponse,
+  ): Promise<string | undefined> {
     const bazaarUrl = process.env.BAZAAR_URL;
-    if (!bazaarUrl) return;
+    if (!bazaarUrl) return undefined;
 
     const discovered = extractDiscoveryInfo(paymentPayload, paymentRequirements) as any;
-    if (!discovered) return;
+    if (!discovered) return undefined;
     const info: any = discovered.discoveryInfo;
     const resourceType = info.input?.type === "mcp" ? "mcp" : "http";
+
     const response = await fetch(new URL("/catalog/ingest", bazaarUrl), {
       method: "POST",
       headers: {
@@ -546,77 +848,159 @@ export class FacilitatorService {
           outputSpec: info.output,
         },
         extensions: discovered.extensions,
-        settlementSucceeded: true,
+        settlementTx: result.transaction,
       }),
     });
-    if (!response.ok) throw new Error(`Bazaar ingestion returned HTTP ${response.status}`);
+    // The catalog reports the outcome in this header on both acceptance and
+    // rejection, so read it before deciding whether this was an error.
+    const extensionResponses = response.headers.get("EXTENSION-RESPONSES") ?? undefined;
+
+    if (!response.ok && !extensionResponses) {
+      throw new Error(`Bazaar ingestion returned HTTP ${response.status}`);
+    }
+    if (!response.ok) {
+      this.logger.info("catalog rejected the listing", {
+        status: response.status,
+        transaction: result.transaction,
+      });
+    }
+
+    return extensionResponses;
   }
 
   /**
-   * Start the Facilitator service
+   * Runs every boot-time check and records what was confirmed.
+   *
+   * Separated from `start()` so tests and a `--check` invocation can run the
+   * checks without binding a port.
+   *
+   * @throws {Error} When the deployment cannot truthfully serve what it would advertise
    */
-  async start(): Promise<void> {
-    console.log("[Facilitator] Starting Veridex x402 Facilitator Service...");
+  async runStartupChecks(): Promise<void> {
+    const { stellar } = this.config;
+    const notes: string[] = [];
 
-    // Validate configuration
-    if (!this.config.stellar.facilitatorSecretKey) {
-      throw new Error("FACILITATOR_SECRET_KEY is required");
+    assertSignerKeypairConsistent(stellar.facilitatorSecretKey, stellar.facilitatorPublicKey);
+
+    if (this.config.maxTransactionFeeStroops > 50000) {
+      console.warn(
+        `[Facilitator] Warning: maxTransactionFeeStroops is configured at ${this.config.maxTransactionFeeStroops} stroops, exceeding the spec default of 50000 stroops (0.005 XLM).`,
+      );
     }
 
-    // Initialize channel pool
-    console.log("[Facilitator] Initializing channel pool...");
+    // 1. Fee sponsorship: a claim about an account balance, so ask the network.
+    let feesAreSponsored = false;
+    if (this.config.intendToSponsorFees) {
+      const funding = await checkSponsorFunding(stellar.horizonUrl, stellar.facilitatorPublicKey);
+      if (!funding.funded) {
+        throw new Error(
+          `This deployment is configured to sponsor network fees, but its account ${stellar.facilitatorPublicKey} ${funding.reason}. ` +
+            `Fund it, or set SPONSOR_FEES=false to advertise areFeesSponsored=false instead. Refusing to start rather than advertise sponsorship it cannot honour.`,
+        );
+      }
+      feesAreSponsored = true;
+      notes.push(`fee sponsorship confirmed: ${funding.balanceXlm} XLM available`);
+    } else {
+      notes.push("fee sponsorship disabled by configuration (SPONSOR_FEES=false)");
+    }
+    this.x402Facilitator.setFeeSponsorship(feesAreSponsored);
+
+    // 2. upto: advertised only against a contract confirmed on this network.
+    const upto = await resolveUptoGate(stellar.network as "testnet" | "pubnet", stellar.rpcUrl);
+    if (upto.advertise) {
+      notes.push(`upto contract confirmed at ${upto.contractId}`);
+      this.x402Facilitator.setUptoContract(upto.contractId);
+    } else {
+      notes.push(`upto not advertised: ${upto.reason}`);
+      this.x402Facilitator.setUptoContract(undefined);
+    }
+
+    this.capabilities = {
+      feesAreSponsored,
+      uptoContractId: upto.contractId,
+      jobs: [],
+      checked: true,
+      notes,
+    };
+
+    // 3. Descriptor jobs, validated against what we now advertise.
+    this.capabilities.jobs = loadCapabilityJobs({
+      jobsFile: this.config.jobsFile,
+      network: `stellar:${stellar.network}`,
+      advertisedSchemes: this.advertisedSchemes(),
+    });
+    notes.push(`${this.capabilities.jobs.length} job(s) advertised in /.well-known/x402`);
+
+    // 4. Final gate: what we would serve must match what we confirmed.
+    assertSupportedIsTruthful(this.buildSupported(), {
+      network: `stellar:${stellar.network}`,
+      feesAreSponsored,
+      uptoContractId: upto.contractId,
+      signerAddress: stellar.facilitatorPublicKey,
+    });
+
+    for (const note of notes) this.logger.info(note, { kind: "startup_check" });
+  }
+
+  /**
+   * Starts the service: channel pool, startup checks, then bind.
+   */
+  async start(): Promise<void> {
+    this.logger.info("starting Veridex x402 facilitator", {
+      network: `stellar:${this.config.stellar.network}`,
+      baseUrl: this.config.baseUrl,
+    });
+
     await this.channelPool.initialize();
     this.x402Facilitator.refreshSigners();
-    console.log("[Facilitator] ✓ Channel pool ready");
 
-    // Start HTTP server
-    console.log(`[Facilitator] Starting HTTP server on ${this.config.host}:${this.config.port}...`);
+    // Everything advertised is confirmed here. A failure aborts the boot.
+    await this.runStartupChecks();
+
     this.httpServer = serve({
       fetch: this.app.fetch,
       port: this.config.port,
       hostname: this.config.host,
     });
 
-    console.log(`[Facilitator] ✓ Service ready at http://${this.config.host}:${this.config.port}`);
-    console.log(`[Facilitator] Network: ${this.config.stellar.network}`);
-    console.log(`[Facilitator] Facilitator: ${this.config.stellar.facilitatorPublicKey}`);
-    console.log("[Facilitator] Endpoints:");
-    console.log("  POST /verify");
-    console.log("  POST /settle");
-    console.log("  GET  /supported");
-    console.log("  GET  /health");
-    console.log("  GET  /stats");
-    console.log("  GET  /transaction/:hash");
+    this.logger.info("facilitator ready", {
+      url: `http://${this.config.host}:${this.config.port}`,
+      facilitator: this.config.stellar.facilitatorPublicKey,
+      areFeesSponsored: this.capabilities.feesAreSponsored,
+      schemes: this.advertisedSchemes(),
+    });
   }
 
-  /**
-   * Stop the service
-   */
   async stop(): Promise<void> {
-    console.log("[Facilitator] Stopping service...");
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) =>
-        this.httpServer!.close((error?: Error) => (error ? reject(error) : resolve()))
+        this.httpServer!.close((error?: Error) => (error ? reject(error) : resolve())),
       );
       this.httpServer = undefined;
     }
     await this.channelPool.shutdown();
-    console.log("[Facilitator] Service stopped");
+    this.logger.info("facilitator stopped");
   }
 
-  /**
-   * Get Hono app instance (for testing)
-   */
+  /** The Hono app, for testing. */
   getApp(): Hono {
     return this.app;
+  }
+
+  /** What this deployment has confirmed about itself, for testing. */
+  getCapabilities(): Readonly<VerifiedCapabilities> {
+    return this.capabilities;
   }
 }
 
 /**
- * Create and start Facilitator service
+ * Creates and starts the facilitator service.
+ *
+ * @param config - Optional overrides on top of the environment configuration
+ * @returns The running service
  */
 export async function startFacilitatorService(
-  config?: Partial<FacilitatorServiceConfig>
+  config?: Partial<FacilitatorServiceConfig>,
 ): Promise<FacilitatorService> {
   const fullConfig = { ...getDefaultConfig(), ...config };
   const service = new FacilitatorService(fullConfig);

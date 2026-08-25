@@ -11,6 +11,37 @@ from dataclasses import dataclass
 from .types import BazaarResource, BazaarSearchResponse
 
 
+def _to_resource(row: Dict[str, Any]) -> BazaarResource:
+    """Maps one catalog row onto a BazaarResource.
+
+    The discovery API is camelCase on the wire while this SDK is snake_case, so
+    both spellings are accepted. Telemetry fields are optional because a
+    resource that has never been probed simply has none.
+    """
+    telemetry = row.get("telemetry") or {}
+
+    def pick(*names, default=None):
+        for name in names:
+            if name in row and row[name] is not None:
+                return row[name]
+            if name in telemetry and telemetry[name] is not None:
+                return telemetry[name]
+        return default
+
+    return BazaarResource(
+        resource_url=pick("resourceUrl", "resource_url", default=""),
+        service_name=pick("serviceName", "service_name"),
+        description=pick("description", default=""),
+        network=pick("network", default=""),
+        node_id=pick("nodeId", "node_id", default=""),
+        last_seen=pick("lastSeen", "last_seen", "updatedAt", "updated_at", default=""),
+        uptime_ratio=pick("uptimeRatio", "uptime_ratio"),
+        avg_response_time_ms=pick("avgResponseTimeMs", "avg_response_time_ms"),
+        reliability_score=pick("reliabilityScore", "reliability_score"),
+        final_score=pick("compositeScore", "composite_score", "final_score"),
+    )
+
+
 @dataclass
 class SearchParams:
     """Bazaar search parameters"""
@@ -84,21 +115,7 @@ class BazaarClient:
 
         data = response.json()
 
-        resources = [
-            BazaarResource(
-                resource_url=r["resource_url"],
-                service_name=r.get("service_name"),
-                description=r["description"],
-                network=r["network"],
-                node_id=r["node_id"],
-                last_seen=r["last_seen"],
-                uptime_ratio=r.get("uptime_ratio"),
-                avg_response_time_ms=r.get("avg_response_time_ms"),
-                reliability_score=r.get("reliability_score"),
-                final_score=r.get("final_score"),
-            )
-            for r in data.get("results", [])
-        ]
+        resources = [_to_resource(r) for r in data.get("results", [])]
 
         return BazaarSearchResponse(
             results=resources,
@@ -141,21 +158,7 @@ class BazaarClient:
 
         data = response.json()
 
-        resources = [
-            BazaarResource(
-                resource_url=r["resource_url"],
-                service_name=r.get("service_name"),
-                description=r["description"],
-                network=r["network"],
-                node_id=r["node_id"],
-                last_seen=r["last_seen"],
-                uptime_ratio=r.get("uptime_ratio"),
-                avg_response_time_ms=r.get("avg_response_time_ms"),
-                reliability_score=r.get("reliability_score"),
-                final_score=r.get("final_score"),
-            )
-            for r in data.get("results", [])
-        ]
+        resources = [_to_resource(r) for r in data.get("results", [])]
 
         return BazaarSearchResponse(
             results=resources,

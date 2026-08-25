@@ -1,0 +1,27 @@
+{
+  "name": "@veridex/stellar-sdk",
+  "version": "0.1.0",
+  "description": "Veridex Stellar x402 SDK - TypeScript helpers for sellers and buyers",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "lint": "eslint . --ext .ts"
+  },
+  "keywords": [
+    "veridex",
+    "x402",
+    "stellar",
+    "bazaar",
+    "sdk"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "eslint": "^9.0.0"
+  }
+}

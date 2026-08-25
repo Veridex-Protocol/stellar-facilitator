@@ -72,10 +72,18 @@ export class StellarTransactionSettler {
       // Parse Stellar error
       const errorResult = this.parseSettlementError(error);
 
+      // Resync channel account sequence number if sequence drift occurred
+      if (errorResult.errorCode === "tx_bad_seq" && channel) {
+        await this.channelPool.resyncSequence(channel.channel.publicKey).catch((err) =>
+          console.warn("[Settler] Failed to resync sequence for channel:", err)
+        );
+      }
+
       return {
         success: false,
         error: errorResult.error,
         errorCode: errorResult.errorCode,
+        extra: errorResult.extra,
       };
     } finally {
       // Release channel back to pool
@@ -88,7 +96,7 @@ export class StellarTransactionSettler {
   /**
    * Parse Stellar settlement error
    */
-  private parseSettlementError(error: any): { error: string; errorCode: string } {
+  private parseSettlementError(error: any): { error: string; errorCode: string; extra?: Record<string, unknown> } {
     // Horizon SDK error structure
     if (error?.response?.data) {
       const data = error.response.data;
@@ -102,6 +110,11 @@ export class StellarTransactionSettler {
         return {
           error: `Transaction failed: ${txCode} (ops: ${opCodes.join(", ")})`,
           errorCode: txCode,
+          extra: {
+            resultCodes: codes,
+            envelopeXdr: data.extras.envelope_xdr,
+            resultXdr: data.extras.result_xdr,
+          },
         };
       }
 
@@ -110,6 +123,10 @@ export class StellarTransactionSettler {
         return {
           error: data.title,
           errorCode: data.status ? `HTTP_${data.status}` : "UNKNOWN",
+          extra: {
+            status: data.status,
+            detail: data.detail,
+          },
         };
       }
     }

@@ -19,6 +19,7 @@ import {
   LivenessStatus,
   HEARTBEAT_INTERVAL_MS,
   MAX_MISSED_HEARTBEATS,
+  SETTLEMENT_LIVENESS_WINDOW_MS,
 } from "./circuit-breaker.js";
 import type { AnnounceMessage } from "../p2p/types.js";
 
@@ -245,23 +246,38 @@ export class TelemetryTracker {
   /**
    * Auto-prune offline nodes (circuit breaker)
    *
-   * Updates liveness status for all resources based on last heartbeat.
+   * Updates liveness status from the most recent liveness signal: a P2P
+   * heartbeat, or a settlement this service confirmed on Horizon.
+   *
+   * Heartbeats alone are not enough. A seller who simply exposes a paid
+   * endpoint and never joins the mesh produces no heartbeats at all, so
+   * heartbeat-only pruning marked every auto-catalogued resource OFFLINE within
+   * minutes and removed it from search - with nothing wrong with it. A payment
+   * that settled is proof the endpoint was reachable and served someone.
+   *
    * Should be called periodically (e.g., every 5 minutes).
    *
    * @returns Number of nodes marked offline
    */
   async pruneOfflineNodes(): Promise<number> {
+    // Two independent liveness signals, either of which keeps a resource
+    // discoverable. Heartbeats are frequent and cheap; settlements are sparse
+    // but far stronger evidence, so they get a much longer window.
     const result = await this.db.query(
       `UPDATE resource_telemetry
        SET liveness_status = CASE
              WHEN last_heartbeat_at >= now() - interval '${HEARTBEAT_INTERVAL_MS} milliseconds' THEN 'HEALTHY'
+             WHEN last_settlement_at >= now() - interval '${SETTLEMENT_LIVENESS_WINDOW_MS} milliseconds' THEN 'HEALTHY'
              WHEN last_heartbeat_at >= now() - interval '${HEARTBEAT_INTERVAL_MS * MAX_MISSED_HEARTBEATS} milliseconds' THEN 'DEGRADED'
+             WHEN last_settlement_at >= now() - interval '${SETTLEMENT_LIVENESS_WINDOW_MS * 7} milliseconds' THEN 'DEGRADED'
              ELSE 'OFFLINE'
            END,
            updated_at = now()
        WHERE liveness_status IS DISTINCT FROM CASE
              WHEN last_heartbeat_at >= now() - interval '${HEARTBEAT_INTERVAL_MS} milliseconds' THEN 'HEALTHY'
+             WHEN last_settlement_at >= now() - interval '${SETTLEMENT_LIVENESS_WINDOW_MS} milliseconds' THEN 'HEALTHY'
              WHEN last_heartbeat_at >= now() - interval '${HEARTBEAT_INTERVAL_MS * MAX_MISSED_HEARTBEATS} milliseconds' THEN 'DEGRADED'
+             WHEN last_settlement_at >= now() - interval '${SETTLEMENT_LIVENESS_WINDOW_MS * 7} milliseconds' THEN 'DEGRADED'
              ELSE 'OFFLINE'
            END
        RETURNING resource_id`

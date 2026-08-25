@@ -41,6 +41,70 @@ export interface X402PaymentRequest {
 }
 
 /**
+ * x402job/1 recomputable compute receipt claims (#3117)
+ */
+export interface JobReceiptClaims {
+  v: "x402job/1";
+  service: string;
+  job: string;
+  requestDigest: string;
+  resultDigest: string;
+  settlement: {
+    tx: string;
+    payer: string;
+    asset: string;
+    amount: string;
+    network: string;
+  };
+  signer: string;
+  issuedAt: number;
+}
+
+/**
+ * x402job/1 recomputable compute receipt (#3117)
+ */
+export interface JobReceipt {
+  claims: JobReceiptClaims;
+  signature: string;
+}
+
+/**
+ * x402ccd/0 compute-capability descriptor (#3117)
+ */
+export interface ComputeCapabilityDescriptor {
+  ccd: "x402ccd/0";
+  service: string;
+  baseUrl: string;
+  runtime: {
+    attested: boolean;
+    platform: string;
+    note: string;
+  };
+  receipts: {
+    format: string;
+    signer: string;
+    note: string;
+  };
+  jobs: Array<{
+    id: string;
+    method: string;
+    path: string;
+    price: {
+      asset: string;
+      amountAtomic: string;
+      decimals: number;
+      network: string;
+      scheme: string;
+      payTo: string;
+    };
+    verification: {
+      kind: string;
+      detail: string;
+    };
+  }>;
+}
+
+/**
  * x402 payment response
  */
 export interface X402PaymentResponse {
@@ -49,6 +113,8 @@ export interface X402PaymentResponse {
   ledger?: number;
   error?: string;
   errorCode?: string;
+  receipt?: JobReceipt;
+  extra?: Record<string, unknown>;
 }
 
 /**
@@ -62,6 +128,28 @@ export interface FacilitatorScheme {
 }
 
 /**
+ * Smart Account / Passkey custom signer interface (supports C... addresses and custom auth entries)
+ */
+export interface SmartAccountSigner {
+  /** Account address (C... contract ID or G... public key) */
+  address: string;
+
+  /** Sign Soroban authorization entry */
+  signAuthEntry?: (entryXdr: string) => Promise<{ signedAuthEntry?: string; signatureScVal?: any }>;
+
+  /** Sign transaction XDR */
+  signTransaction?: (txXdr: string) => Promise<string>;
+
+  /** Custom authorizeEntry override for smart wallets / passkeys */
+  authorizeEntry?: (
+    entry: any,
+    signer: any,
+    expiration: number,
+    networkPassphrase?: string
+  ) => Promise<any>;
+}
+
+/**
  * SDK configuration
  */
 export interface VeridexSDKConfig {
@@ -70,5 +158,6 @@ export interface VeridexSDKConfig {
   stellar: {
     network: "pubnet" | "testnet" | "futurenet";
     clientSecretKey?: string;
+    customSigner?: SmartAccountSigner;
   };
 }

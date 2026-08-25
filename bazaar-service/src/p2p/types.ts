@@ -7,6 +7,7 @@
  */
 
 import { z } from "zod";
+import { canonicalize } from "./canonical.js";
 
 /**
  * GossipSub topic for Bazaar announcements
@@ -61,6 +62,7 @@ export const AnnounceMessageSchema = z.object({
   payTo: z.string().optional(), // Stellar G-address
   network: z.string().optional(), // e.g., stellar:pubnet
   scheme: z.string().optional(), // e.g., exact, upto
+  settlementTx: z.string().optional(),
 
   // Message metadata
   timestamp: z.number().int().positive(), // Unix timestamp in milliseconds
@@ -69,7 +71,7 @@ export const AnnounceMessageSchema = z.object({
   // Telemetry snapshot
   telemetry: TelemetrySnapshotSchema,
 
-  // Ed25519 signature over "${resourceUrl}:${timestamp}:${sequence}"
+  // Ed25519 signature over canonical announcement digest
   signature: z.string().min(1),
 });
 
@@ -92,15 +94,43 @@ export function createMessageHash(nodeId: string, sequence: number): string {
   return `${nodeId}:${sequence}`;
 }
 
+export const ANNOUNCE_DOMAIN_TAG = "VERIDEX-BAZAAR-ANNOUNCE:v2";
+
 /**
- * Helper to create signature payload
- * Format: `${resourceUrl}:${timestamp}:${sequence}`
+ * Creates canonical deterministic announcement payload for Ed25519 signing.
+ * Covers all metadata fields to prevent relay tampering (VDX-05).
  */
 export function createSignaturePayload(
   resourceUrl: string,
   timestamp: number,
-  sequence: number
+  sequence: number,
+  metadata?: Partial<AnnounceMessage>,
 ): string {
+  if (metadata) {
+    return canonicalize({
+      domain: ANNOUNCE_DOMAIN_TAG,
+      nodeId: metadata.nodeId || "",
+      resourceUrl,
+      toolName: metadata.toolName || "",
+      resourceType: metadata.resourceType || "http",
+      serviceName: metadata.serviceName || "",
+      description: metadata.description || "",
+      tags: metadata.tags || [],
+      iconUrl: metadata.iconUrl || "",
+      routeTemplate: metadata.routeTemplate || "",
+      mimeType: metadata.mimeType || "application/json",
+      inputSpec: metadata.inputSpec || {},
+      outputSpec: metadata.outputSpec || {},
+      extensions: metadata.extensions || {},
+      payTo: metadata.payTo || "",
+      network: metadata.network || "",
+      scheme: metadata.scheme || "",
+      timestamp,
+      sequence,
+      telemetry: metadata.telemetry || {},
+      settlementTx: metadata.settlementTx || "",
+    });
+  }
   return `${resourceUrl}:${timestamp}:${sequence}`;
 }
 

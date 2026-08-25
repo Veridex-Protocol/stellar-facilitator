@@ -128,6 +128,9 @@ export interface SettlementResult {
 
   /** Error code */
   errorCode?: string;
+
+  /** Diagnostic details / evidence */
+  extra?: Record<string, unknown>;
 }
 
 /**

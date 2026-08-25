@@ -9,3 +9,5 @@
  */
 
 export * from "./ingestion.js";
+export * from "./settlement-proof.js";
+export * from "./owner-signature.js";
