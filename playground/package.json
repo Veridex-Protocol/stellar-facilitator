@@ -1,34 +1,36 @@
 {
   "name": "@veridex/playground",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "Veridex x402 Playground - a hosted sandbox that pays on Stellar testnet and hands you the evidence to check it yourself",
-  "engines": {
-    "node": ">=22"
-  },
+  "description": "Veridex x402 Interactive Playground - Next.js & Tailwind testnet sandbox",
   "scripts": {
-    "build": "npm run build:web && npm run build:server",
-    "build:web": "node scripts/build-web.mjs",
-    "build:server": "tsc -p tsconfig.json",
-    "dev": "node scripts/build-web.mjs --watch & tsx watch src/server.ts",
-    "start": "node dist/server.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json",
+    "dev": "next dev -p 3004",
+    "build": "next build",
+    "start": "next start -p 3004",
+    "lint": "next lint",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "@hono/node-server": "1.19.17",
-    "hono": "4.13.1"
+    "@stellar/stellar-sdk": "^13.3.0",
+    "@x402/core": "^2.21.0",
+    "@x402/stellar": "^2.21.0",
+    "buffer": "^6.0.3",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.16.0",
+    "next": "^15.1.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.2"
   },
   "devDependencies": {
-    "@stellar/stellar-sdk": "13.3.0",
-    "@types/node": "22.20.1",
-    "@x402/core": "2.21.0",
-    "@x402/stellar": "2.21.0",
-    "buffer": "^6.0.3",
-    "esbuild": "0.25.10",
-    "tsx": "4.23.11",
-    "typescript": "5.9.3"
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3"
   }
 }
