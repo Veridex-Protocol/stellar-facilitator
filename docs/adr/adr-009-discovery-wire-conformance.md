@@ -6,7 +6,7 @@ Accepted (2026-08-23) - records the discovery surface as the spec names it: the 
 
 ## Context
 
-The RFP grades wire-level behaviour, not intent:
+The project brief grades wire-level behaviour, not intent:
 
 > Conformance is a hard acceptance criterion. Correct settlement plus a non conformant wire format produces an unusable service, so acceptance is tested at the wire level. Reviewers will point stock SDK code at the deliverable rather than read a conformance claim.
 

@@ -6,7 +6,7 @@ Accepted (2026-08-23) - records why a listing must name a settlement the catalog
 
 ## Context
 
-The RFP names the facilitator a trust boundary and says why:
+The project brief names the facilitator a trust boundary and says why:
 
 > Enforce catalog integrity. The facilitator is a trust boundary: clients echo the resource block into the payment payload, so a hostile client can attempt to poison the catalog with forged service metadata or a crafted routeTemplate.
 
@@ -133,4 +133,4 @@ Binding the *URL* cryptographically requires the resource server to sign the pai
 - [`bazaar-service/src/server.ts`](../../bazaar-service/src/server.ts) - `requireInternalToken`, the unconditional comparison
 - [`bazaar-service/src/__tests__/settlement-proof.test.ts`](../../bazaar-service/src/__tests__/settlement-proof.test.ts) - nine cases including the all-zeros hash, a payment to a different account, and an unreachable Horizon
 - [`bazaar-service/src/db/migrations/001_settlement_binding.sql`](../../bazaar-service/src/db/migrations/001_settlement_binding.sql) - column, uniqueness, and the soft-drop of unbacked history
-- RFP §3.2 - "the facilitator is a trust boundary"
+- Project brief §3.2 - "the facilitator is a trust boundary"

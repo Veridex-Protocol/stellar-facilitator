@@ -8,7 +8,7 @@ Supersedes the `upto_escrow.rs` design in [spec-v2.md §4](../specifications/spe
 
 ## Context
 
-The RFP asks respondents to author `scheme_upto_stellar.md` and implement it. Several teams doing that in parallel is not a failure of the process - it is the process. A standards body given competing drafts picks or synthesizes; a standards body given one draft rubber-stamps. We are bidding, and the `upto` scheme is one of the deliverables we are bidding on.
+The project brief asks for `scheme_upto_stellar.md` to be authored and implemented. Several teams doing that in parallel is not a failure of the process - it is the process. A standards body given several drafts picks or synthesizes; a standards body given one draft has nothing to weigh it against.
 
 Our starting position was weak, and pretending otherwise would have produced a worse contract. The previous implementation was 398 lines with 5 tests and these defects:
 
@@ -23,11 +23,11 @@ Our starting position was weak, and pretending otherwise would have produced a w
 
 We rebuilt it from the two things that actually constrain the design: what the `upto` scheme requires, and what the Soroban authorization model provides.
 
-**The platform shapes most of the answer.** Soroban exposes `require_auth_for_args` precisely so an authorization can be bound to argument values rather than to the fact of a call - which is the mechanism the scheme's recipient-binding requirement calls for, and the reason a bare `require_auth()` cannot satisfy it. SEP-41's `approve` / `transfer_from` / `allowance` triple is what makes a capped pull provable: request the ceiling, spend from it, and assert the allowance is zero afterwards. Statelessness follows from the RFP's own instruction that no deployment should have a privileged operator. Balance invariants are ordinary defensive practice against tokens that do not behave as their interface claims.
+**The platform shapes most of the answer.** Soroban exposes `require_auth_for_args` precisely so an authorization can be bound to argument values rather than to the fact of a call - which is the mechanism the scheme's recipient-binding requirement calls for, and the reason a bare `require_auth()` cannot satisfy it. SEP-41's `approve` / `transfer_from` / `allowance` triple is what makes a capped pull provable: request the ceiling, spend from it, and assert the allowance is zero afterwards. Statelessness follows from the brief's own instruction that no deployment should have a privileged operator. Balance invariants are ordinary defensive practice against tokens that do not behave as their interface claims.
 
 These are convergent answers, not novel ones. Any competent implementation of a capped Soroban settlement arrives at roughly this shape because the SDK's API and the scheme's requirements leave little room - which is a good sign for the scheme, and the reason we expect independent implementations to interoperate.
 
-As due diligence we also surveyed existing Stellar x402 work before committing to a design, which is what any team should do before writing a contract that moves money. That survey informed our confidence that these patterns are where the ecosystem is converging, and it sharpened our view of where the remaining open questions are. The two sections below are those open questions, and they are the parts of this design that come from our own architecture rather than from the platform.
+We also read the existing Stellar x402 work before committing to a design, which is ordinary diligence before writing a contract that moves money. That reading informed our confidence that these patterns are where the ecosystem is converging, and it sharpened our view of where the remaining open questions are. The two sections below are those open questions, and they are the parts of this design that come from our own architecture rather than from the platform.
 
 ## Decision
 
@@ -92,16 +92,16 @@ The two properties above are what we argue for on their merits, whichever base d
 
 **Good**
 
-- We own the §3.4 deliverable rather than ceding it, which is the point of bidding.
+- The §3.4 deliverable is implemented here rather than deferred to someone else.
 - Two properties that are genuinely ours: contract-level replay covering smart-account payers, and on-ledger attribution of the discretionary amount to the facilitator that chose it.
 - The design is coherent with the rest of our architecture rather than borrowed into it. The federated catalog can verify `upto` settlements because the event was designed for that.
-- Studying prior art before building produced a materially better contract than our own previous attempt: term binding, statelessness, allowance lifecycle, and balance invariants all came from that reading.
+- Reading the existing work before building produced a materially better contract than the previous attempt: term binding, statelessness, allowance lifecycle, and balance invariants all came from that reading.
 - 27 tests including five that specifically establish the binding, with a control that keeps them honest.
 
 **Costs accepted**
 
-- **More than one Stellar `upto` draft will reach the committee.** That means more review work upstream, and possibly more than one audit before the ecosystem converges. It is the normal cost of a competitive round and we are choosing to pay it.
-- **This is an early-stage contract.** No deployment, no published wasm hash, no threat model document, and no independent audit. Other work in this space is further along on all four, and will remain so until we deploy and get reviewed.
+- **More than one Stellar `upto` draft will reach the committee.** That means more review work upstream, and possibly more than one audit before the ecosystem converges. That is a normal cost of parallel drafting and we are choosing to pay it.
+- **This is an early-stage contract.** No deployment, no published wasm hash, no threat model document, and no independent audit. That will remain true until it is deployed and independently reviewed.
 - **The facilitator attestation adds a signature to every settlement.** Slightly more work for the facilitator and a slightly larger auth tree, in exchange for the attribution property.
 - **The replay guard is the only state**, so a settlement writes a ledger entry and pays rent for it. Bounded by the deadline, and it is the price of the guarantee holding for smart-account payers.
 - **The committee may converge on a different base design**, and we would then implement that, having spent the effort on ours.
@@ -111,7 +111,7 @@ The two properties above are what we argue for on their merits, whichever base d
 - **No settlement hooks.** A hook is a call into untrusted code from inside a settlement, and it is the largest attack surface such a contract can have. We have no use case that needs one. If one arrives, it ships with invariants re-verified after the hook returns, not before.
 - **No contract-free `upto`.** SEP-41 allowances alone cannot enforce recipient binding or single settlement.
 - **No admin, no upgradeability.** A settlement contract that can be upgraded is a settlement contract whose terms can be changed after you sign them.
-- **No `batch-settlement` or `auth-capture`.** The RFP defers both.
+- **No `batch-settlement` or `auth-capture`.** The brief defers both.
 
 ## References
 
@@ -123,4 +123,4 @@ The two properties above are what we argue for on their merits, whichever base d
 - [ADR-005](./adr-005-advertise-only-what-is-verified.md) - why an unaudited scheme cannot be advertised
 - [ADR-006](./adr-006-recomputable-receipts.md) - the receipt the digest binding makes chain-verifiable
 - [ADR-001](./adr-001-discovery-federation.md) - the federated catalog the settlement event is shaped for
-- RFP §3.4 - the `upto` deliverable and the contract-free warning
+- Project brief §3.4 - the `upto` deliverable and the contract-free warning
