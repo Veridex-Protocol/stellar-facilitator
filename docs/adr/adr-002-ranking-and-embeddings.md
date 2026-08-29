@@ -8,7 +8,7 @@ Refines the composite ranking in [spec-v2.md §3.2](../specifications/spec-v2.md
 
 ## Context
 
-The RFP is blunt that this is the hard part:
+The project brief is blunt that this is the hard part:
 
 > Search quality is a deliverable, not a detail: this means real ranking, and submissions must describe both their retrieval approach and how they will evaluate result quality over time. It is the hardest part of the scope and the part existing catalogs most often leave unimplemented.
 
@@ -67,7 +67,7 @@ Not "semantic". Not "vector search" in the sense the literature means. A second 
 
 ## Why the learned model is not shipped yet, and what turns it on
 
-This is the weakest part of our submission. A learned embedding model behind a measured evaluation loop - graded relevance judgements, rank metrics reported per change, and a gate that fails on regression - is standard practice in information retrieval and is a straightforwardly better answer to problem one than feature hashing. We do not have it, and pretending otherwise in a proposal would be worse than useless.
+This is the weakest part of this implementation. A learned embedding model behind a measured evaluation loop - graded relevance judgements, rank metrics reported per change, and a gate that fails on regression - is standard practice in information retrieval and is a straightforwardly better answer to problem one than feature hashing. We do not have it, and claiming otherwise would be worse than useless.
 
 We have not shipped it because doing it *properly* is the evaluation harness, not the model. Dropping in MiniLM without a way to measure whether results improved would be cargo culting: we would have swapped a signal we understand for one we cannot audit, and we would have no way to know if a later change regressed it. A model with no eval is a worse position than honest feature hashing, because it *looks* solved.
 
@@ -93,8 +93,8 @@ No schema migration: the column is already `vector(384)`. A provider swap plus a
 
 **Costs accepted**
 
-- **Our retrieval is lexically bounded.** A query for "weather" will not match a resource described only as "meteorological forecasts". Any catalog using learned embeddings will answer that query and we will not. It is a real quality gap on the RFP's highest-value deliverable, and we do not have a way to argue it away.
-- **No evaluation methodology ships today.** The RFP asks how result quality will be evaluated over time and our answer is currently a plan, not an artifact. This is the single largest gap in our submission.
+- **Our retrieval is lexically bounded.** A query for "weather" will not match a resource described only as "meteorological forecasts". Any catalog using learned embeddings will answer that query and we will not. It is a real quality gap on the most valuable part of the scope, and we do not have a way to argue it away.
+- **No evaluation methodology ships today.** How result quality is evaluated over time matters, and the answer here is currently a plan rather than an artifact. This is the single largest gap in this implementation.
 - **Ranking quality is bounded by local corpus size**, compounding with the federation decision in [ADR-001](./adr-001-discovery-federation.md). A cold node ranks poorly no matter which retrieval technique it uses.
 - **The weights are unvalidated.** $[0.35, 0.25, 0.15, 0.15, 0.10]$ is a considered guess, not a fitted result. With no labelled set we cannot claim otherwise, and we do not.
 
@@ -111,4 +111,4 @@ No schema migration: the column is already `vector(384)`. A provider swap plus a
 - [`bazaar-service/src/search/types.ts`](../../bazaar-service/src/search/types.ts) - `RankingWeights`, `vectorScore`
 - [`bazaar-service/src/telemetry/tracker.ts`](../../bazaar-service/src/telemetry/tracker.ts) - the liveness multiplier's inputs
 - [ADR-003](./adr-003-settlement-liveness.md) - how liveness itself is determined
-- RFP §3.2 - "search quality is a deliverable, not a detail"
+- Project brief §3.2 - "search quality is a deliverable, not a detail"
