@@ -122,20 +122,22 @@ Stated here rather than blurred into the list above:
 - **A live ledger-skew recovery.** The retry is tested deterministically; it has
   not yet been observed rescuing a real degraded RPC window.
 
-## Layout
+## Repository Map
 
-| Path                           | What it is                                                                      |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| `docs/`                        | Core documentation: architecture, Guides, ADRs, deployment, and OpenAPI specs   |
-| `facilitator-service/`         | The facilitator: `/verify`, `/settle`, `/supported`, `/.well-known/x402`        |
-| `bazaar-service/`              | Catalog, hybrid search, P2P mesh, and database setup                            |
-| `sdks/`                        | Multi-language buyer & seller SDKs (TypeScript, Python, Go)                     |
-| `mcp-server/`                  | Model Context Protocol (MCP) buyer server for AI agents                         |
-| `demo-server/`                 | Minimal seller server used by the conformance test harness                      |
-| `conformance/`                 | Conformance test harness (imports nothing from this repository)                 |
-| `contracts/upto-settlement/`   | Soroban `upto` settlement contract prototype                                    |
-| `playground/`                  | Next.js web interface and interactive testing playground                        |
-| `scripts/`                     | Testnet bootstrap, log summarizer, and concurrency probe scripts                |
+| Path | Component | Documentation |
+|---|---|---|
+| `facilitator-service/` | x402 Payment Facilitator (`/verify`, `/settle`, `/supported`, `/.well-known/x402`) | [README](facilitator-service/README.md) |
+| `bazaar-service/` | Federated Catalog & Hybrid Search Engine | [README](bazaar-service/README.md) |
+| `mcp-server/` | Model Context Protocol Discovery & Payment Server | [README](mcp-server/README.md) |
+| `playground/` | Next.js sandbox: pay on testnet, then verify the payment yourself | [README](playground/README.md) |
+| `sdk-typescript/` | TypeScript Client & Seller Helpers | [README](sdk-typescript/README.md) |
+| `sdk-python/` | Python Client & Seller Helpers | [README](sdk-python/README.md) |
+| `sdks/` | Multi-language seller helpers (TypeScript, Python, Go) | [README](sdks/README.md) |
+| `contracts/upto-settlement/`| Soroban `upto` Smart Contract | [README](contracts/upto-settlement/README.md) |
+| `demo-server/` | Reference x402 Protected Resource Server | [README](demo-server/README.md) |
+| `conformance/` | Conformance Test Harness | [README](conformance/README.md) |
+| `scripts/` | Testnet Bootstrap, Concurrency Probes & Sync Scripts | [Overview](scripts/) |
+| `docs/` | Architecture, ADRs, Specifications & Role Guides | [Guides](docs/guide/) |
 
 ## Requirements
 
