@@ -8,7 +8,7 @@ Refines the channel account pool in [spec-v2.md §7](../specifications/spec-v2.m
 
 ## Context
 
-The RFP asks for this explicitly:
+The project brief asks for this explicitly:
 
 > Throughput. Agent traffic is bursty. Describe how sequence number bottlenecks are avoided under load, for example channel accounts.
 
@@ -116,4 +116,4 @@ Tail latency **11,991ms against 307,614ms** - and the three that queued were ser
 - [`facilitator-service/src/channel/pool.ts`](../../facilitator-service/src/channel/pool.ts) - channel key management, cooldown, sequence resync
 - [`facilitator-service/src/__tests__/settle-scheduler.test.ts`](../../facilitator-service/src/__tests__/settle-scheduler.test.ts) - exclusion, FIFO, release-on-throw, refusal
 - [`scripts/concurrency-probe.mjs`](../../scripts/concurrency-probe.mjs) - the measurement above
-- RFP §3.5 - the throughput requirement this answers
+- Project brief §3.5 - the throughput requirement this answers

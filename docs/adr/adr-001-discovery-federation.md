@@ -8,7 +8,7 @@ Implements the P2P mesh described in [spec-v2.md §3.1](../specifications/spec-v
 
 ## Context
 
-The RFP is unusually direct about the failure mode it wants avoided:
+The project brief is unusually direct about the failure mode to avoid:
 
 > Several facilitators run their own Bazaar compatible catalogs, so today a Stellar denominated service is only as discoverable as whichever multi-chain facilitator happens to carry it.
 
@@ -16,7 +16,7 @@ and
 
 > Interoperate with the wider x402 discovery ecosystem. Stellar listings should be representable consistently with how other facilitators represent theirs, so Stellar is not a walled garden.
 
-That is a statement about market structure, not about software. A catalog is a two-sided market: sellers list where buyers look, buyers look where listings are. Whoever runs the index that reaches critical mass first owns Stellar's service discovery, and every later facilitator is a client of theirs. The RFP funds an *open* facilitator precisely so "the ecosystem must not depend on a single hosted operator" - but an Apache-2.0 licence on a single-index design does not deliver that. Anyone may fork the code; nobody can fork the network effect.
+That is a statement about market structure, not about software. A catalog is a two-sided market: sellers list where buyers look, buyers look where listings are. Whoever runs the index that reaches critical mass first owns Stellar's service discovery, and every later facilitator is a client of theirs. An open facilitator exists precisely so "the ecosystem must not depend on a single hosted operator" - but an Apache-2.0 licence on a single-index design does not deliver that. Anyone may fork the code; nobody can fork the network effect.
 
 Every implementation we have examined, including our own v1, is a single catalog. A facilitator writes rows to its own Postgres, serves `/discovery/search` from it, and that is the extent of federation. Fork it and you get an empty database.
 
@@ -90,7 +90,7 @@ The consistency row deserves care rather than hand-waving: a federated catalog m
 
 **Good**
 
-- Forking the repository yields a *participating peer*, not an empty database. This is the only structural answer to the walled-garden problem the RFP names, and licensing alone does not provide it.
+- Forking the repository yields a *participating peer*, not an empty database. This is the only structural answer to the walled-garden problem named above, and licensing alone does not provide it.
 - The trust boundary is forced into existence and therefore gets built and tested. A single-process design can defer it indefinitely, and then cannot add it without re-architecting.
 - Node failure is contained. A catalog going down removes one view of the corpus, not the corpus.
 - Sellers are not required to pick a facilitator to be discoverable through. Paying through any participating facilitator lists you across the mesh.
@@ -104,7 +104,7 @@ The consistency row deserves care rather than hand-waving: a federated catalog m
 
 **Deliberately not done**
 
-- **No consensus, no shared state, no chain.** Nodes do not agree on a canonical catalog and are not meant to. The RFP explicitly warns against an on-chain registry: "it adds rent that must be extended or entries are evicted, and per payment anchoring adds a second transaction that roughly doubles settlement cost." We keep the index off-chain and the ledger as the *source of truth for payments only*.
+- **No consensus, no shared state, no chain.** Nodes do not agree on a canonical catalog and are not meant to. An on-chain registry is the wrong tool here: "it adds rent that must be extended or entries are evicted, and per payment anchoring adds a second transaction that roughly doubles settlement cost." We keep the index off-chain and the ledger as the *source of truth for payments only*.
 - **No reputation or peer scoring.** A node that gossips junk is rate-limited by the settlement gate - junk without a confirmed settlement never lists. That is a sufficient defence for now, and a scoring system is a research project with its own attack surface.
 - **No cross-node deduplication of the same resource.** Two nodes can each hold a listing for the same URL from two different settlements. Harmless for discovery, and resolving it needs coordination we deliberately do not have.
 
@@ -115,4 +115,4 @@ The consistency row deserves care rather than hand-waving: a federated catalog m
 - [`bazaar-service/src/catalog/ingestion.ts`](../../bazaar-service/src/catalog/ingestion.ts) - the single convergence point for both ingestion paths
 - [`bazaar-service/src/db/schema.sql`](../../bazaar-service/src/db/schema.sql) - `settlement_tx UNIQUE`, the per-node replay bound
 - [ADR-004](./adr-004-catalog-integrity.md) - the settlement verification this design forces
-- RFP §3.2 - interoperability mandate, and the warning against an on-chain registry
+- Project brief §3.2 - interoperability requirement, and the warning against an on-chain registry
