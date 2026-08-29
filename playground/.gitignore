@@ -1,0 +1,4 @@
+# Build output. `npm run build` regenerates both from web/ and src/.
+public/
+dist/
+.next/

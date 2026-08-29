@@ -42,7 +42,8 @@ Two smaller ones are recorded in their own ADRs and in [`testnet_docs.md`](../..
 
 ## Related documents
 
-- [`docs/specifications/spec-v2.md`](../specifications/spec-v2.md) - the originating proposal. ADR-003 corrects its liveness model, ADR-002 corrects its description of the vector leg as semantic, and ADR-011 supersedes its
-  `upto` plan.
+- [`docs/architecture.md`](../architecture.md) - system invariants, component breakdown, and trust boundaries.
+- [`docs/deployment.md`](../deployment.md) - production environment setup and operational procedures.
+- [`docs/specifications/spec-v2.md`](../specifications/spec-v2.md) - the originating proposal. ADR-003 corrects its liveness model, ADR-002 corrects its description of the vector leg as semantic, and ADR-011 supersedes its `upto` plan.
 - [`testnet_docs.md`](../../testnet_docs.md) - the go-live runbook, the boot gates, and the known-limits list.
 - [`README.md`](../../README.md) - what is implemented, what is not, and how to settle a payment yourself.
