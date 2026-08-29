@@ -100,3 +100,4 @@ SCF_BUILD_INTEREST_FORM_SUBMISSION.md
 conformance-report.json
 # docs/adr/
 audit.html
+.next/
