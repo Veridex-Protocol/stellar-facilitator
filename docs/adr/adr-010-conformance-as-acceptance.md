@@ -6,7 +6,7 @@ Accepted (2026-08-23) - records why acceptance is a harness that imports nothing
 
 ## Context
 
-The RFP does not ask for a conformance claim. It says what reviewers will do:
+The project brief does not ask for a conformance claim. It says what reviewers will do:
 
 > Reviewers will point stock SDK code at the deliverable rather than read a conformance claim.
 
@@ -49,7 +49,7 @@ function assertUsableReason(reason, message, label) {
 }
 ```
 
-The RFP requires "a non null reason on every rejection". A non-null reason of `"error"` satisfies that literally and helps nobody, so the harness rejects generic codes too.
+The brief requires "a non null reason on every rejection". A non-null reason of `"error"` satisfies that literally and helps nobody, so the harness rejects generic codes too.
 
 ### 3. CI settles real money with no secrets
 
@@ -75,7 +75,7 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 
 **Good**
 
-- Drift is caught on the pull request that causes it, which is the thing the RFP is actually screening for.
+- Drift is caught on the pull request that causes it, which is the thing actually being screened for.
 - Every published number is reproducible by a stranger from a clean clone, with no cooperation from us.
 - The harness has already earned its keep. It caught the liveness pruning defect ([ADR-003](./adr-003-settlement-liveness.md)) that unit tests could not, because that bug only appears when a real stack has been running long enough for a background sweep to fire.
 - It also caught two bugs in *itself* - a wrong `wrapFetchWithPayment` signature and a settle payload with no discovery extension - which is the harness working: it tests the contract, not our assumptions.
@@ -86,11 +86,11 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 - **CI spends real testnet XLM and depends on Friendbot and public Soroban RPC.** A testnet reset or a Friendbot outage turns CI red for reasons unrelated to the change under review. Accepted deliberately: the alternative is a green CI that proves nothing.
 - **The conformance job takes ~10-20 minutes** against seconds for unit tests, and cannot be meaningfully parallelised - it is a real payment against a real network.
 - **Flakiness is real and load-dependent.** Soroban RPC skew ([ADR-008](./adr-008-ledger-skew-retry.md)) can fail a run. Mitigated by the retry, not eliminated, and a failure hint in `demo.sh` names the two likely causes so a red run is not misread as a code defect.
-- **The harness must be maintained against a moving spec.** It is a second implementation of parts of the wire format and will need updating as conventions evolve. That maintenance *is* the upkeep the RFP asks for, so the cost is the deliverable.
+- **The harness must be maintained against a moving spec.** It is a second implementation of parts of the wire format and will need updating as conventions evolve. That maintenance *is* the upkeep the brief asks for, so the cost is the deliverable.
 
 **Deliberately not done**
 
-- **No mainnet conformance.** `stellar:pubnet` is wired throughout but has never been exercised. The RFP calls both networks committed deliverables and this remains our largest outstanding gap, recorded in `testnet_docs.md`.
+- **No mainnet conformance.** `stellar:pubnet` is wired throughout but has never been exercised. Both networks are committed deliverables and this remains the largest outstanding gap, recorded in `testnet_docs.md`.
 - **No load or soak testing in CI.** [`concurrency-probe.mjs`](../../scripts/concurrency-probe.mjs) is run on demand ([ADR-007](./adr-007-settlement-throughput.md)); running it per-PR would spend meaningfully more testnet XLM for a property that changes rarely.
 - **No scheduled flakiness probe.** Sampling RPC skew frequency on a spread cron, from neutral infrastructure, would turn [ADR-008](./adr-008-ledger-skew-retry.md)'s untested mitigation into a measured one. Worth doing; not done.
 - **No published historical figures yet.** We have single-run evidence, not a corpus. Claiming a median across thousands of settlements requires having run thousands.
@@ -103,4 +103,4 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 - [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) - the conformance job
 - [`scripts/summarize-outcomes.mjs`](../../scripts/summarize-outcomes.mjs) - figures derived from durable logs
 - [`facilitator-service/src/logger.ts`](../../facilitator-service/src/logger.ts) - the `request_outcome` line those figures come from
-- RFP §3.6 - "conformance is a hard acceptance criterion"
+- Project brief §3.6 - "conformance is a hard acceptance criterion"

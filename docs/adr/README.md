@@ -28,21 +28,22 @@ Each ADR states its **Status** with the date and what it records, a **Context** 
 
 **For how any of it is checked**, read 010, then 009.
 
-**For the strategic position**, read 011, and the honest accounting in 002.
+**For the design rationale**, read 011, and the honest accounting in 002.
 
 ## What these records are honest about
 
 The ADRs name three gaps rather than bury them, because a reviewer will find them anyway and finding them stated is a different experience from finding them hidden:
 
-- **Retrieval quality** (002). Our vector leg is feature hashing, not a learned model, and we ship no evaluation methodology. This is the largest gap in the submission and sits on the RFP's highest-value deliverable.
-- **Mainnet** (010). `stellar:pubnet` is wired end to end and has never been exercised. The RFP calls both networks committed deliverables.
+- **Retrieval quality** (002). Our vector leg is feature hashing, not a learned model, and we ship no evaluation methodology. This is the largest gap in this implementation, and it sits on the most valuable part of the scope.
+- **Mainnet** (010). `stellar:pubnet` is wired end to end and has never been exercised. Both networks are committed deliverables.
 - **`upto`** (011). Rebuilt on soroban-sdk 26.1.1 with term-bound authorization, contract-level replay, and on-ledger attribution of the charged amount 27 tests, five of them establishing the binding. It is an early-stage contract: not deployed, no published wasm hash, and no independent audit.
 
 Two smaller ones are recorded in their own ADRs and in [`testnet_docs.md`](../../testnet_docs.md): the ledger-skew retry has never been observed rescuing a live degraded window (008), and multi-page cursor traversal is unexercised end to end because the demo catalog holds one resource (009).
 
 ## Related documents
 
-- [`docs/specifications/spec-v2.md`](../specifications/spec-v2.md) - the originating proposal. ADR-003 corrects its liveness model, ADR-002 corrects its description of the vector leg as semantic, and ADR-011 supersedes its
-  `upto` plan.
+- [`docs/architecture.md`](../architecture.md) - system invariants, component breakdown, and trust boundaries.
+- [`docs/deployment.md`](../deployment.md) - production environment setup and operational procedures.
+- [`docs/specifications/spec-v2.md`](../specifications/spec-v2.md) - the originating proposal. ADR-003 corrects its liveness model, ADR-002 corrects its description of the vector leg as semantic, and ADR-011 supersedes its `upto` plan.
 - [`testnet_docs.md`](../../testnet_docs.md) - the go-live runbook, the boot gates, and the known-limits list.
 - [`README.md`](../../README.md) - what is implemented, what is not, and how to settle a payment yourself.

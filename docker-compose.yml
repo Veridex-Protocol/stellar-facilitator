@@ -163,6 +163,37 @@ services:
       facilitator:
         condition: service_healthy
 
+  # Browser-facing sandbox. Holds no keys: visitors' keypairs are generated in
+  # their own browser and funded by Friendbot.
+  playground:
+    build:
+      context: ./playground
+      dockerfile: Dockerfile
+    container_name: veridex-playground
+    ports:
+      - "3004:3004"
+    environment:
+      PLAYGROUND_PORT: 3004
+      # Reached from the visitor's browser, so these must be the URLs the
+      # browser can resolve - not the compose service names.
+      FACILITATOR_URL: ${PUBLIC_FACILITATOR_URL:-http://localhost:3002}
+      DEMO_SERVER_URL: ${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}
+      BAZAAR_URL: ${PUBLIC_BAZAAR_URL:-http://localhost:3001}
+      STELLAR_NETWORK: testnet
+      PAYMENT_ASSET: ${PAYMENT_ASSET}
+      # The proxy reaches the seller from inside the network, so it is
+      # allowlisted for both the service name and the public URL.
+      PLAYGROUND_ALLOWED_ORIGINS: "http://demo-server:3003,${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3004/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      demo-server:
+        condition: service_healthy
+
   # MCP Discovery Server (optional)
   mcp-server:
     build:

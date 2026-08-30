@@ -15,7 +15,7 @@ It was wrong, and a full end-to-end conformance run is what caught it.
 The failure sequence:
 
 1. A buyer pays for a resource through the facilitator.
-2. The facilitator confirms settlement and catalogs the resource. Automatic cataloging is working exactly as the RFP specifies - *"the facilitator catalogs the resource with no separate registration step"*.
+2. The facilitator confirms settlement and catalogs the resource. Automatic cataloging is working exactly as specified - *"the facilitator catalogs the resource with no separate registration step"*.
 3. The resource has no libp2p node, because its seller is a plain HTTP server that took a payment. It broadcasts no heartbeats and has no reason to.
 4. `pruneOfflineNodes()` sees `last_heartbeat_at` ageing past `30s × 3`.
 5. Within ~90 seconds the resource is `OFFLINE`. The search query filters `liveness_status <> 'OFFLINE'`.

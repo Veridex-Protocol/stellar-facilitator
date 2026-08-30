@@ -29,7 +29,51 @@ Three role-based paths, each runnable against testnet from a clean clone:
 - [Buyer and agent path](docs/guide/buyer.md) discovers a service and pays for it.
 - [Operator path](docs/guide/operator.md) runs the facilitator and catalog.
 
-Start at [`docs/guide/`](docs/guide/).
+Start at [`docs/guide/`](docs/guide/README.md).
+
+## Documentation
+
+Full documentation is organized under [`docs/`](docs/) and throughout the workspace:
+
+### Guides & Integration Paths
+- **[Developer Guides Index](docs/guide/README.md)**: Role-based walkthroughs for integrating and operating.
+  - **[Seller Path](docs/guide/seller.md)**: Host an API/MCP tool, return HTTP 402 challenges, and auto-list in the Bazaar.
+  - **[Buyer & Agent Path](docs/guide/buyer.md)**: Discover endpoints via Bazaar/MCP and execute Stellar payments.
+  - **[Operator Path](docs/guide/operator.md)**: Deploy a facilitator node, set up channel accounts, and run the catalog.
+
+### Architecture & Operations
+- **[System Architecture](docs/architecture.md)**: System design, payment and discovery planes, trust boundaries, and release invariants.
+- **[Deployment Guide](docs/deployment.md)**: Production deployment guide, environment variables, PostgreSQL configuration, and Docker setup.
+- **[Testnet Go-Live Runbook](testnet_docs.md)**: Operational checklist, boot-gated validation rules, channel pool sizing, and known limits.
+- **[Bazaar Database Setup](bazaar-service/database_setup.md)**: PostgreSQL + pgvector schema initialization and migrations.
+
+### Architecture Decision Records (ADRs)
+- **[ADR Index & Reading Guide](docs/adr/README.md)**: Technical decision logs ([ADR-001](docs/adr/adr-001-discovery-federation.md) through [ADR-011](docs/adr/adr-011-upto-converge-upstream.md)):
+  - [ADR-001: Discovery Federation](docs/adr/adr-001-discovery-federation.md) - Gossip mesh & catalog trust boundaries.
+  - [ADR-002: Ranking & Embeddings](docs/adr/adr-002-ranking-and-embeddings.md) - Hybrid BM25 & feature-hash ranking.
+  - [ADR-003: Settlement Liveness](docs/adr/adr-003-settlement-liveness.md) - Horizon settlement liveness vs P2P heartbeats.
+  - [ADR-004: Catalog Integrity](docs/adr/adr-004-catalog-integrity.md) - Verified Horizon settlement binding.
+  - [ADR-005: Verified Capabilities](docs/adr/adr-005-advertise-only-what-is-verified.md) - Boot-gated network capability checks.
+  - [ADR-006: Recomputable Receipts](docs/adr/adr-006-recomputable-receipts.md) - RFC 8785 canonical JSON receipts (`x402job/1`).
+  - [ADR-007: Settlement Throughput](docs/adr/adr-007-settlement-throughput.md) - Channel account leasing scheduler.
+  - [ADR-008: Ledger-Skew Retry](docs/adr/adr-008-ledger-skew-retry.md) - Soroban RPC ledger-skew retry handling.
+  - [ADR-009: Wire Conformance](docs/adr/adr-009-discovery-wire-conformance.md) - Wire filters, opaque cursors, and response headers.
+  - [ADR-010: Conformance as Acceptance](docs/adr/adr-010-conformance-as-acceptance.md) - Conformance harness & log evidence.
+  - [ADR-011: `upto` Contract Convergence](docs/adr/adr-011-upto-converge-upstream.md) - Metered usage contract constraints.
+
+### Specifications & API References
+- **[Protocol Specification](specification.md)**: Main x402 facilitator and Bazaar protocol specification.
+- **[x402 Stellar Specification v2](docs/specifications/spec-v2.md)**: Technical spec for exact payments and discovery.
+- **[Stellar `upto` Scheme Specification](docs/specifications/scheme_upto_stellar.md)**: Metered settlement scheme specification.
+- **OpenAPI 3.0 Specifications**:
+  - [Facilitator API OpenAPI Spec](docs/openapi/x402.yaml)
+  - [Bazaar Discovery API OpenAPI Spec](docs/openapi/bazaar.yaml)
+
+### Workspace Component Documentation
+- **[SDKs Overview](sdks/README.md)** (with [TypeScript SDK](sdk-typescript/README.md) & [Python SDK](sdk-python/README.md))
+- **[MCP Buyer Server](mcp-server/README.md)**
+- **[Soroban Smart Contracts](contracts/README.md)**
+- **[Interactive Playground](playground/README.md)**
 
 ## Implemented
 
@@ -83,10 +127,12 @@ Stated here rather than blurred into the list above:
 | Path | Component | Documentation |
 |---|---|---|
 | `facilitator-service/` | x402 Payment Facilitator (`/verify`, `/settle`, `/supported`, `/.well-known/x402`) | [README](facilitator-service/README.md) |
-| `bazaar-service/` | Federated Catalog & Hybrid RRF Search Engine | [README](bazaar-service/README.md) |
+| `bazaar-service/` | Federated Catalog & Hybrid Search Engine | [README](bazaar-service/README.md) |
 | `mcp-server/` | Model Context Protocol Discovery & Payment Server | [README](mcp-server/README.md) |
+| `playground/` | Next.js sandbox: pay on testnet, then verify the payment yourself | [README](playground/README.md) |
 | `sdk-typescript/` | TypeScript Client & Seller Helpers | [README](sdk-typescript/README.md) |
 | `sdk-python/` | Python Client & Seller Helpers | [README](sdk-python/README.md) |
+| `sdks/` | Multi-language seller helpers (TypeScript, Python, Go) | [README](sdks/README.md) |
 | `contracts/upto-settlement/`| Soroban `upto` Smart Contract | [README](contracts/upto-settlement/README.md) |
 | `demo-server/` | Reference x402 Protected Resource Server | [README](demo-server/README.md) |
 | `conformance/` | Conformance Test Harness | [README](conformance/README.md) |
@@ -187,4 +233,4 @@ docker compose logs --no-log-prefix facilitator | npm run outcomes
 
 `/x402/verify` and `/x402/settle` are compatibility aliases. Pre-canonical payload handling is isolated under `/legacy/verify` and `/legacy/settle`. Networks on the canonical path are `stellar:testnet` and `stellar:pubnet`; assets are SEP-41 contract addresses, not classic identifiers such as `native`.
 
-Testnet launch requirements and the remaining operator-owned steps are in [testnet_docs.md](testnet_docs.md). OpenAPI definitions are in [docs/openapi](docs/openapi/).
+Testnet launch requirements and remaining operator-owned steps are in [testnet_docs.md](testnet_docs.md). OpenAPI definitions are in [docs/openapi/](docs/openapi/) ([`x402.yaml`](docs/openapi/x402.yaml) and [`bazaar.yaml`](docs/openapi/bazaar.yaml)). System architecture details are in [docs/architecture.md](docs/architecture.md) and deployment steps are in [docs/deployment.md](docs/deployment.md).

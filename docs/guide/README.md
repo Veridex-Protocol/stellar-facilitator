@@ -89,7 +89,9 @@ which is covered in the [seller path](./seller.md#getting-paid-in-usdc).
 
 ## Reference
 
-- [`docs/openapi/`](../openapi/) contains the facilitator and discovery API definitions.
+- [`docs/architecture.md`](../architecture.md) describes the target system architecture, invariants, and trust boundaries.
+- [`docs/deployment.md`](../deployment.md) covers production infrastructure requirements and deployment procedures.
+- [`docs/openapi/`](../openapi/) contains the facilitator and discovery API definitions ([`x402.yaml`](../openapi/x402.yaml) and [`bazaar.yaml`](../openapi/bazaar.yaml)).
 - [`docs/adr/`](../adr/) records why the system works the way it does.
 - [`testnet_docs.md`](../../testnet_docs.md) is the go-live runbook and the list of known limits.
 - The [x402 protocol repository](https://github.com/x402-foundation/x402) holds the specification itself.

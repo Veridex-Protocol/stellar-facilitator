@@ -84,7 +84,7 @@ veridex/
 ### 1.2 Analysis of Exposed Veridex Code & Logic
 
 #### 1.2.1 Facilitator Verification & Settlement Core
-Veridex's Stellar mechanism [`ExactStellarScheme`](file:///Users/mannyuncharted/Documents/gigs/veridex/x402/typescript/packages/mechanisms/stellar/src/exact/facilitator/scheme.ts#L85-L146) implements the `SchemeNetworkFacilitator` interface:
+Veridex's Stellar mechanism [`ExactStellarScheme`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/stellar/src/exact/facilitator/scheme.ts#L85-L146) implements the `SchemeNetworkFacilitator` interface:
 
 ```typescript
 // Excerpt from x402/typescript/packages/mechanisms/stellar/src/exact/facilitator/scheme.ts
@@ -110,13 +110,13 @@ export class ExactStellarScheme implements SchemeNetworkFacilitator {
 ```
 
 Key features present in `ExactStellarScheme`:
-- **Soroban Auth Entry Signature Inspection**: Uses [`gatherAuthEntrySignatureStatus`](file:///Users/mannyuncharted/Documents/gigs/veridex/x402/typescript/packages/mechanisms/stellar/src/shared.ts) to verify that Soroban auth entries are signed correctly.
+- **Soroban Auth Entry Signature Inspection**: Uses [`gatherAuthEntrySignatureStatus`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/stellar/src/shared.ts) to verify that Soroban auth entries are signed correctly.
 - **Simulation-Based Fee & Resource Estimation**: Invokes Soroban RPC `simulateTransaction` to verify transaction validity, compute exact CPU/memory instruction limits, and enforce `maxTransactionFeeStroops`.
 - **Fee Bump Sponsorship**: Decouples fee payment from sequence numbers by wrapping inner transactions in a `FeeBumpTransaction` signed by `feeBumpSigner`.
 - **Signer Rotation**: Uses round-robin selection across a pool of channel accounts (`roundRobinSelectSigner`) to support concurrent transactions.
 
 #### 1.2.2 Bazaar Extension & Integrity Engine
-Veridex's Bazaar implementation [`facilitator.ts`](file:///Users/mannyuncharted/Documents/gigs/veridex/x402/typescript/packages/extensions/src/bazaar/facilitator.ts#L1-L120) enforces validation rules to prevent catalog poisoning:
+Veridex's Bazaar implementation [`facilitator.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/extensions/src/bazaar/facilitator.ts#L1-L120) enforces validation rules to prevent catalog poisoning:
 
 ```typescript
 // Excerpt from x402/typescript/packages/extensions/src/bazaar/facilitator.ts
@@ -147,7 +147,7 @@ Metadata soft-drop protections in Veridex include:
 
 | Requirement | RFP Section | Veridex Support | Existing Code Evidence | Required Gap Remediation |
 |---|---|---|---|---|
-| **Facilitator Endpoints** | 3.1 | Full | `ExactStellarScheme` in [`scheme.ts`](file:///Users/mannyuncharted/Documents/gigs/veridex/x402/typescript/packages/mechanisms/stellar/src/exact/facilitator/scheme.ts#L85) | Package as standalone Hono/Fastify HTTP server |
+| **Facilitator Endpoints** | 3.1 | Full | `ExactStellarScheme` in [`scheme.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/stellar/src/exact/facilitator/scheme.ts#L85) | Package as standalone Hono/Fastify HTTP server |
 | **Auth Entry Validation** | 3.1 | Full | `gatherAuthEntrySignatureStatus` in [`shared.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/mechanisms/stellar/src/shared.ts) | Add `__check_auth` custom account simulation validation |
 | **Fee Sponsorship** | 3.1 | Full | `feeBumpSigner` in `ExactStellarScheme` | Expose `areFeesSponsored: true` in `/supported` |
 | **Bazaar Catalog Browsing** | 3.2 | Partial | `listResources` in [`facilitatorClient.ts`](https://github.com/x402-foundation/x402/blob/main/typescript/packages/extensions/src/bazaar/facilitatorClient.ts) | Build persistent PostgreSQL store with filtering |
