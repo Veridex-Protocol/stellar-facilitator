@@ -4,7 +4,7 @@
  * License: Apache-2.0
  *
  * Model Context Protocol (MCP) server exposing Veridex Bazaar discovery
- * and x402 payment tools to AI agents.
+ * and x402 payment tools to compatible clients.
  *
  * Tools:
  * - discover_resources - Search the Bazaar catalog (hybrid keyword + vector ranking)

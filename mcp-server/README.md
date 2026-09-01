@@ -2,11 +2,11 @@
 
 **License:** Apache-2.0
 
-Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x402 payment tools to AI agents.
+Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x402 payment tools to compatible clients.
 
 ## Overview
 
-This MCP server enables AI agents (Claude, GPT-4, etc.) to:
+This MCP server enables compatible clients to:
 
 1. **Discover resources** - Search Bazaar catalog with semantic/keyword queries
 2. **Execute payments** - Pay for resource access via x402 Stellar protocol
@@ -31,7 +31,7 @@ Search Veridex Bazaar catalog using hybrid semantic + keyword search.
 ```
 Found 15 resources:
 
-• https://api.weather.io/forecast
+- https://api.weather.io/forecast
   Service: WeatherIO
   Description: Real-time weather forecasts with 7-day predictions
   Network: stellar:pubnet
@@ -60,7 +60,7 @@ Execute x402 Stellar payment to access a resource.
 
 **Output:**
 ```
-✓ Payment successful!
+Payment successful.
 
 Resource: https://api.weather.io/forecast
 Amount: 100000 stroops (0.0100000 XLM)
@@ -110,7 +110,7 @@ Deposit XLM into escrow for prepaid resource access.
 
 **Output:**
 ```
-✓ Deposit successful!
+Deposit successful.
 
 Deposited: 10.0000000 XLM (100000000 stroops)
 New Balance: 10.0000000 XLM (100000000 stroops)
@@ -144,9 +144,9 @@ npm install
 npm run build
 ```
 
-### 2. Configure Claude Desktop
+### 2. Configure an MCP client
 
-Add to `claude_desktop_config.json`:
+Add the server command to the client's MCP configuration:
 
 ```json
 {
@@ -167,28 +167,16 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### 3. Restart Claude Desktop
+### 3. Restart the client
 
-The MCP server will be available to Claude with 4 new tools.
+The server exposes four tools after the client reconnects.
 
-## Example Conversation
+## Example Tool Flow
 
-**User:** Find me a weather API on Stellar
-
-**Claude:** I'll search the Veridex Bazaar for weather APIs.
-
-*[Uses `discover_resources` tool]*
-
-I found WeatherIO API with 99.8% uptime. Would you like me to pay for access?
-
-**User:** Yes, pay 0.01 XLM for it
-
-**Claude:** I'll execute the payment.
-
-*[Uses `pay_resource` tool]*
-
-Payment successful! Transaction hash: abc123...
-You can now access the WeatherIO forecast endpoint.
+1. Call `discover_resources` with `{"query":"weather API"}`.
+2. Select a resource from the ranked results.
+3. Call `pay_resource` with the resource URL and amount.
+4. Use the returned authorization to access the resource.
 
 ## Development
 
@@ -209,13 +197,7 @@ npm run typecheck
 - All transactions are signed with Stellar signatures
 - MCP server runs locally with stdio transport (no network exposure)
 
-## Integration with AI Agents
-
-### Claude Desktop
-
-See configuration above.
-
-### Custom MCP Client
+## MCP Client Integration
 
 ```typescript
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -232,7 +214,7 @@ const transport = new StdioClientTransport({
   },
 });
 
-const client = new Client({ name: 'my-agent', version: '1.0.0' }, { capabilities: {} });
+const client = new Client({ name: 'veridex-client', version: '1.0.0' }, { capabilities: {} });
 await client.connect(transport);
 
 // Call tool
