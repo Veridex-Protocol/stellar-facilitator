@@ -11,7 +11,7 @@
  * the buyer paid and got a 502.
  *
  * Agent traffic is bursty, so this is a load-shape problem rather than an edge
- * case. The remedy the RFP names is channel accounts: several funded accounts
+ * case. Channel accounts are the standard remedy: several funded accounts
  * whose sequence numbers advance independently. That is necessary but not
  * sufficient `@x402/stellar` round-robins across signers, which makes a
  * collision less likely without preventing one. With N signers, the N+1st

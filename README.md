@@ -198,7 +198,7 @@ Cataloging outcomes come back in the `EXTENSION-RESPONSES` header base64 JSON of
 
 A Stellar account has one sequence number, so two settlements from the same account race for it: one lands, the other returns `tx_bad_seq` and is retried until it wins. Measured here before this was addressed, one settlement took **307 seconds** and the resource server's HTTP client had long since returned a 502 the buyer paid and got nothing.
 
-The fix is the remedy the RFP names, plus the part that makes it airtight:
+The fix is channel accounts plus a settlement scheduler that makes the guarantee airtight:
 
 - **Channel accounts.** Each funded account in `CHANNEL_SECRET_KEYS` advances its own sequence number. `npm run setup` provisions three.
 - **A settlement scheduler.** `@x402/stellar` round-robins across signers, which makes a collision less likely but not impossible: with N signers the N+1st concurrent request still lands on a busy account. The scheduler leases a signer before `settle()` and pins `selectSigner` to it, so no account is ever used twice at once. Overflow queues in FIFO order and, past `SETTLE_QUEUE_TIMEOUT_MS`, is refused with `settlement_capacity_exceeded` and an explicit "no funds moved".
