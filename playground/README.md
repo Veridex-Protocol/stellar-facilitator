@@ -64,7 +64,7 @@ test asserts this against cloud-metadata, loopback, `file://` and external
 hosts.
 
 This matters because an internal audit of this repository flagged exactly the
-opposite pattern elsewhere — an agent-facing tool that fetches any URL it is
+opposite pattern elsewhere — a client-facing tool that fetches any URL it is
 handed. Building the same hole here, in the thing we invite people to attack,
 would have been a poor choice.
 

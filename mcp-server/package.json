@@ -1,14 +1,14 @@
 {
   "name": "@veridex/mcp-server",
   "version": "0.1.0",
-  "description": "Veridex MCP Discovery Server - Model Context Protocol server for AI agents",
+  "description": "Stellar discovery and payment tools exposed through Model Context Protocol",
   "type": "module",
   "license": "Apache-2.0",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "veridex-mcp": "./dist/index.js"
+    "stellar-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -34,7 +34,7 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "ai-agents",
+    "mcp-clients",
     "x402",
     "stellar",
     "discovery"

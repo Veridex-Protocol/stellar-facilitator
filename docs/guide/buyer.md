@@ -139,9 +139,9 @@ console.log(await response.json());
 
 There is no prior integration, no API key, and no account with the seller.
 
-## 6. From inside an agent runtime
+## 6. From inside a client runtime
 
-The MCP server exposes discovery and payment as tools, so an agent can do all of the above without you writing any HTTP code.
+The MCP server exposes discovery and payment as tools, so a client or automated workflow can do all of the above without you writing any HTTP code.
 
 ```bash
 docker compose --profile mcp run --rm mcp-server
