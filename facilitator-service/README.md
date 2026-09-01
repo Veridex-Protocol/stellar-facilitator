@@ -6,7 +6,7 @@ Production-grade x402 v2 payment facilitator for the Stellar network. Provides n
 
 ## Architecture Overview
 
-The Facilitator Service sits as the trustless settlement gateway between HTTP 402 resource servers (sellers), agent runtimes (buyers), and the Stellar blockchain:
+The Facilitator Service sits as the trustless settlement gateway between HTTP 402 resource servers (sellers), buyer clients, and the Stellar blockchain:
 
 ```text
   Client (Buyer)           Resource Server (Seller)        Facilitator Service           Stellar / Soroban

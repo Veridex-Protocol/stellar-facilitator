@@ -27,7 +27,7 @@ While v1.0 established a solid foundation with standard REST endpoints, Soroban 
    Fulfills Section 3.2's mandate to avoid turning Stellar discovery into a "walled garden." Independent facilitators gossip verified catalog blocks peer-to-peer, keeping catalog listings synchronized across the ecosystem without centralized database lock-in.
 
 4. **Liveness Circuit Breakers & Auto-Pruning**:
-   Dead, offline, or unresponsive endpoints are automatically demoted and soft-dropped after missing consecutive heartbeat windows, protecting AI agents from attempting calls to broken APIs.
+   Dead, offline, or unresponsive endpoints are automatically demoted and soft-dropped after missing consecutive heartbeat windows, protecting clients from attempting calls to broken APIs.
 
 ```
                                   VERIDEX V2 P2P BAZAAR ARCHITECTURE
@@ -42,7 +42,7 @@ While v1.0 established a solid foundation with standard REST endpoints, Soroban 
 │                                                                             Libp2p Mesh │ GossipSync     │
 │                                                                                         ▼                │
 │   ┌────────────────────────┐         Telemetry & Settlement Proofs          ┌────────────────────────┐   │
-│   │   AI Agent / Buyer     ├───────────────────────────────────────────────►│ Veridex Relayer Peer B │   │
+│   │   Client / Buyer        ├───────────────────────────────────────────────►│ Veridex Relayer Peer B │   │
 │   └────────────────────────┘                                                └───────────┬────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────────────┼────────────────┘
                                                                                           │
@@ -125,7 +125,7 @@ Resource servers and peer facilitators communicate over a dedicated `js-libp2p` 
 
 ### 3.2 Telemetry-Enriched Composite Ranking Engine
 
-To solve search relevance and prevent recommending dead APIs to AI agents, the Bazaar search engine calculates a **Composite Quality Score ($\Phi$)**:
+To solve search relevance and prevent recommending dead APIs to clients, the Bazaar search engine calculates a **Composite Quality Score ($\Phi$)**:
 
 $$\Phi = w_1 \cdot S_{\text{semantic}} + w_2 \cdot S_{\text{bm25}} + w_3 \cdot S_{\text{uptime}} + w_4 \cdot S_{\text{latency}} + w_5 \cdot S_{\text{reliability}}$$
 
@@ -295,9 +295,9 @@ impl UptoEscrowContract {
 
 ---
 
-## 5. Agent-Facing MCP Discovery Server Specification
+## 5. MCP Discovery Server Specification
 
-Section 3.3 requires exposing an MCP server allowing AI agents to discover resources and execute 402 payments autonomously.
+Section 3.3 requires exposing an MCP server that allows compatible clients to discover resources and execute 402 payments.
 
 ### 5.1 MCP Server Package Architecture (`@veridex/mcp-discovery-server`)
 
@@ -499,17 +499,12 @@ All v2 packages operate strictly under the **Apache License 2.0**. CI automates 
 
 ---
 
-## 10. Actionable Engineering Team Prompt
+## 10. Implementation Checklist
 
-```text
-You are assigned to build the @veridex/stellar-bazaar-facilitator v2 suite fulfilling the Stellar x402 Bazaar RFP.
-
-Follow this blueprint strictly:
 1. Base all Stellar transaction handling on @x402/stellar and @stellar/stellar-sdk (Apache-2.0). Ensure zero AGPL dependencies exist in package.json.
 2. Implement @veridex/bazaar-service using PostgreSQL + pgvector and a js-libp2p GossipSub P2P mesh topic /x402/bazaar/v1/announce.
 3. Enforce soft-drop rules in x402/typescript/packages/extensions/src/bazaar/facilitator.ts (isValidServiceName, sanitizeTags, isValidIconUrl, isValidRouteTemplate).
 4. Implement GET /discovery/search with composite quality scoring combining vector similarity, BM25 text match, 30-day node ping uptime, and response latency.
 5. Author scheme_upto_stellar.md and build the Soroban upto_escrow.rs smart contract enforcing single settlement and max cap.
-6. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools for AI agents.
+6. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools for compatible clients.
 7. Verify wire-level conformance using an unmodified canonical x402 client on stellar:testnet and stellar:pubnet with extra.areFeesSponsored = true.
-```

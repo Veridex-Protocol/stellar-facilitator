@@ -24,14 +24,14 @@ The RFP establishes three mandatory outcomes for the Stellar ecosystem:
    Ensuring that the entire codebase and its transitive dependency graph are 100% permissively licensed. The ecosystem must not depend on a single hosted operator or be constrained by copyleft/AGPL dependencies (such as the OpenZeppelin Relayer).
 
 3. **A Working Stellar Bazaar Discovery Layer**:
-   Building a native, high-performance Bazaar discovery engine for Stellar. **This capability represents the highest-value deliverable in the RFP scope and carries the largest share of the budget allocation.** It enables AI agents to dynamically discover, rank, search, and pay for x402-protected HTTP endpoints and MCP tools without pre-existing integration boilerplate.
+  Building a native, high-performance Bazaar discovery engine for Stellar. **This capability represents the highest-value deliverable in the RFP scope and carries the largest share of the budget allocation.** It enables MCP clients to dynamically discover, rank, search, and pay for x402-protected HTTP endpoints and MCP tools without pre-existing integration boilerplate.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
 │                                VERIDEX X402 STELLAR STACK                               │
 │                                                                                         │
 │   ┌────────────────────────┐  ┌─────────────────────────┐  ┌────────────────────────┐   │
-│   │  Facilitator Service   │  │  Bazaar Discovery Engine│  │  Agent MCP Server      │   │
+│   │  Facilitator Service   │  │  Bazaar Discovery Engine│  │  MCP Discovery Server  │   │
 │   │  - POST /verify        │  │  - GET /discovery/res   │  │  - discover_resources  │   │
 │   │  - POST /settle        │  │  - GET /discovery/search│  │  - pay_resource        │   │
 │   │  - GET /supported      │  │  - Hybrid BM25+pgvector │  │  - 402 Loop Handling   │   │
@@ -389,13 +389,13 @@ impl UptoEscrowContract {
 
 ---
 
-## 5. Agent-Facing MCP Discovery Server Specification
+## 5. MCP Discovery Server Specification
 
-Section 3.3 requires exposing an MCP server allowing AI agents to discover resources and execute 402 payments autonomously.
+Section 3.3 requires an MCP server through which compatible clients can discover resources and execute 402 payments.
 
 ### 5.1 MCP Server Package Architecture (`@veridex/mcp-discovery-server`)
 
-The server connects to agent runtimes (e.g. Claude Desktop, LangChain, AutoGen) via Stdio or Streamable HTTP / SSE transports:
+The server connects to MCP clients via Stdio or Streamable HTTP / SSE transports:
 
 ```typescript
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -423,7 +423,7 @@ export class VeridexMcpDiscoveryServer {
           inputSchema: {
             type: "object",
             properties: {
-              query: { type: "string", description: "Natural language search query" },
+              query: { type: "string", description: "Free-text search query" },
               type: { type: "string", enum: ["http", "mcp"] },
               network: { type: "string", default: "stellar:pubnet" }
             },
@@ -623,16 +623,11 @@ Section 3.6 strictly prohibits AGPL dependencies. Veridex guarantees compliance 
 
 ---
 
-## 10. Actionable Engineering Team Prompt
+## 10. Implementation Checklist
 
-```text
-You are assigned to build the @veridex/stellar-bazaar-facilitator suite fulfilling the Stellar x402 Bazaar RFP.
-
-Follow this blueprint strictly:
 1. Base all Stellar transaction handling on @x402/stellar and @stellar/stellar-sdk (Apache-2.0). Ensure zero AGPL dependencies exist in package.json.
 2. Implement @veridex/bazaar-service using PostgreSQL + pgvector. Enforce soft-drop rules in x402/typescript/packages/extensions/src/bazaar/facilitator.ts (isValidServiceName, sanitizeTags, isValidIconUrl, isValidRouteTemplate).
 3. Build GET /discovery/resources and GET /discovery/search with RRF hybrid search (BM25 + cosine similarity). Return EXTENSION-RESPONSES base64 headers on /verify and /settle.
 4. Author scheme_upto_stellar.md and build the Soroban upto_escrow.rs smart contract enforcing single settlement and max cap.
-5. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools for AI agents.
+5. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools to MCP clients.
 6. Verify wire-level conformance using an unmodified canonical x402 client on stellar:testnet and stellar:pubnet with extra.areFeesSponsored = true.
-```
