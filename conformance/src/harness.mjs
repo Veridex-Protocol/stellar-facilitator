@@ -18,9 +18,9 @@
  *    facilitator that returned a plausible-looking hash without settling
  *    anything fails here.
  *  - The `x402job/1` receipt is verified independently: the digests are
- *    recomputed from the exact bytes exchanged and the Ed25519 signature is
- *    checked against the advertised signer, using RFC 8785 canonicalization
- *    reimplemented here rather than imported from the service that issued it.
+ *    recomputed from the canonical request and result values and the Ed25519
+ *    signature is checked against the advertised signer, using RFC 8785
+ *    canonicalization reimplemented here rather than imported from the service.
  *
  * Exit code 0 means every check passed. Anything else means the claim is not
  * currently true. Results are also written to conformance-report.json.
@@ -457,6 +457,8 @@ const paid = await check(
 group("4. The settlement exists on the Stellar ledger");
 
 let receipt = null;
+let receiptRequest = null;
+let receiptResult = null;
 
 await check("a direct /settle produces a transaction hash", async () => {
   const signedFor = requirements();
@@ -470,8 +472,11 @@ await check("a direct /settle produces a transaction hash", async () => {
   assert(body.success === true, `settlement failed: ${body.errorReason} - ${body.errorMessage}`);
   assert(typeof body.transaction === "string" && body.transaction.length === 64, "no transaction hash returned");
 
+  const { receipt: issuedReceipt, ...settlementResult } = body;
   settledTransaction = body.transaction;
-  receipt = body.receipt ?? null;
+  receipt = issuedReceipt ?? null;
+  receiptRequest = paymentPayload;
+  receiptResult = settlementResult;
   settleHeaders = headers;
   return { transaction: settledTransaction, explorer: `${EXPLORER}/${settledTransaction}` };
 });
@@ -548,21 +553,21 @@ await check("the signature does not survive a rewritten settlement", () => {
   return { fieldsChecked: 5 };
 });
 
-await check("the result digest recomputes from the bytes the facilitator returned", () => {
-  // The facilitator digests its own settle response. Recompute it from the
-  // response fields we were handed, minus the receipt itself.
-  const expected = digest({
-    success: true,
-    transaction: receipt.claims.settlement.tx,
-    network: receipt.claims.settlement.network,
-    payer: receipt.claims.settlement.payer,
-  });
-  // Not asserted equal: the exact result body shape is the facilitator's to
-  // choose. What must hold is that the digest is a real sha256 over canonical
-  // JSON, and that it changes when the bytes change.
-  assert(/^sha256:[0-9a-f]{64}$/.test(receipt.claims.resultDigest), "resultDigest is not a sha256 digest");
-  assert(/^sha256:[0-9a-f]{64}$/.test(receipt.claims.requestDigest), "requestDigest is not a sha256 digest");
-  assert(expected !== receipt.claims.requestDigest, "request and result digests must not collide");
+await check("both receipt digests recompute from the exchanged values", () => {
+  assert(receiptRequest, "the settled payment payload was not captured");
+  assert(receiptResult, "the settlement result was not captured");
+
+  const expectedRequestDigest = digest(receiptRequest);
+  const expectedResultDigest = digest(receiptResult);
+  assert(
+    receipt.claims.requestDigest === expectedRequestDigest,
+    `requestDigest mismatch: expected ${expectedRequestDigest}, got ${receipt.claims.requestDigest}`,
+  );
+  assert(
+    receipt.claims.resultDigest === expectedResultDigest,
+    `resultDigest mismatch: expected ${expectedResultDigest}, got ${receipt.claims.resultDigest}`,
+  );
+
   return { requestDigest: receipt.claims.requestDigest, resultDigest: receipt.claims.resultDigest };
 });
 

@@ -296,7 +296,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
         .build();
 
       const initialSim = await server.simulateTransaction(initialTx);
-      if (!Api.isSimulationSuccess(initialSim)) {
+      if (!rpc.Api.isSimulationSuccess(initialSim)) {
         return {
           success: false,
           network: payload.accepted.network,
@@ -462,7 +462,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
   ): Promise<{
     response: VerifyResponse;
     parsedTerms?: ParsedUptoTerms;
-    simResponse?: Api.SimulateTransactionSuccessResponse;
+    simResponse?: rpc.Api.SimulateTransactionSuccessResponse;
   }> {
     let fromAddress: string | undefined;
 
@@ -649,7 +649,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
 
       // 6. Simulation & auth entry verification
       const simResponse = await server.simulateTransaction(transaction);
-      if (!Api.isSimulationSuccess(simResponse)) {
+      if (!rpc.Api.isSimulationSuccess(simResponse)) {
         return {
           response: {
             isValid: false,
@@ -706,7 +706,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
     fromAddress: string,
     maxLedger: number,
     transaction: Transaction,
-    simResponse: Api.SimulateTransactionSuccessResponse,
+    simResponse: rpc.Api.SimulateTransactionSuccessResponse,
   ): VerifyResponse | undefined {
     if (!invokeOp.auth || invokeOp.auth.length === 0) {
       return {

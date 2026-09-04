@@ -6,6 +6,7 @@ import {
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import type { PlaygroundConfig, ClientWallet } from "./types";
+import { fetchWithTimeout } from "./http";
 
 export { decodePaymentRequiredHeader, decodePaymentResponseHeader };
 
@@ -27,19 +28,48 @@ export function header(headers: Record<string, string>, name: string): string | 
   return undefined;
 }
 
+export async function getFacilitatorCapabilities(config: PlaygroundConfig): Promise<any> {
+  const url = `${config.facilitatorUrl}/supported`;
+  const res = await fetchWithTimeout(url, {}, 10_000, "Facilitator capability request");
+  if (!res.ok) throw new Error(`/supported failed (${res.status})`);
+
+  try {
+    return await res.json();
+  } catch {
+    throw new Error(`/supported returned invalid JSON (${res.status})`);
+  }
+}
+
+export async function getFacilitatorDescriptor(config: PlaygroundConfig): Promise<any> {
+  const url = `${config.facilitatorUrl}/.well-known/x402`;
+  const res = await fetchWithTimeout(url, {}, 10_000, "Facilitator descriptor request");
+  if (!res.ok) throw new Error(`/.well-known/x402 failed (${res.status})`);
+
+  try {
+    return await res.json();
+  } catch {
+    throw new Error(`/.well-known/x402 returned invalid JSON (${res.status})`);
+  }
+}
+
 export async function callSeller(
   url: string,
   init: { method?: string; headers?: Record<string, string> } = {}
 ): Promise<SellerResponse> {
-  const res = await fetch("/api/resource", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      method: init.method ?? "GET",
-      headers: init.headers ?? {},
-    }),
-  });
+  const res = await fetchWithTimeout(
+    "/api/resource",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        method: init.method ?? "GET",
+        headers: init.headers ?? {},
+      }),
+    },
+    90_000,
+    "Seller request"
+  );
 
   const payload = await res.json();
   if (!res.ok) {
@@ -53,11 +83,17 @@ export async function postFacilitator(
   path: string,
   body: unknown
 ): Promise<{ status: number; body: any; headers: Headers }> {
-  const res = await fetch(`${config.facilitatorUrl}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const url = `${config.facilitatorUrl}${path}`;
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    60_000,
+    `Facilitator ${path} request`
+  );
   const text = await res.text();
   try {
     return { status: res.status, body: JSON.parse(text), headers: res.headers };
@@ -84,7 +120,8 @@ export async function horizonTransaction(
   attempts = 12
 ): Promise<any> {
   for (let i = 0; i < attempts; i++) {
-    const res = await fetch(`${horizonUrl}/transactions/${hash}`);
+    const url = `${horizonUrl}/transactions/${hash}`;
+    const res = await fetchWithTimeout(url, {}, 10_000, "Horizon confirmation request");
     if (res.ok) return res.json();
     await new Promise((r) => setTimeout(r, 2000));
   }

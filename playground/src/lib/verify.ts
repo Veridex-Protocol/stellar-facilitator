@@ -45,10 +45,24 @@ function fromHex(hex: string): Uint8Array {
   return bytes;
 }
 
+async function sha256Digest(value: unknown): Promise<string> {
+  const serialized = typeof value === "string" ? value : canonicalize(value);
+  const hash = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(serialized)
+  );
+  const hex = Array.from(new Uint8Array(hash), (byte) =>
+    byte.toString(16).padStart(2, "0")
+  ).join("");
+  return `sha256:${hex}`;
+}
+
 export async function verifyReceipt(
   receipt: Receipt,
   advertisedSigners: string[],
-  settledTransaction?: string
+  settledTransaction: string,
+  originalRequest: unknown,
+  originalResult: unknown
 ): Promise<VerificationResult> {
   const steps: VerificationStep[] = [];
 
@@ -62,12 +76,11 @@ export async function verifyReceipt(
   });
 
   const canonical = canonicalize(receipt.claims);
-  const matchesIssuer =
-    receipt.canonicalClaims === undefined || receipt.canonicalClaims === canonical;
+  const matchesIssuer = receipt.canonicalClaims === canonical;
   steps.push({
     label: "RFC 8785 JSON Canonicalization",
     detail: matchesIssuer
-      ? `${canonical.length} bytes of deterministic JCS, byte-identical to facilitator digest`
+      ? `${canonical.length} bytes of deterministic JCS match the issuer-provided canonical claims`
       : "Facilitator canonicalClaims does not match local canonicalization",
     passed: matchesIssuer,
   });
@@ -91,14 +104,14 @@ export async function verifyReceipt(
 
   const signerAdvertised = advertisedSigners.includes(receipt.claims.signer);
   steps.push({
-    label: "Facilitator Public Key Invariant",
+    label: "Advertised Receipt Signer",
     detail: signerAdvertised
-      ? "claims.signer appears in public GET /supported manifest"
-      : "claims.signer is not among advertised facilitator signers",
+      ? "claims.signer matches the public /.well-known/x402 receipt signer"
+      : "claims.signer does not match the advertised receipt signer",
     passed: signerAdvertised,
   });
 
-  const txOk = !settledTransaction || receipt.claims.settlement?.tx === settledTransaction;
+  const txOk = receipt.claims.settlement?.tx === settledTransaction;
   steps.push({
     label: "Settlement Transaction Binding",
     detail: txOk
@@ -107,15 +120,24 @@ export async function verifyReceipt(
     passed: txOk,
   });
 
-  const digestsWellFormed =
-    /^sha256:[0-9a-f]{64}$/.test(receipt.claims.requestDigest ?? "") &&
-    /^sha256:[0-9a-f]{64}$/.test(receipt.claims.resultDigest ?? "");
+  const expectedRequestDigest = await sha256Digest(originalRequest);
+  const requestDigestOk = receipt.claims.requestDigest === expectedRequestDigest;
   steps.push({
-    label: "SHA-256 Digest Integrity",
-    detail: digestsWellFormed
-      ? "requestDigest and resultDigest are both sha256:<64 hex>"
-      : "Invalid digest format detected",
-    passed: digestsWellFormed,
+    label: "Request SHA-256 Binding",
+    detail: requestDigestOk
+      ? "requestDigest recomputes from the exact submitted payment payload"
+      : "requestDigest does not match the submitted payment payload",
+    passed: requestDigestOk,
+  });
+
+  const expectedResultDigest = await sha256Digest(originalResult);
+  const resultDigestOk = receipt.claims.resultDigest === expectedResultDigest;
+  steps.push({
+    label: "Result SHA-256 Binding",
+    detail: resultDigestOk
+      ? "resultDigest recomputes from the settlement response without its receipt"
+      : "resultDigest does not match the settlement response",
+    passed: resultDigestOk,
   });
 
   return { verified: steps.every((s) => s.passed), canonical, steps };

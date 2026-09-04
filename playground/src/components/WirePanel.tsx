@@ -1,14 +1,47 @@
 "use client";
 
 import React, { useState } from "react";
-import { TransactionBuilder } from "@stellar/stellar-sdk";
+import { Address, TransactionBuilder } from "@stellar/stellar-sdk";
 import type { PlaygroundConfig, RunRecord } from "@/lib/types";
 import { CodeBlock } from "./CodeBlock";
-import { Search, Layers, FileCode, CheckCircle } from "lucide-react";
+import { Layers } from "lucide-react";
 
 interface WirePanelProps {
   config: PlaygroundConfig;
   run: RunRecord | null;
+}
+
+function countSubInvocations(invocation: any): number {
+  const children = invocation?.subInvocations?.() ?? [];
+  return children.reduce(
+    (total: number, child: any) => total + 1 + countSubInvocations(child),
+    0
+  );
+}
+
+function decodeOperation(op: any) {
+  const authEntries = op.auth ?? [];
+  let invocation: any;
+
+  try {
+    invocation = op.func?.invokeContract?.();
+  } catch {
+    invocation = undefined;
+  }
+
+  return {
+    type: op.type,
+    source: op.source,
+    contract: invocation
+      ? Address.fromScAddress(invocation.contractAddress()).toString()
+      : undefined,
+    function: invocation?.functionName?.()?.toString?.(),
+    authEntriesCount: authEntries.length,
+    subInvocations: authEntries.reduce(
+      (total: number, entry: any) => total + countSubInvocations(entry.rootInvocation?.()),
+      0
+    ),
+  };
 }
 
 function decodeEnvelope(envelope: string, networkPassphrase: string): unknown {
@@ -19,14 +52,7 @@ function decodeEnvelope(envelope: string, networkPassphrase: string): unknown {
       fee: tx.fee,
       source: tx.source,
       sequence: tx.sequence?.toString?.() || tx.sequence,
-      operations: (tx.operations || []).map((op: any) => ({
-        type: op.type,
-        source: op.source,
-        contract: op.func?.invokeContract?.()?.contractAddress?.()?.toString?.() || "Soroban Contract",
-        function: op.func?.invokeContract?.()?.functionName?.()?.toString?.() || "transfer",
-        authEntriesCount: op.auth?.length || 0,
-        subInvocations: 0,
-      })),
+      operations: (tx.operations || []).map(decodeOperation),
     };
   } catch (e: any) {
     return { rawEnvelope: envelope, decodeError: e.message };
@@ -38,11 +64,16 @@ export function WirePanel({ config, run }: WirePanelProps) {
 
   if (!run || !run.paymentPayload) {
     return (
-      <div className="glass-panel p-8 rounded-2xl text-center space-y-3">
-        <Layers className="w-8 h-8 text-sky-400 mx-auto opacity-75" />
-        <h3 className="font-bold text-base text-white">No Wire Traffic Captured Yet</h3>
-        <p className="text-xs text-slate-400 max-w-md mx-auto">
-          Execute a payment in the <strong>Payment Flow</strong> tab first. Every raw HTTP header, Soroban authorization entry, and Stellar envelope will be decoded and inspectable here.
+      <div className="glass-panel flex min-h-[420px] flex-col items-center justify-center space-y-4 rounded-[26px] p-8 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-purple-400/25 bg-purple-500/10 text-purple-200">
+          <Layers className="h-6 w-6" />
+        </div>
+        <div>
+          <p className="section-kicker mb-2">Awaiting capture</p>
+          <h3 className="text-lg font-extrabold tracking-tight text-white">No wire traffic yet</h3>
+        </div>
+        <p className="mx-auto max-w-md text-xs leading-relaxed text-zinc-500">
+          Run a payment first. The sandbox will decode its HTTP headers, Soroban authorization, and signed Stellar envelope here.
         </p>
       </div>
     );
@@ -59,49 +90,50 @@ export function WirePanel({ config, run }: WirePanelProps) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-extrabold text-white">Decoded Protocol Wire Traffic</h2>
-        <p className="text-xs text-slate-400">
-          Inspect the exact cryptographic envelopes, headers, and Soroban authorization entries exchanged on the wire
+        <p className="section-kicker mb-1.5">Protocol inspector</p>
+        <h2 className="text-xl font-extrabold tracking-tight text-white">Decoded wire traffic</h2>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          Inspect the cryptographic envelope, headers, and Soroban authorization exchanged on the wire.
         </p>
       </div>
 
-      <div className="flex items-center gap-2 border-b border-white/10 pb-3 overflow-x-auto">
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/[0.07] bg-black/35 p-1.5">
         <button
           onClick={() => setActiveSection("envelope")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+          className={`whitespace-nowrap rounded-xl border px-3.5 py-2.5 text-[11px] font-bold transition-colors ${
             activeSection === "envelope"
-              ? "bg-sky-500/20 text-sky-400 border border-sky-400/30"
-              : "text-slate-400 hover:text-white"
+              ? "border-white bg-white text-black"
+              : "border-transparent text-zinc-500 hover:bg-purple-500/[0.08] hover:text-purple-200"
           }`}
         >
           1. Signed Soroban Envelope
         </button>
         <button
           onClick={() => setActiveSection("challenge")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+          className={`whitespace-nowrap rounded-xl border px-3.5 py-2.5 text-[11px] font-bold transition-colors ${
             activeSection === "challenge"
-              ? "bg-sky-500/20 text-sky-400 border border-sky-400/30"
-              : "text-slate-400 hover:text-white"
+              ? "border-white bg-white text-black"
+              : "border-transparent text-zinc-500 hover:bg-purple-500/[0.08] hover:text-purple-200"
           }`}
         >
           2. HTTP 402 Challenge
         </button>
         <button
           onClick={() => setActiveSection("verify")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+          className={`whitespace-nowrap rounded-xl border px-3.5 py-2.5 text-[11px] font-bold transition-colors ${
             activeSection === "verify"
-              ? "bg-sky-500/20 text-sky-400 border border-sky-400/30"
-              : "text-slate-400 hover:text-white"
+              ? "border-white bg-white text-black"
+              : "border-transparent text-zinc-500 hover:bg-purple-500/[0.08] hover:text-purple-200"
           }`}
         >
           3. Pre-Flight /verify
         </button>
         <button
           onClick={() => setActiveSection("settle")}
-          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+          className={`whitespace-nowrap rounded-xl border px-3.5 py-2.5 text-[11px] font-bold transition-colors ${
             activeSection === "settle"
-              ? "bg-sky-500/20 text-sky-400 border border-sky-400/30"
-              : "text-slate-400 hover:text-white"
+              ? "border-white bg-white text-black"
+              : "border-transparent text-zinc-500 hover:bg-purple-500/[0.08] hover:text-purple-200"
           }`}
         >
           4. Settle & Receipt
@@ -110,8 +142,8 @@ export function WirePanel({ config, run }: WirePanelProps) {
 
       {activeSection === "envelope" && (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl bg-sky-500/5 border border-sky-400/20 text-xs text-sky-300">
-            <strong>Soroban Authorization Invariant:</strong> The client signs a single authorization entry for the specific SEP-41 token contract transfer. Notice <code className="inline">subInvocations: 0</code>, proving no hidden secondary authorizations exist.
+          <div className="rounded-2xl border border-purple-400/20 bg-purple-500/[0.06] p-4 text-xs leading-relaxed text-purple-200">
+            <strong className="text-white">Soroban authorization invariant:</strong> The client signs one authorization entry for the specified SEP-41 token transfer. Inspect <code className="inline">subInvocations: 0</code> to confirm that the captured entry has no nested authorization calls.
           </div>
           <CodeBlock code={decodedEnvelope} label="Decoded Transaction Envelope & Auth Entries" />
           <CodeBlock code={run.paymentPayload} label="Full PaymentPayload JSON" />
