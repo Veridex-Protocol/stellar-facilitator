@@ -191,7 +191,7 @@ services:
       # allowlisted for both the service name and the public URL.
       PLAYGROUND_ALLOWED_ORIGINS: "http://demo-server:3003,${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3004/api/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3004/api/config"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -210,7 +210,7 @@ services:
       BAZAAR_URL: http://bazaar:3001
       FACILITATOR_URL: http://facilitator:3002
       STELLAR_NETWORK: testnet
-      STELLAR_CLIENT_SECRET_KEY: ${STELLAR_CLIENT_SECRET_KEY:-}
+      STELLAR_CLIENT_SECRET_KEY: ${STELLAR_CLIENT_SECRET_KEY:-$BUYER_SECRET_KEY}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
     depends_on:
       - bazaar

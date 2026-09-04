@@ -175,7 +175,6 @@ app.get("/paid-resource", (c) => {
     message: "Payment settled on Stellar testnet. This JSON is the thing you bought.",
     servedAt: new Date().toISOString(),
   };
-  const response = c.json(body);
   const outcome = createProviderOutcome({
     resource: c.req.url,
     payTo,
@@ -190,8 +189,8 @@ app.get("/paid-resource", (c) => {
     callId: c.req.header("X-Request-Id") || undefined,
     signerSecretKey: providerOutcomeSecretKey,
   });
-  response.headers.set(PROVIDER_OUTCOME_HEADER, encodeProviderOutcome(outcome));
-  return response;
+  c.header(PROVIDER_OUTCOME_HEADER, encodeProviderOutcome(outcome));
+  return c.json(body);
 });
 
 serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });

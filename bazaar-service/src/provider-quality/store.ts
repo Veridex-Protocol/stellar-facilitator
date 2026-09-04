@@ -121,7 +121,7 @@ export class ProviderQualityStore {
   async getAggregate(resource: string, payTo?: string): Promise<ProviderAggregate | null> {
     const result = await this.db.query<ProviderAggregateRow>(
       `SELECT endpoint, pay_to, state, fault_rate_upper_bound,
-              faults_observed, observation_count, window, retrieved_at,
+              faults_observed, observation_count, aggregation_window, retrieved_at,
               issuer, signature
        FROM provider_quality_aggregates
        WHERE endpoint = $1 AND ($2::text IS NULL OR pay_to = $2)
@@ -138,7 +138,7 @@ export class ProviderQualityStore {
       faultRateUpperBound: Number(row.fault_rate_upper_bound),
       faultsObserved: Number(row.faults_observed),
       n: Number(row.observation_count),
-      window: row.window,
+      window: row.aggregation_window,
       retrievedAt: Math.floor(new Date(row.retrieved_at).getTime() / 1000),
       issuer: row.issuer,
       signature: row.signature,
@@ -149,7 +149,7 @@ export class ProviderQualityStore {
     await this.db.query(
       `INSERT INTO provider_quality_aggregates (
          endpoint, pay_to, state, fault_rate_upper_bound, faults_observed,
-         observation_count, window, retrieved_at, issuer, signature, aggregate
+         observation_count, aggregation_window, retrieved_at, issuer, signature, aggregate
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8), $9, $10, $11::jsonb)
       ON CONFLICT DO NOTHING`,
       [
@@ -198,7 +198,7 @@ interface ProviderAggregateRow extends QueryResultRow {
   fault_rate_upper_bound: number;
   faults_observed: number;
   observation_count: number;
-  window: string;
+  aggregation_window: string;
   retrieved_at: Date;
   issuer: string;
   signature: string;

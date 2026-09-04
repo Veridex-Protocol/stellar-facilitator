@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS provider_quality_aggregates (
     fault_rate_upper_bound DOUBLE PRECISION NOT NULL CHECK (fault_rate_upper_bound BETWEEN 0 AND 1),
     faults_observed BIGINT NOT NULL CHECK (faults_observed >= 0),
     observation_count BIGINT NOT NULL CHECK (observation_count >= faults_observed),
-    window TEXT NOT NULL,
+    aggregation_window TEXT NOT NULL,
     retrieved_at TIMESTAMPTZ NOT NULL,
     issuer TEXT NOT NULL,
     signature TEXT NOT NULL,

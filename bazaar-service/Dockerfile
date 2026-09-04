@@ -26,6 +26,7 @@ RUN npm ci --omit=dev
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/src/db/migrations ./dist/db/migrations
 
 # Expose ports
 EXPOSE 3001
@@ -36,5 +37,5 @@ EXPOSE 4002
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Run service
-CMD ["node", "dist/index.js"]
+# Apply idempotent migrations before serving traffic.
+CMD ["sh", "-c", "node dist/db/migrate.js && node dist/index.js"]
