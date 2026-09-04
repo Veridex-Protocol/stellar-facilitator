@@ -4,7 +4,7 @@ License: Apache-2.0
 """
 
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 
 @dataclass
@@ -48,3 +48,34 @@ class FacilitatorScheme:
     facilitator_account: str
     current_network: str
     features: List[str]
+
+
+@dataclass
+class ProviderAggregate:
+    """Signed provider-quality aggregate returned by the public read API."""
+    endpoint: str
+    state: str
+    fault_rate_upper_bound: float
+    faults_observed: int
+    n: int
+    window: str
+    retrieved_at: int
+    issuer: Optional[str] = None
+    signature: Optional[str] = None
+    pay_to: Optional[str] = None
+
+
+def provider_aggregate_from_dict(value: Dict[str, Any]) -> ProviderAggregate:
+    """Convert the camelCase aggregate wire object to Python fields."""
+    return ProviderAggregate(
+        endpoint=value.get("endpoint", ""),
+        state=value.get("state", "insufficient_data"),
+        fault_rate_upper_bound=value.get("faultRateUpperBound", 1.0),
+        faults_observed=value.get("faultsObserved", 0),
+        n=value.get("n", 0),
+        window=value.get("window", ""),
+        retrieved_at=value.get("retrievedAt", 0),
+        issuer=value.get("issuer"),
+        signature=value.get("signature"),
+        pay_to=value.get("payTo"),
+    )

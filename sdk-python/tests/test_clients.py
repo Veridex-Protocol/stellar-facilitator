@@ -85,6 +85,34 @@ class BazaarClientTests(unittest.TestCase):
         client = BazaarClient(bazaar_url=BAZAAR_URL + "/")
         self.assertFalse(client.bazaar_url.endswith("/"))
 
+    def test_provider_quality_reads_signed_aggregate(self):
+        with mock.patch.object(self.client.session, "get") as get:
+            get.return_value = _response({
+                "endpoint": "https://provider.example/fx",
+                "state": "provisional",
+                "faultRateUpperBound": 0.12,
+                "faultsObserved": 2,
+                "n": 20,
+                "window": "30d",
+                "retrievedAt": 1700000000,
+                "issuer": "GISSUER",
+                "signature": "sig",
+            })
+            aggregate = self.client.provider_quality("https://provider.example/fx")
+
+        self.assertEqual(urlparse(get.call_args[0][0]).path, "/v1/provider")
+        self.assertEqual(aggregate.state, "provisional")
+        self.assertEqual(aggregate.n, 20)
+
+    def test_provider_observations_preserve_wire_payload(self):
+        with mock.patch.object(self.client.session, "get") as get:
+            get.return_value = _response({"endpoint": "https://provider.example/fx", "observations": []})
+            result = self.client.provider_observations("https://provider.example/fx", limit=5)
+
+        self.assertEqual(urlparse(get.call_args[0][0]).path, "/v1/provider/observations")
+        self.assertEqual(get.call_args.kwargs["params"]["limit"], 5)
+        self.assertEqual(result["observations"], [])
+
 
 class FacilitatorClientTests(unittest.TestCase):
     def setUp(self):

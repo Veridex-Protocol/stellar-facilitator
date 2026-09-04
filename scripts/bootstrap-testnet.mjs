@@ -225,6 +225,9 @@ PAYMENT_AMOUNT=100000
 # ── Bazaar ───────────────────────────────────────────────────────────────────
 BAZAAR_URL=http://localhost:3001
 BAZAAR_INTERNAL_TOKEN=${randomBytes(24).toString("hex")}
+PROVIDER_AGGREGATE_ISSUER_SECRET_KEY=${accounts.facilitator.secret}
+PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS=${accounts.facilitator.public}
+PROVIDER_QUALITY_AUTHORIZED_SIGNERS=${accounts.seller.public}
 DATABASE_HOST=localhost
 DATABASE_PORT=5432
 DATABASE_NAME=veridex_bazaar

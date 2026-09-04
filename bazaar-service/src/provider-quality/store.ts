@@ -85,6 +85,20 @@ export class ProviderQualityStore {
     return result.rows.map(mapObservation);
   }
 
+  async attachSettlement(
+    signer: string,
+    signature: string,
+    settlementTx: string,
+  ): Promise<boolean> {
+    const result = await this.db.query(
+      `UPDATE provider_observations
+       SET settlement_tx = COALESCE(settlement_tx, $3)
+       WHERE signer = $1 AND signature = $2`,
+      [signer, signature, settlementTx],
+    );
+    return result.rowCount === 1;
+  }
+
   async listObservationsForAggregate(
     resource: string,
     payTo?: string,

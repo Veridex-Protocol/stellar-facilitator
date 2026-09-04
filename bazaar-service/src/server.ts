@@ -65,6 +65,8 @@ export interface BazaarServiceConfig {
   providerAggregateIssuerSecretKey?: string;
   providerAggregatePublishedThreshold: number;
   providerAggregateProvisionalThreshold: number;
+  providerQualityAuthorizedSigners?: string[];
+  providerAggregateAuthorizedIssuers?: string[];
 }
 
 /**
@@ -102,6 +104,8 @@ export function getDefaultConfig(): BazaarServiceConfig {
     providerAggregateIssuerSecretKey: process.env.PROVIDER_AGGREGATE_ISSUER_SECRET_KEY,
     providerAggregatePublishedThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PUBLISHED_THRESHOLD || "100", 10),
     providerAggregateProvisionalThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PROVISIONAL_THRESHOLD || "20", 10),
+    providerQualityAuthorizedSigners: parseCsv(process.env.PROVIDER_QUALITY_AUTHORIZED_SIGNERS),
+    providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
     // Required, not optional. The previous guard read
     // `if (internalToken && ...)`, which skipped authentication entirely when
@@ -140,6 +144,12 @@ function parseAuthorizationMap(value?: string): Record<string, string[]> | undef
     }
     return [key, signers];
   }));
+}
+
+function parseCsv(value?: string): string[] | undefined {
+  if (!value) return undefined;
+  const values = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return values.length > 0 ? values : undefined;
 }
 
 /**
@@ -422,6 +432,15 @@ export class BazaarService {
       try {
         const aggregate = await this.providerQualityStore.getAggregate(endpoint, payTo);
         if (!aggregate) return c.json({ state: "insufficient_data", endpoint, ...(payTo ? { payTo } : {}) }, 200);
+        const verification = verifyProviderAggregate(aggregate, {
+          expectedEndpoint: endpoint,
+          expectedPayTo: payTo,
+          authorizedIssuers: this.config.providerAggregateAuthorizedIssuers,
+          maxAgeSeconds: 30 * 24 * 60 * 60,
+        });
+        if (!verification.valid) {
+          return c.json({ error: "provider_quality_unavailable", message: verification.error }, 503);
+        }
         return c.json(aggregate);
       } catch (error) {
         console.error("[Bazaar Service] Provider aggregate read error:", error);
@@ -589,6 +608,7 @@ export class BazaarService {
         const verification = verifyProviderObservation(observation, {
           expectedResource: observation.resource,
           expectedPayTo: observation.payTo,
+          authorizedSigners: this.config.providerQualityAuthorizedSigners,
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {
@@ -615,6 +635,7 @@ export class BazaarService {
         const verification = verifyProviderAggregate(aggregate, {
           expectedEndpoint: aggregate.endpoint,
           expectedPayTo: aggregate.payTo,
+          authorizedIssuers: this.config.providerAggregateAuthorizedIssuers,
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {
@@ -625,6 +646,35 @@ export class BazaarService {
       } catch (error) {
         return c.json({
           error: "invalid_provider_aggregate",
+          message: error instanceof Error ? error.message : String(error),
+        }, 400);
+      }
+    });
+
+    this.app.post("/provider-quality/observations/settlement", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const body = await c.req.json();
+        if (
+          typeof body?.signer !== "string" ||
+          typeof body?.signature !== "string" ||
+          !/^[0-9a-f]{64}$/i.test(body?.settlementTx || "")
+        ) {
+          return c.json({ error: "invalid_settlement_correlation" }, 400);
+        }
+        const attached = await this.providerQualityStore.attachSettlement(
+          body.signer,
+          body.signature,
+          body.settlementTx,
+        );
+        return attached
+          ? c.json({ status: "attached" }, 202)
+          : c.json({ error: "provider_observation_not_found" }, 404);
+      } catch (error) {
+        return c.json({
+          error: "settlement_correlation_failed",
           message: error instanceof Error ? error.message : String(error),
         }, 400);
       }

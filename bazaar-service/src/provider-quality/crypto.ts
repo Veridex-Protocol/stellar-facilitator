@@ -20,6 +20,8 @@ export interface ProviderQualityVerificationOptions {
   expectedEndpoint?: string;
   expectedPayTo?: string;
   expectedIssuer?: string;
+  authorizedSigners?: string[];
+  authorizedIssuers?: string[];
 }
 
 export interface ProviderQualityVerification {
@@ -77,6 +79,9 @@ export function verifyProviderObservation(
   if (options.expectedPayTo && observation.payTo !== options.expectedPayTo) {
     return { valid: false, error: "provider observation payTo does not match" };
   }
+  if (options.authorizedSigners && !options.authorizedSigners.includes(observation.signer)) {
+    return { valid: false, error: "provider observation signer is not authorized" };
+  }
   if (!StrKey.isValidEd25519PublicKey(observation.signer)) {
     return { valid: false, error: "provider observation signer is not a Stellar public key" };
   }
@@ -85,6 +90,9 @@ export function verifyProviderObservation(
   }
   if (StrKey.isValidEd25519PublicKey(observation.payTo) && observation.signer !== observation.payTo) {
     return { valid: false, error: "provider observation signer is not the payTo owner" };
+  }
+  if (StrKey.isValidContract(observation.payTo) && !options.authorizedSigners?.includes(observation.signer)) {
+    return { valid: false, error: "contract payTo requires an authorized observation signer" };
   }
 
   const unsigned = observationWithoutSignature(observation);
@@ -116,6 +124,9 @@ export function verifyProviderAggregate(
     return { valid: false, error: "provider aggregate payTo does not match" };
   }
   if (options.expectedIssuer && aggregate.issuer !== options.expectedIssuer) {
+    return { valid: false, error: "provider aggregate issuer is not authorized" };
+  }
+  if (options.authorizedIssuers && !options.authorizedIssuers.includes(aggregate.issuer)) {
     return { valid: false, error: "provider aggregate issuer is not authorized" };
   }
   if (!StrKey.isValidEd25519PublicKey(aggregate.issuer)) {
