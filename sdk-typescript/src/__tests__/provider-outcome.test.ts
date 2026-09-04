@@ -6,6 +6,13 @@ import {
   createProviderOutcome,
   verifyProviderOutcome,
 } from "../provider-outcome.js";
+import {
+  ProviderAggregateClient,
+  SellerPolicyEngine,
+  createProviderAggregate,
+  verifyProviderAggregate,
+  wilsonUpperBound,
+} from "../provider-quality.js";
 import { executeResponseAware } from "../response-aware.js";
 
 const resource = "https://provider.example/fx";
@@ -25,6 +32,7 @@ function outcome(overrides: Record<string, unknown> = {}) {
       providerAtFault: false,
       attributable: "unknown",
       reasonCode: "ok",
+      usageAtomic: "0",
       callId: "call-1",
       ...overrides,
     },
@@ -125,5 +133,61 @@ describe("response-aware settlement", () => {
 
     expect(result.settled).toBe(false);
     expect(settlements).toBe(0);
+  });
+});
+
+describe("signed provider aggregates and seller policy", () => {
+  it("signs and verifies aggregates with a configurable evidence state", () => {
+    const aggregate = createProviderAggregate({
+      endpoint: resource,
+      payTo: payTo.publicKey(),
+      state: "provisional",
+      faultRateUpperBound: wilsonUpperBound(5, 34),
+      faultsObserved: 5,
+      n: 34,
+      window: "30d",
+      retrievedAt: 1_700_000_000,
+    }, payTo.secret());
+
+    expect(verifyProviderAggregate(aggregate, {
+      expectedEndpoint: resource,
+      expectedPayTo: payTo.publicKey(),
+      nowSeconds: 1_700_000_100,
+    })).toEqual({ valid: true });
+    expect(verifyProviderAggregate({ ...aggregate, endpoint: "https://other.example" }, {
+      expectedEndpoint: resource,
+      nowSeconds: 1_700_000_100,
+    }).valid).toBe(false);
+  });
+
+  it("keeps indexer outages out of the payment decision path", async () => {
+    const client = new ProviderAggregateClient({
+      indexerUrl: "https://indexer.example",
+      fetchImpl: (async () => { throw new Error("offline"); }) as typeof fetch,
+    });
+    const lookup = await client.get(resource, payTo.publicKey());
+    expect(lookup.status).toBe("unavailable");
+
+    const decision = new SellerPolicyEngine().evaluate(resource, lookup);
+    expect(decision.action).toBe("sell");
+    expect(decision.warning).toContain("offline");
+  });
+
+  it("holds a published aggregate above the configured policy ceiling", () => {
+    const decision = new SellerPolicyEngine({ maxFaultRateUpperBound: 0.15 }).evaluate(resource, {
+      status: "fresh",
+      stale: false,
+      aggregate: createProviderAggregate({
+        endpoint: resource,
+        payTo: payTo.publicKey(),
+        state: "published",
+        faultRateUpperBound: 0.2,
+        faultsObserved: 20,
+        n: 100,
+        window: "30d",
+        retrievedAt: 1_700_000_000,
+      }, payTo.secret()),
+    });
+    expect(decision.action).toBe("stop");
   });
 });

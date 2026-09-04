@@ -6,7 +6,6 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import {
   canonicalizeJson,
-  type ProviderAttribution,
   type ProviderOutcome,
 } from "./provider-outcome.js";
 
@@ -51,6 +50,8 @@ export interface AggregateLookup {
 }
 
 export interface ProviderAggregateClientOptions {
+  /** HTTPS base URL of the indexer exposing GET /v1/provider. */
+  indexerUrl: string;
   maxAgeSeconds?: number;
   cacheTtlMs?: number;
   maxStaleMs?: number;
@@ -174,8 +175,10 @@ export class ProviderAggregateClient {
   private readonly options: Required<ProviderAggregateClientOptions>;
   private readonly cache = new Map<string, AggregateCacheEntry>();
 
-  constructor(options: ProviderAggregateClientOptions = {}) {
+  constructor(options: ProviderAggregateClientOptions) {
+    if (!options.indexerUrl) throw new Error("indexerUrl is required for provider aggregate retrieval");
     this.options = {
+      indexerUrl: options.indexerUrl.replace(/\/+$/, ""),
       maxAgeSeconds: options.maxAgeSeconds ?? 3600,
       cacheTtlMs: options.cacheTtlMs ?? 60_000,
       maxStaleMs: options.maxStaleMs ?? 15 * 60_000,
@@ -187,7 +190,7 @@ export class ProviderAggregateClient {
   }
 
   async get(endpoint: string, payTo?: string): Promise<AggregateLookup> {
-    const url = new URL("/v1/provider", endpoint);
+    const url = new URL("/v1/provider", this.options.indexerUrl);
     url.searchParams.set("endpoint", endpoint);
     if (payTo) url.searchParams.set("payTo", payTo);
     const key = `${endpoint}|${payTo || ""}`;

@@ -82,4 +82,6 @@ function serialize(value: unknown, seen: WeakSet<object>): string {
       }
     }
   }
+
+  throw new TypeError("Cannot canonicalize unsupported value");
 }

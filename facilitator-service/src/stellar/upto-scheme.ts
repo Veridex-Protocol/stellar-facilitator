@@ -188,6 +188,15 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       // 3. Determine actual amount and result digest
       // Actual charged amount defaults to requirements.amount or payload settlement metadata
       const actualAmount = BigInt(requirements.amount);
+      if (actualAmount < 0n) {
+        return {
+          success: false,
+          network: payload.accepted.network,
+          transaction: "",
+          errorReason: "invalid_upto_actual_amount",
+          payer,
+        };
+      }
       if (actualAmount > parsedTerms.maxAmount) {
         return {
           success: false,
@@ -198,7 +207,16 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
         };
       }
 
-      const resultDigest = parsedTerms.requestDigest; // Use request digest or computed output digest
+      const resultDigest = this.readResultDigest(payload, parsedTerms);
+      if (!resultDigest) {
+        return {
+          success: false,
+          network: payload.accepted.network,
+          transaction: "",
+          errorReason: "settle_upto_missing_result_digest",
+          payer,
+        };
+      }
 
       // 4. Build contract invocation args
       const termsVal = struct({
@@ -540,7 +558,11 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
         };
       }
 
-      const expectedAmount = BigInt(requirements.amount);
+      // During response-aware settlement, x402 may pass an effective amount
+      // override in `requirements.amount`. The payer's signed ceiling remains
+      // the amount in `payload.accepted`; compare the parsed terms to that
+      // original authorization, not the metered charge.
+      const expectedAmount = BigInt(payload.accepted.amount);
       if (parsedTerms.maxAmount !== expectedAmount) {
         return {
           response: {
@@ -720,5 +742,17 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       }
     }
     return { success: false };
+  }
+
+  private readResultDigest(
+    payload: PaymentPayload,
+    parsedTerms: ParsedUptoTerms,
+  ): Buffer | undefined {
+    const encoded = (payload.payload as { resultDigest?: unknown }).resultDigest;
+    if (typeof encoded !== "string" || !/^sha256:[0-9a-f]{64}$/i.test(encoded)) {
+      return undefined;
+    }
+    const digest = Buffer.from(encoded.slice("sha256:".length), "hex");
+    return digest.length === 32 ? digest : parsedTerms.requestDigest;
   }
 }

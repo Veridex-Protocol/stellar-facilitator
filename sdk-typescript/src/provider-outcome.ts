@@ -4,7 +4,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
 
 export const PROVIDER_OUTCOME_VERSION = "veridex/provider-outcome/1" as const;
 export const PROVIDER_OUTCOME_HEADER = "X-Veridex-Provider-Outcome";
@@ -22,6 +22,9 @@ export interface ProviderOutcomeUnsigned {
   providerAtFault: boolean;
   attributable: ProviderAttribution;
   reasonCode: string;
+  /** Atomic units used by a metered resource. Required for `upto` settlement. */
+  usageAtomic?: string;
+  responseStatus?: number;
   toolName?: string;
   route?: string;
   callId?: string;
@@ -76,6 +79,9 @@ export function encodeProviderOutcomeHeader(outcome: ProviderOutcome): string {
 export function decodeProviderOutcomeHeader(value: string): ProviderOutcome {
   let parsed: unknown;
   try {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 === 1) {
+      throw new Error("invalid base64");
+    }
     parsed = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
   } catch {
     throw new Error("provider outcome header is not valid base64 JSON");
@@ -93,7 +99,21 @@ export function createProviderOutcome(
   const keypair = Keypair.fromSecret(signerSecretKey);
   const unsigned: ProviderOutcomeUnsigned = {
     v: PROVIDER_OUTCOME_VERSION,
-    ...outcome,
+    resource: outcome.resource,
+    payTo: outcome.payTo,
+    requestDigest: outcome.requestDigest,
+    responseDigest: outcome.responseDigest,
+    observedAt: outcome.observedAt,
+    usable: outcome.usable,
+    providerAtFault: outcome.providerAtFault,
+    attributable: outcome.attributable,
+    reasonCode: outcome.reasonCode,
+    ...(outcome.usageAtomic !== undefined && { usageAtomic: outcome.usageAtomic }),
+    ...(outcome.responseStatus !== undefined && { responseStatus: outcome.responseStatus }),
+    ...(outcome.toolName !== undefined && { toolName: outcome.toolName }),
+    ...(outcome.route !== undefined && { route: outcome.route }),
+    ...(outcome.callId !== undefined && { callId: outcome.callId }),
+    ...(outcome.settlementTx !== undefined && { settlementTx: outcome.settlementTx }),
   };
   const validation = validateUnsignedOutcome(unsigned);
   if (!validation.valid) {
@@ -122,6 +142,8 @@ export function verifyProviderOutcome(
     providerAtFault: outcome.providerAtFault,
     attributable: outcome.attributable,
     reasonCode: outcome.reasonCode,
+    ...(outcome.usageAtomic !== undefined && { usageAtomic: outcome.usageAtomic }),
+    ...(outcome.responseStatus !== undefined && { responseStatus: outcome.responseStatus }),
     ...(outcome.toolName !== undefined && { toolName: outcome.toolName }),
     ...(outcome.route !== undefined && { route: outcome.route }),
     ...(outcome.callId !== undefined && { callId: outcome.callId }),
@@ -146,7 +168,7 @@ export function verifyProviderOutcome(
   let keypair: Keypair;
   try {
     keypair = Keypair.fromPublicKey(outcome.signer);
-    if (Keypair.fromPublicKey(outcome.payTo).publicKey() !== outcome.payTo) {
+    if (!StrKey.isValidEd25519PublicKey(outcome.payTo) && !StrKey.isValidContract(outcome.payTo)) {
       return { valid: false, error: "provider outcome payTo is not a valid Stellar public key" };
     }
   } catch {
@@ -155,6 +177,9 @@ export function verifyProviderOutcome(
 
   let signature: Buffer;
   try {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(outcome.signature) || outcome.signature.length % 4 === 1) {
+      throw new Error("invalid base64");
+    }
     signature = Buffer.from(outcome.signature, "base64");
   } catch {
     return { valid: false, error: "provider outcome signature is not base64" };
@@ -210,6 +235,12 @@ function validateUnsignedOutcome(outcome: ProviderOutcomeUnsigned): ProviderOutc
   }
   if (!/^[a-z][a-z0-9_.-]{1,63}$/.test(outcome.reasonCode)) {
     return { valid: false, error: "provider outcome reasonCode is invalid" };
+  }
+  if (outcome.usageAtomic !== undefined && !/^(0|[1-9][0-9]*)$/.test(outcome.usageAtomic)) {
+    return { valid: false, error: "provider outcome usageAtomic must be a non-negative integer string" };
+  }
+  if (outcome.responseStatus !== undefined && (!Number.isInteger(outcome.responseStatus) || outcome.responseStatus < 100 || outcome.responseStatus > 599)) {
+    return { valid: false, error: "provider outcome responseStatus is invalid" };
   }
   for (const [name, value] of Object.entries({
     toolName: outcome.toolName,

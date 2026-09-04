@@ -27,6 +27,7 @@ export * from "./search/index.js";
 
 // Catalog
 export * from "./catalog/index.js";
+export * from "./provider-quality/index.js";
 
 /**
  * CLI entry point for running the service
