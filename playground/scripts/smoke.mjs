@@ -84,8 +84,8 @@ for (const hostile of [
   "http://evil.example.com/",
 ]) {
   const { status, payload } = await seller(hostile);
-  if (status === 403 && payload.error === "origin_not_allowed") pass(`refused ${hostile}`);
-  else fail(`${hostile} returned ${status} ${payload.error ?? ""} - the proxy is reachable`);
+  if (status === 403 && payload.error === "target_forbidden") pass(`refused ${hostile}`);
+  else fail(`${hostile} returned ${status} ${payload.error ?? ""} - expected target_forbidden`);
 }
 
 // ── 2. a brand-new wallet completes a payment ────────────────────────────────

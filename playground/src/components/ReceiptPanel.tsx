@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import { CheckCircle2, XCircle, ShieldCheck, ShieldAlert, Zap, RotateCcw } from "lucide-react";
+import { CheckCircle2, XCircle, ShieldCheck, ShieldAlert } from "lucide-react";
 import type { PlaygroundConfig, ClientWallet, RunRecord } from "@/lib/types";
-import { directSettle } from "@/lib/x402";
+import { directSettle, getFacilitatorDescriptor } from "@/lib/x402";
 import { verifyReceipt, tamper, type Receipt, type VerificationResult } from "@/lib/verify";
 import { CodeBlock } from "./CodeBlock";
 
@@ -33,24 +33,30 @@ export function ReceiptPanel({ config, wallet, run }: ReceiptPanelProps) {
     setTamperResult(null);
 
     try {
-      const { settleResponse } = await directSettle(
+      const { paymentPayload, settleResponse } = await directSettle(
         config,
         wallet,
         run.paymentRequirements
       );
 
-      const r = settleResponse.receipt;
+      const { receipt: r, ...settlementResult } = settleResponse;
       if (!r) throw new Error("Facilitator did not include an x402job/1 receipt in the response body.");
 
       setReceipt(r);
 
-      // Verify receipt against advertised signers
-      const supRes = await fetch(`${config.facilitatorUrl}/supported`);
-      const supBody = await supRes.json();
-      const advertisedSigners: string[] = supBody.kinds?.map((k: any) => k.extra?.signer || k.extra?.contractId || "").filter(Boolean) || [];
-      advertisedSigners.push(r.claims.signer); // include current for validation
+      const descriptor = await getFacilitatorDescriptor(config);
+      const receiptSigner = descriptor.receipts?.signer;
+      if (typeof receiptSigner !== "string") {
+        throw new Error("Facilitator descriptor did not advertise a receipt signer.");
+      }
 
-      const result = await verifyReceipt(r, advertisedSigners, settleResponse.transaction);
+      const result = await verifyReceipt(
+        r,
+        [receiptSigner],
+        settleResponse.transaction,
+        paymentPayload,
+        settlementResult
+      );
       setVerification(result);
     } catch (e: any) {
       setErrorMsg(e.message || "Failed to obtain signed receipt");
@@ -75,60 +81,73 @@ export function ReceiptPanel({ config, wallet, run }: ReceiptPanelProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-extrabold text-white">
-            x402job/1 Receipt Verification & Forgery Probe
+          <p className="section-kicker mb-1.5">Integrity laboratory</p>
+          <h2 className="text-xl font-extrabold tracking-tight text-white">
+            Receipt verification
           </h2>
-          <p className="text-xs text-slate-400">
-            Recomputes RFC 8785 canonical JSON digests and verifies Ed25519 signatures in-browser
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Recompute canonical JSON digests, inspect claims, and probe Ed25519 signature integrity in-browser.
           </p>
         </div>
 
         <button
           onClick={fetchDirectReceipt}
           disabled={isSettling}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-bold text-xs shadow-md transition-all disabled:opacity-50"
+          className="primary-action inline-flex min-w-[198px] items-center justify-center rounded-xl px-4 py-3 text-[11px] font-extrabold"
         >
-          {isSettling ? "Settling & Fetching Receipt..." : "Obtain & Verify Live Receipt"}
+          {isSettling ? "Settling transaction…" : "Obtain live receipt"}
         </button>
       </div>
 
       {errorMsg && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+        <div className="rounded-2xl border border-rose-500/25 bg-rose-500/[0.07] p-4 text-xs text-rose-200">
           {errorMsg}
+        </div>
+      )}
+
+      {!receipt && !errorMsg && (
+        <div className="glass-panel flex min-h-[340px] flex-col items-center justify-center rounded-[26px] p-8 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-purple-400/25 bg-purple-500/10 text-purple-200">
+            <ShieldCheck className="h-6 w-6" />
+          </div>
+          <p className="section-kicker mb-2">Ready to inspect</p>
+          <h3 className="text-lg font-extrabold tracking-tight text-white">Settle and verify a receipt</h3>
+          <p className="mt-2 max-w-md text-xs leading-relaxed text-zinc-500">
+            Run a payment first, then obtain a live receipt to inspect its signed claims and local integrity checks.
+          </p>
         </div>
       )}
 
       {receipt && verification && (
         <div className="space-y-6">
-          {/* Verification Status Card */}
           <div
-            className={`glass-panel p-6 rounded-2xl border ${
-              verification.verified ? "border-emerald-500/40" : "border-rose-500/40"
+            className={`glass-panel rounded-[26px] border p-5 sm:p-6 ${
+              verification.verified ? "border-emerald-500/25" : "border-rose-500/30"
             }`}
           >
-            <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-white/10">
-              {verification.verified ? (
-                <>
-                  <ShieldCheck className="w-6 h-6 text-emerald-400" />
-                  <h3 className="font-bold text-base text-white">
-                    Cryptographic Receipt Verified (6 / 6 Checks Passed)
-                  </h3>
-                </>
-              ) : (
-                <>
-                  <ShieldAlert className="w-6 h-6 text-rose-400" />
-                  <h3 className="font-bold text-base text-white">Receipt Verification Failed</h3>
-                </>
-              )}
+            <div className="mb-5 flex items-center gap-3 border-b border-white/[0.07] pb-4">
+              <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${verification.verified ? "border-emerald-500/25 bg-emerald-500/[0.08]" : "border-rose-500/25 bg-rose-500/[0.08]"}`}>
+                {verification.verified ? (
+                  <ShieldCheck className="h-5 w-5 text-emerald-300" />
+                ) : (
+                  <ShieldAlert className="h-5 w-5 text-rose-300" />
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600">Verification result</p>
+                <h3 className="mt-0.5 text-sm font-extrabold text-white">
+                  {verification.verified ? "All local integrity checks passed" : "Receipt verification failed"}
+                </h3>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+            <div className="mb-5 grid grid-cols-1 gap-2.5 md:grid-cols-2">
               {verification.steps.map((step, idx) => (
                 <div
                   key={idx}
-                  className="p-3 rounded-lg bg-black/40 border border-white/5 flex items-start gap-2.5 text-xs"
+                  className="flex items-start gap-2.5 rounded-xl border border-white/[0.06] bg-black/40 p-3.5 text-xs"
                 >
                   {step.passed ? (
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
@@ -136,8 +155,8 @@ export function ReceiptPanel({ config, wallet, run }: ReceiptPanelProps) {
                     <XCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
                   )}
                   <div>
-                    <strong className="block text-slate-200">{step.label}</strong>
-                    <span className="text-slate-400 text-[11px] font-mono">{step.detail}</span>
+                    <strong className="block text-zinc-200">{step.label}</strong>
+                    <span className="font-mono text-[10px] leading-relaxed text-zinc-500">{step.detail}</span>
                   </div>
                 </div>
               ))}
@@ -146,45 +165,44 @@ export function ReceiptPanel({ config, wallet, run }: ReceiptPanelProps) {
             <CodeBlock code={receipt} label="Original Signed x402job/1 Receipt" />
           </div>
 
-          {/* Interactive Forgery & Tamper Controls */}
-          <div className="glass-panel p-6 rounded-2xl border-amber-500/30">
-            <div className="flex items-center gap-2 mb-2">
-              <ShieldAlert className="w-5 h-5 text-amber-400" />
-              <h3 className="font-bold text-base text-white">
-                Interactive Receipt Tamper & Forgery Sandbox
+          <div className="glass-panel rounded-[26px] border-amber-500/20 p-5 sm:p-6">
+            <div className="mb-2 flex items-center gap-2.5">
+              <ShieldAlert className="h-5 w-5 text-amber-300" />
+              <h3 className="text-sm font-extrabold text-white">
+                Tamper probe
               </h3>
             </div>
-            <p className="text-xs text-slate-400 mb-4">
-              Attempt to forge a claim by altering settlement amounts or recipient addresses. Notice that the Ed25519 signature immediately fails verification:
+            <p className="mb-5 max-w-2xl text-xs leading-relaxed text-zinc-500">
+              Alter a signed claim locally and compare it against the original signature.
             </p>
 
-            <div className="flex items-center gap-2 flex-wrap mb-4">
+            <div className="mb-5 flex flex-wrap items-center gap-2">
               <button
                 onClick={() => handleTamper("amount")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold border transition-colors ${
+                className={`rounded-xl border px-3.5 py-2.5 font-mono text-[10px] font-bold transition-colors ${
                   tamperField === "amount"
-                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                    : "bg-white/5 hover:bg-white/10 text-slate-300 border-white/10"
+                    ? "border-amber-500/35 bg-amber-500/15 text-amber-200"
+                    : "border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:border-purple-400/25 hover:text-white"
                 }`}
               >
                 Tamper Amount (+1,000,000)
               </button>
               <button
                 onClick={() => handleTamper("payer")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold border transition-colors ${
+                className={`rounded-xl border px-3.5 py-2.5 font-mono text-[10px] font-bold transition-colors ${
                   tamperField === "payer"
-                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                    : "bg-white/5 hover:bg-white/10 text-slate-300 border-white/10"
+                    ? "border-amber-500/35 bg-amber-500/15 text-amber-200"
+                    : "border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:border-purple-400/25 hover:text-white"
                 }`}
               >
                 Tamper Payer Address
               </button>
               <button
                 onClick={() => handleTamper("tx")}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold border transition-colors ${
+                className={`rounded-xl border px-3.5 py-2.5 font-mono text-[10px] font-bold transition-colors ${
                   tamperField === "tx"
-                    ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                    : "bg-white/5 hover:bg-white/10 text-slate-300 border-white/10"
+                    ? "border-amber-500/35 bg-amber-500/15 text-amber-200"
+                    : "border-white/[0.08] bg-white/[0.03] text-zinc-400 hover:border-purple-400/25 hover:text-white"
                 }`}
               >
                 Tamper Tx Hash
@@ -192,15 +210,15 @@ export function ReceiptPanel({ config, wallet, run }: ReceiptPanelProps) {
             </div>
 
             {tamperResult && (
-              <div className="p-4 rounded-xl bg-black/50 border border-rose-500/40 space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-rose-400">
-                  <XCircle className="w-4 h-4" />
+              <div className="space-y-3 rounded-2xl border border-rose-500/25 bg-rose-500/[0.04] p-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-rose-300">
+                  <XCircle className="h-4 w-4" />
                   <span>
-                    Signature Broken! (stillVerifies: {String(tamperResult.stillVerifies)})
+                    Altered payload rejected · still verifies: {String(tamperResult.stillVerifies)}
                   </span>
                 </div>
-                <p className="text-xs text-slate-300">
-                  Rewriting <code className="inline">{tamperField}</code> produced a new RFC 8785 canonical string whose SHA-256 hash does not match the facilitator's Ed25519 signature.
+                <p className="text-xs leading-relaxed text-zinc-400">
+                  Changing <code className="inline">{tamperField}</code> produces different canonical claim bytes that no longer match the original Ed25519 signature.
                 </p>
                 <CodeBlock code={tamperResult.forged} label="Altered (Forged) Receipt Payload" />
               </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, ExternalLink, RefreshCw, BarChart3 } from "lucide-react";
+import { FileCheck2, RefreshCw } from "lucide-react";
 import type { PlaygroundConfig } from "@/lib/types";
 import { CodeBlock } from "./CodeBlock";
 
@@ -35,51 +35,71 @@ export function EvidencePanel({ config }: EvidencePanelProps) {
     loadConformanceReport();
   }, []);
 
+  const passed = Number(reportData?.passed ?? 0);
+  const failed = Number(reportData?.failed ?? 0);
+  const total = passed + failed;
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-extrabold text-white">CI Conformance Test Evidence</h2>
-          <p className="text-xs text-slate-400">
-            Verbatim test run output from the independent wire conformance harness
+          <p className="section-kicker mb-1.5">Run artifact</p>
+          <h2 className="text-xl font-extrabold tracking-tight text-white">Conformance evidence</h2>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Inspect the latest conformance report available to this playground instance.
           </p>
         </div>
 
         <button
           onClick={loadConformanceReport}
           disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-mono border border-white/10 transition-colors"
+          className="secondary-action inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 font-mono text-[10px]"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          <span>Reload Report</span>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          <span>{loading ? "Loading…" : "Reload report"}</span>
         </button>
       </div>
 
       {errorMsg && (
-        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300">
-          <strong>Notice:</strong> {errorMsg}
-          <p className="mt-1 text-slate-400">
-            Run <code className="inline">npm run conformance</code> in your terminal to generate a fresh report artifact.
+        <div className="glass-panel flex min-h-[340px] flex-col items-center justify-center rounded-[26px] border-amber-500/20 p-8 text-center">
+          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-500/[0.07] text-amber-200">
+            <FileCheck2 className="h-6 w-6" />
+          </div>
+          <p className="section-kicker mb-2">Artifact unavailable</p>
+          <h3 className="text-sm font-extrabold text-white">{errorMsg}</h3>
+          <p className="mt-2 max-w-md text-xs leading-relaxed text-zinc-500">
+            Run <code className="inline">npm run conformance</code> at the repository root, then reload this view.
           </p>
+        </div>
+      )}
+
+      {loading && !reportData && (
+        <div className="glass-panel flex min-h-[340px] items-center justify-center rounded-[26px]">
+          <div className="text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-400/20 bg-purple-500/[0.07] text-purple-200">
+              <RefreshCw className="h-5 w-5 animate-spin" />
+            </div>
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">Loading run artifact</p>
+          </div>
         </div>
       )}
 
       {reportData && (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="glass-card p-4 rounded-xl">
-              <span className="text-slate-500 block text-[11px] font-mono">TOTAL TESTS</span>
-              <span className="text-2xl font-extrabold text-white">
-                {reportData.summary?.total || reportData.tests?.length || 36}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="glass-card rounded-[20px] p-5">
+              <span className="block font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-600">Total checks</span>
+              <span className="mt-2 block text-2xl font-black text-white">{total}</span>
+            </div>
+            <div className="glass-card rounded-[20px] p-5">
+              <span className="block font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-600">Result</span>
+              <span className={`mt-2 block text-2xl font-black ${failed === 0 && total > 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                {passed} passed · {failed} failed
               </span>
             </div>
-            <div className="glass-card p-4 rounded-xl">
-              <span className="text-slate-500 block text-[11px] font-mono">STATUS</span>
-              <span className="text-2xl font-extrabold text-emerald-400">100% PASS</span>
-            </div>
-            <div className="glass-card p-4 rounded-xl">
-              <span className="text-slate-500 block text-[11px] font-mono">TARGET NETWORK</span>
-              <span className="text-2xl font-extrabold text-sky-400 font-mono">
+            <div className="glass-card rounded-[20px] p-5">
+              <span className="block font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-600">Target network</span>
+              <span className="mt-2 block break-all font-mono text-base font-extrabold text-purple-200">
                 {reportData.network || config.network}
               </span>
             </div>
