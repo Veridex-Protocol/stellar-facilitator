@@ -12,7 +12,6 @@
 
 import {
   Address,
-  Api,
   BASE_FEE,
   FeeBumpTransaction,
   Operation,
@@ -26,6 +25,7 @@ import {
   scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
+import { Api } from "@stellar/stellar-sdk/rpc";
 import type {
   Network,
   PaymentPayload,
@@ -87,7 +87,7 @@ function struct(fields: Record<string, xdr.ScVal>): xdr.ScVal {
 const addrVal = (value: string) => new Address(value).toScVal();
 const i128Val = (value: bigint | number | string) => nativeToScVal(BigInt(value), { type: "i128" });
 const u32Val = (value: number) => nativeToScVal(value, { type: "u32" });
-const bytes32Val = (buf: Uint8Array | Buffer) => xdr.ScVal.scvBytes(buf);
+const bytes32Val = (buf: Uint8Array | Buffer) => xdr.ScVal.scvBytes(Buffer.from(buf));
 
 export class UptoStellarScheme implements SchemeNetworkFacilitator {
   readonly scheme = "upto";
@@ -301,9 +301,12 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
             return authorizeEntry(
               entry,
               async (preimage) => {
-                const preimageHash = hash(preimage.toXDR());
-                const sig = await signer.sign(preimageHash);
-                return sig;
+                const signed = await signer.signAuthEntry(preimage.toXDR("base64"), {
+                  networkPassphrase,
+                  address: signer.address,
+                });
+                if (signed.error) throw signed.error;
+                return Buffer.from(signed.signedAuthEntry, "base64");
               },
               parsedTerms.deadline,
               networkPassphrase,
@@ -316,7 +319,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
 
       // 7. Assemble rebuilt transaction with refreshed soroban resource data
       const finalOp = Operation.invokeHostFunction({
-        func: invokeOp.func,
+        func: invokeOp.body().invokeHostFunctionOp().hostFunction(),
         auth: signedAuthEntries,
       });
 
@@ -373,7 +376,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       }
 
       const sendResult = await server.sendTransaction(txToSubmit);
-      if (sendResult.status !== "PENDING" && sendResult.status !== "SUCCESS") {
+      if (sendResult.status !== "PENDING") {
         return {
           success: false,
           network: payload.accepted.network,

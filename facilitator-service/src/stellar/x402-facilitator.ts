@@ -59,7 +59,7 @@ export interface X402FacilitatorConfig {
 }
 
 export class X402Facilitator {
-  private exactScheme: ExactStellarScheme;
+  private exactScheme!: ExactStellarScheme;
   private uptoScheme?: UptoStellarScheme;
   private config: X402FacilitatorConfig;
   /**

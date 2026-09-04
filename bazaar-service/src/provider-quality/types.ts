@@ -24,6 +24,21 @@ export const ProviderObservationSchema = z.object({
   settlementTx: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
   signer: z.string().min(1),
   signature: z.string().min(1),
+}).superRefine((value, context) => {
+  if (value.providerAtFault && value.attributable !== "provider") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["attributable"],
+      message: "providerAtFault requires provider attribution",
+    });
+  }
+  if (!value.providerAtFault && value.attributable === "provider") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["providerAtFault"],
+      message: "provider attribution requires providerAtFault",
+    });
+  }
 });
 
 export type ProviderObservation = z.infer<typeof ProviderObservationSchema>;
@@ -40,6 +55,14 @@ export const ProviderAggregateSchema = z.object({
   retrievedAt: z.number().int().positive(),
   issuer: z.string().min(1),
   signature: z.string().min(1),
+}).superRefine((value, context) => {
+  if (value.faultsObserved > value.n) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["faultsObserved"],
+      message: "faultsObserved cannot exceed n",
+    });
+  }
 });
 
 export type ProviderAggregate = z.infer<typeof ProviderAggregateSchema>;

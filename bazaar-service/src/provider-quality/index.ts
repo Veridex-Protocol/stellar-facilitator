@@ -5,3 +5,5 @@
 
 export * from "./types.js";
 export * from "./store.js";
+export * from "./crypto.js";
+export * from "./aggregator.js";

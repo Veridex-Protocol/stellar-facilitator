@@ -28,6 +28,9 @@ import { rateLimit } from "./rate-limit.js";
 import { bodyLimit } from "hono/body-limit";
 import type { P2PNodeConfig } from "./p2p/types.js";
 import type { ResourceMetadata } from "./p2p/announcer.js";
+import { ProviderQualityStore } from "./provider-quality/store.js";
+import { ProviderAggregateSchema, ProviderObservationSchema } from "./provider-quality/types.js";
+import { verifyProviderAggregate, verifyProviderObservation } from "./provider-quality/crypto.js";
 
 /**
  * Bazaar Service configuration
@@ -196,6 +199,7 @@ export class BazaarService {
   private telemetryTracker: TelemetryTracker;
   private searchEngine: BazaarSearchEngine;
   private ingestionWorker: CatalogIngestionWorker;
+  private providerQualityStore: ProviderQualityStore;
   private httpServer?: ServerType;
   private livenessInterval?: NodeJS.Timeout;
   private heartbeatInterval?: NodeJS.Timeout;
@@ -212,6 +216,7 @@ export class BazaarService {
     this.ingestionWorker = new CatalogIngestionWorker(config.database, {
       horizonUrl: config.horizonUrl,
     });
+    this.providerQualityStore = new ProviderQualityStore(this.db);
 
     // Initialize announcer if secret key provided
     if (config.stellarSecretKey) {
@@ -381,6 +386,38 @@ export class BazaarService {
       }
     });
 
+    // Public, read-only provider reliability history. This is deliberately
+    // separate from heartbeat liveness and settlement counters.
+    this.app.get("/v1/provider", async (c) => {
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      const payTo = c.req.query("payTo");
+      try {
+        const aggregate = await this.providerQualityStore.getAggregate(endpoint, payTo);
+        if (!aggregate) return c.json({ state: "insufficient_data", endpoint, ...(payTo ? { payTo } : {}) }, 200);
+        return c.json(aggregate);
+      } catch (error) {
+        console.error("[Bazaar Service] Provider aggregate read error:", error);
+        return c.json({ error: "provider_quality_unavailable" }, 503);
+      }
+    });
+
+    this.app.get("/v1/provider/observations", async (c) => {
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      try {
+        const observations = await this.providerQualityStore.listObservations(
+          endpoint,
+          c.req.query("payTo"),
+          clampLimit(c.req.query("limit")),
+        );
+        return c.json({ endpoint, observations });
+      } catch (error) {
+        console.error("[Bazaar Service] Provider observation read error:", error);
+        return c.json({ error: "provider_quality_unavailable" }, 503);
+      }
+    });
+
     // Accept P2P announcements via HTTP (Authenticated)
     this.app.post("/announce", async (c) => {
       try {
@@ -461,6 +498,59 @@ export class BazaarService {
           error: "Ingestion failed",
           message: error instanceof Error ? error.message : "Unknown error",
         }, 500);
+      }
+    });
+
+    // Internal asynchronous observation ingestion. It is never called by the
+    // facilitator before settlement and contains hashes, not raw payloads.
+    this.app.post("/provider-quality/observations", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const body = await c.req.json();
+        const observation = ProviderObservationSchema.parse(body.observation ?? body);
+        const verification = verifyProviderObservation(observation, {
+          expectedResource: observation.resource,
+          expectedPayTo: observation.payTo,
+          maxAgeSeconds: 15 * 60,
+        });
+        if (!verification.valid) {
+          return c.json({ error: "invalid_provider_observation", message: verification.error }, 400);
+        }
+        const record = await this.providerQualityStore.recordObservation({ observation });
+        return c.json({ status: "accepted", id: record.id }, 202);
+      } catch (error) {
+        return c.json({
+          error: "invalid_provider_observation",
+          message: error instanceof Error ? error.message : String(error),
+        }, 400);
+      }
+    });
+
+    // Internal aggregate ingestion. Aggregates are accepted only after
+    // signature, timestamp, endpoint, and payee checks succeed.
+    this.app.post("/provider-quality/aggregates", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const aggregate = ProviderAggregateSchema.parse(await c.req.json());
+        const verification = verifyProviderAggregate(aggregate, {
+          expectedEndpoint: aggregate.endpoint,
+          expectedPayTo: aggregate.payTo,
+          maxAgeSeconds: 15 * 60,
+        });
+        if (!verification.valid) {
+          return c.json({ error: "invalid_provider_aggregate", message: verification.error }, 400);
+        }
+        await this.providerQualityStore.saveAggregate(aggregate);
+        return c.json({ status: "accepted" }, 202);
+      } catch (error) {
+        return c.json({
+          error: "invalid_provider_aggregate",
+          message: error instanceof Error ? error.message : String(error),
+        }, 400);
       }
     });
   }
