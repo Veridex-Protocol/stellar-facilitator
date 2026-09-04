@@ -2,6 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Announcer } from "../p2p/announcer.js";
 import { P2PNode } from "../p2p/node.js";
 import { BAZAAR_CATALOG_DELTA_TOPIC } from "../p2p/types.js";
+import {
+  createCatalogDeltaState,
+  shouldApplyCatalogDelta,
+  type AppliedCatalogDelta,
+} from "../p2p/catalog-delta.js";
 
 const nodes: P2PNode[] = [];
 
@@ -26,10 +31,16 @@ describe("active P2P catalog-delta transport", () => {
     }
 
     let received = 0;
-    observer.onCatalogDelta(async () => { received++; });
+    let applied: AppliedCatalogDelta | undefined;
+    observer.onCatalogDelta(async (incoming) => {
+      received++;
+      if (shouldApplyCatalogDelta(applied, incoming)) {
+        applied = createCatalogDeltaState(incoming);
+      }
+    });
     const announcer = new Announcer((await import("@stellar/stellar-sdk")).Keypair.random());
     const seller = announcer.getPublicKey();
-    const delta = announcer.createSignedCatalogDelta({
+    const upsert = announcer.createSignedCatalogDelta({
       op: "upsert",
       resourceUrl: "https://provider.example/fx",
       toolName: "",
@@ -47,11 +58,41 @@ describe("active P2P catalog-delta transport", () => {
         settlementTx: "a".repeat(64),
       },
     });
-    for (let attempt = 0; attempt < 10 && received === 0; attempt++) {
-      await producer.publishCatalogDelta(delta);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    expect(received).toBeGreaterThanOrEqual(1);
+    const revoke = announcer.createSignedCatalogDelta({
+      ...upsert,
+      op: "revoke",
+      state: null,
+      revision: 2,
+    });
+    const restored = announcer.createSignedCatalogDelta({
+      ...upsert,
+      revision: 3,
+      state: {
+        ...upsert.state!,
+        description: "FX restored",
+      },
+    });
+
+    const waitForMessages = async (expected: number) => {
+      for (let attempt = 0; attempt < 20 && received < expected; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(received).toBeGreaterThanOrEqual(expected);
+    };
+
+    // Deliberately publish the revoke before the original upsert. Arrival order
+    // must not determine the durable catalog state.
+    await producer.publishCatalogDelta(revoke);
+    await waitForMessages(1);
+    await producer.publishCatalogDelta(upsert);
+    await waitForMessages(2);
+    await producer.publishCatalogDelta(restored);
+    await waitForMessages(3);
+
+    expect(applied?.delta.op).toBe("upsert");
+    expect(applied?.delta.revision).toBe(3);
+    expect(applied?.delta.state?.description).toBe("FX restored");
+    expect(applied?.digest).toBeTruthy();
     expect(BAZAAR_CATALOG_DELTA_TOPIC).toContain("catalog-delta");
   }, 15_000);
 });

@@ -8,6 +8,7 @@
  * - GET  /supported           schemes, networks, signers, fee sponsorship
  * - GET  /.well-known/x402    capability descriptor (x402ccd/0)
  * - GET  /health              liveness plus the facts this deployment claims
+ * - GET  /ready               readiness after channel and network checks pass
  * - GET  /stats               in-process counters since boot
  *
  * Everything advertised here is checked against the network at boot. See
@@ -194,6 +195,7 @@ export class FacilitatorService {
   private x402Facilitator: X402Facilitator;
   private logger: Logger;
   private httpServer?: ServerType;
+  private serviceReady = false;
   private capabilities: VerifiedCapabilities;
   private stats: {
     totalVerifications: number;
@@ -338,6 +340,17 @@ export class FacilitatorService {
         channels: this.channelPool.getStats(),
       }),
     );
+
+    this.app.get("/ready", (c) => {
+      const ready = this.serviceReady && this.capabilities.checked;
+      return c.json({
+        status: ready ? "ready" : "not_ready",
+        serviceStarted: this.serviceReady,
+        startupChecksPassed: this.capabilities.checked,
+        schemes: this.advertisedSchemes(),
+        timestamp: Date.now(),
+      }, ready ? 200 : 503);
+    });
 
     this.app.get("/stats", (c) => {
       const uptime = Date.now() - this.stats.startTime;
@@ -962,6 +975,7 @@ export class FacilitatorService {
       port: this.config.port,
       hostname: this.config.host,
     });
+    this.serviceReady = true;
 
     this.logger.info("facilitator ready", {
       url: `http://${this.config.host}:${this.config.port}`,
@@ -972,6 +986,7 @@ export class FacilitatorService {
   }
 
   async stop(): Promise<void> {
+    this.serviceReady = false;
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) =>
         this.httpServer!.close((error?: Error) => (error ? reject(error) : resolve())),

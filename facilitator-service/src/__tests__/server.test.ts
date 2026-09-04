@@ -180,6 +180,19 @@ describe("canonical facilitator HTTP surface", () => {
     });
   });
 
+  it("does not report readiness before startup checks and binding complete", async () => {
+    const { config } = makeConfig();
+    const service = new FacilitatorService(config, recordingLogger().logger);
+
+    const response = await service.getApp().request("/ready");
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      status: "not_ready",
+      serviceStarted: false,
+      startupChecksPassed: false,
+    });
+  });
+
   it("says on /stats that its counters cannot back a published figure", async () => {
     const { config } = makeConfig();
     const service = new FacilitatorService(config, recordingLogger().logger);

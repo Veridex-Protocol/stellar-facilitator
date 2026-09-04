@@ -133,7 +133,7 @@ services:
       # Logging
       LOG_LEVEL: info
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3002/health"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3002/ready"]
       interval: 15s
       timeout: 5s
       retries: 5
