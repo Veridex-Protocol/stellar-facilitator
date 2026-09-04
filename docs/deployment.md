@@ -307,15 +307,15 @@ server {
 ### 3. Deploy Soroban Contract
 
 ```bash
-cd contracts/upto_escrow
+cd contracts/upto-settlement
 
-# Build optimized WASM
-make optimize
+# Build reproducible WASM with the pinned toolchain
+../../scripts/build-upto.sh
 
 # Deploy to pubnet
 export STELLAR_SECRET_KEY=S...
-soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/upto_escrow.optimized.wasm \
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/upto_settlement.wasm \
   --source $STELLAR_SECRET_KEY \
   --network pubnet
 

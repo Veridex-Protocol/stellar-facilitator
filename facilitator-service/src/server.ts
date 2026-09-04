@@ -862,6 +862,16 @@ export class FacilitatorService {
         },
         extensions: discovered.extensions,
         settlementTx: result.transaction,
+        ...(paymentRequirements.scheme === "upto" ? {
+          settlementProof: {
+            scheme: "upto",
+            uptoContractId: paymentRequirements.extra?.contractId,
+            expectedToken: paymentRequirements.asset,
+            expectedMaxAmount: paymentPayload.accepted.amount,
+            expectedActual: paymentRequirements.amount,
+            expectedResultDigest: paymentPayload.payload?.resultDigest,
+          },
+        } : {}),
       }),
     });
     // The catalog reports the outcome in this header on both acceptance and

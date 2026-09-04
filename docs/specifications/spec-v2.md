@@ -77,15 +77,15 @@ Veridex provides an ideal production base. Its existing codebase already supplie
 
 | RFP Requirement | RFP Section | Veridex v1 Baseline | Veridex v2 Proposal | Implementation Mechanism |
 |---|---|---|---|---|
-| **Facilitator Endpoints** | 3.1 | Standard `/verify`, `/settle`, `/supported` | Standard REST + **WebSocket P2P Telemetry Channel** | Fastify/Hono HTTP + `ws` WebSocket |
+| **Facilitator Endpoints** | 3.1 | Standard `/verify`, `/settle`, `/supported` | Standard REST plus signed asynchronous telemetry | Hono HTTP + GossipSub |
 | **Auth Entry Validation** | 3.1 | `gatherAuthEntrySignatureStatus` | Enhanced with custom `__check_auth` simulation | Soroban RPC RPC simulateTransaction |
 | **Fee Sponsorship** | 3.1 | `feeBumpSigner` in `ExactStellarScheme` | Sponsored via `FeeBumpTransaction` | Advertises `areFeesSponsored: true` |
 | **Bazaar Catalog Browsing** | 3.2 | In-memory filtering | **PostgreSQL Persistent Store + P2P Mesh Sync** | Federated Libp2p GossipSub |
 | **Bazaar Search Quality** | 3.2 | In-memory text match | **Hybrid BM25/Vector Search + Live Telemetry Scoring** | `pgvector` RRF + Telemetry Engine |
 | **Auto Cataloging** | 3.2 | Passive indexing via `PaymentPayload` | **Dual-Path: Passive Indexing + Active P2P Announce** | `/x402/bazaar/v1/announce` topic |
-| **Node Liveness & Health** | 3.2 | None (Static entries) | **Active Heartbeat Ping + Pruning Circuit Breakers** | 30s Heartbeat pings & auto-demotion |
+| **Node Liveness & Health** | 3.2 | None (Static entries) | **Signed heartbeat telemetry + pruning circuit breakers** | 30s self-reports, settlement liveness, auto-demotion |
 | **MCP Server for Agents** | 3.3 | Basic schemas | **Standalone MCP Server (`discover_resources`, `pay_resource`)** | Model Context Protocol Stdio/HTTP |
-| **Stellar `upto` Scheme** | 3.4 | EVM `upto` only | **Author `scheme_upto_stellar.md` & `upto_escrow.rs`** | Soroban Rust Smart Contract |
+| **Stellar `upto` Scheme** | 3.4 | EVM `upto` only | Soroban contract, facilitator validator, and response-aware usage binding | Boot-gated contract plus signed usage/result digest |
 | **Interoperability** | 3.2 & 3.6 | Single-facilitator catalog | **P2P Multi-Facilitator Federated Mesh** | Libp2p Kademlia DHT + GossipSub |
 | **Licensing** | 3.6 | Apache-2.0 core | **100% Permissive Apache-2.0 across full P2P stack** | Zero AGPL dependencies |
 
@@ -127,10 +127,10 @@ Resource servers and peer facilitators communicate over a dedicated `js-libp2p` 
 
 To solve search relevance and prevent recommending dead APIs to clients, the Bazaar search engine calculates a **Composite Quality Score ($\Phi$)**:
 
-$$\Phi = w_1 \cdot S_{\text{semantic}} + w_2 \cdot S_{\text{bm25}} + w_3 \cdot S_{\text{uptime}} + w_4 \cdot S_{\text{latency}} + w_5 \cdot S_{\text{reliability}}$$
+$$\Phi = w_1 \cdot S_{\text{vector}} + w_2 \cdot S_{\text{bm25}} + w_3 \cdot S_{\text{uptime}} + w_4 \cdot S_{\text{latency}} + w_5 \cdot S_{\text{reliability}}$$
 
 Where:
-- $S_{\text{semantic}}$: Cosine similarity score from `pgvector` embeddings ($\in [0, 1]$).
+- $S_{\text{vector}}$: Feature-hash lexical cosine similarity from `pgvector` ($\in [0, 1]$); it is not learned semantic retrieval.
 - $S_{\text{bm25}}$: Normalized full-text BM25 keyword match score ($\in [0, 1]$).
 - $S_{\text{uptime}}$: Measured 30-day node heartbeat uptime ratio ($\frac{\text{successful pings}}{\text{expected pings}}$).
 - $S_{\text{latency}}$: Exponential penalty function for response latency:

@@ -124,7 +124,7 @@ Set `UPTO_ESCROW_CONTRACT_ID_TESTNET` to the id printed and restart. The facilit
 
 `UPTO_ESCROW_CONTRACT_ID_PUBNET` is read separately and is never inherited from the testnet variable, so a mainnet deployment cannot silently advertise a testnet contract.
 
-The contract is stateless and has no admin, so every instance of the same wasm behaves identically. Details and the current testnet artifact are recorded in [`contracts/upto-settlement/DEPLOYMENT.md`](../../contracts/upto-settlement/DEPLOYMENT.md).
+The contract is stateless and has no admin, so every instance of the same wasm behaves identically. Details and the current testnet artifact are recorded in [`contracts/upto-settlement/deployment.md`](../../contracts/upto-settlement/deployment.md).
 
 The contract is not audited, so advertise it on testnet only.
 

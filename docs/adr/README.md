@@ -36,7 +36,7 @@ The ADRs name three gaps rather than bury them, because a reviewer will find the
 
 - **Retrieval quality** (002). Our vector leg is feature hashing, not a learned model, and we ship no evaluation methodology. This is the largest gap in this implementation, and it sits on the most valuable part of the scope.
 - **Mainnet** (010). `stellar:pubnet` is wired end to end and has never been exercised. Both networks are committed deliverables.
-- **`upto`** (011). Rebuilt on soroban-sdk 26.1.1 with term-bound authorization, contract-level replay, and on-ledger attribution of the charged amount 27 tests, five of them establishing the binding. It is an early-stage contract: not deployed, no published wasm hash, and no independent audit.
+- **`upto`** (011). Rebuilt on soroban-sdk 26.1.1 with term-bound authorization, contract-level replay, and on-ledger attribution of the charged amount. A testnet artifact and deployment are recorded, but facilitator-path conformance and an independent audit remain open.
 
 Two smaller ones are recorded in their own ADRs and in [`testnet_docs.md`](../../testnet_docs.md): the ledger-skew retry has never been observed rescuing a live degraded window (008), and multi-page cursor traversal is unexercised end to end because the demo catalog holds one resource (009).
 
