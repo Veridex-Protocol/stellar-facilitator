@@ -3,6 +3,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import {
   aggregateWithoutSignature,
   createSignedProviderAggregate,
+  createSignedProviderObservation,
   verifyProviderAggregate,
   verifyProviderObservation,
 } from "../provider-quality/crypto.js";
@@ -53,9 +54,7 @@ describe("provider-quality crypto and aggregation", () => {
   });
 
   it("verifies a payee-bound signed observation and rejects tampering", () => {
-    const signed = signer.sign(Buffer.from("placeholder"));
-    const observationPayload = {
-      v: "veridex/provider-outcome/1" as const,
+    const signedObservation = createSignedProviderObservation({
       resource,
       payTo,
       requestDigest: digest,
@@ -65,18 +64,15 @@ describe("provider-quality crypto and aggregation", () => {
       providerAtFault: true,
       attributable: "provider" as const,
       reasonCode: "data_stale",
-      signer: payTo,
-      signature: "",
-    };
-    const { signer: _ignored, signature: _empty, ...unsigned } = observationPayload;
-    const encoded = signer.sign(Buffer.from(JSON.stringify(unsigned))).toString("base64");
-    const signedObservation = { ...observationPayload, signature: encoded };
+    }, signer.secret());
     expect(verifyProviderObservation(signedObservation, {
       expectedResource: resource,
       expectedPayTo: payTo,
       nowSeconds: 1_700_000_100,
+    }).valid).toBe(true);
+    expect(verifyProviderObservation({ ...signedObservation, responseDigest: digest.replace(/a/g, "b") }, {
+      nowSeconds: 1_700_000_100,
     }).valid).toBe(false);
-    expect(signed.length).toBe(64);
   });
 
   it("generates the three configured evidence states", () => {

@@ -20,6 +20,13 @@ import { generateResourceEmbedding } from "../search/embeddings.js";
 import { verifySettlement } from "./settlement-proof.js";
 import { verifyOwnerSignature } from "./owner-signature.js";
 import type { DatabaseConfig } from "../search/types.js";
+import {
+  catalogDeltaDigest,
+  catalogDeltaKey,
+  compareCatalogDelta,
+  verifyCatalogDelta,
+  type CatalogDelta,
+} from "../p2p/catalog-delta.js";
 
 /**
  * Bazaar extension schema from PaymentPayload
@@ -257,6 +264,157 @@ export class CatalogIngestionWorker {
         rejectedReason: error instanceof Error ? error.message : "internal_error",
         extensionResponse: this.encodeExtensionResponse("rejected", "internal_error"),
       };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Applies a signed catalog snapshot after deterministic revision arbitration.
+   * Upserts retain the existing Horizon settlement proof; revokes retain a
+   * tombstone and soft-drop the matching listing without deleting history.
+   */
+  async applyCatalogDelta(
+    delta: CatalogDelta,
+    options: { authorizedSigners?: string[]; nowSeconds?: number } = {},
+  ): Promise<{ status: "applied" | "ignored" | "rejected"; reason?: string }> {
+    const verification = verifyCatalogDelta(delta, {
+      authorizedSigners: options.authorizedSigners,
+      nowSeconds: options.nowSeconds,
+    });
+    if (!verification.valid) return { status: "rejected", reason: verification.error };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const key = catalogDeltaKey(delta);
+      const currentResult = await client.query<{
+        revision: number;
+        digest: string;
+        payload: CatalogDelta;
+      }>(
+        `SELECT revision, digest, payload FROM catalog_delta_state WHERE catalog_key = $1 FOR UPDATE`,
+        [key],
+      );
+      const current = currentResult.rows[0];
+      if (current && compareCatalogDelta(delta, current.payload) <= 0) {
+        await client.query("COMMIT");
+        return { status: "ignored", reason: "catalog delta is older than or equal to durable state" };
+      }
+
+      if (delta.op === "upsert") {
+        const state = delta.state;
+        if (!state) {
+          await client.query("ROLLBACK");
+          return { status: "rejected", reason: "upsert catalog delta has no state" };
+        }
+        const settlement = await verifySettlement(state.settlementTx, delta.payTo, {
+          horizonUrl: this.horizonUrl,
+        });
+        if (!settlement.valid) {
+          await client.query("ROLLBACK");
+          return { status: "rejected", reason: settlement.reason };
+        }
+
+        const existing = await client.query<{ id: string; pay_to: string }>(
+          `SELECT id, pay_to FROM catalog_resources
+           WHERE resource_url = $1 AND tool_name_key = $2 FOR UPDATE`,
+          [delta.resourceUrl, delta.toolName || ""],
+        );
+        if (existing.rows[0] && existing.rows[0].pay_to !== delta.payTo) {
+          await client.query("ROLLBACK");
+          return { status: "rejected", reason: "catalog delta would change an existing resource payTo" };
+        }
+
+        const embedding = await generateResourceEmbedding(state.description, state.serviceName, state.tags);
+        await client.query(
+          `INSERT INTO catalog_resources (
+             resource_url, resource_type, tool_name, service_name, description,
+             mime_type, pay_to, network, scheme, tags, icon_url, route_template,
+             input_spec, output_spec, extensions, embedding, settlement_tx, soft_dropped
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                     $13, $14, $15, $16, $17, false)
+           ON CONFLICT ON CONSTRAINT unique_resource_tool_entry DO UPDATE SET
+             service_name = EXCLUDED.service_name,
+             description = EXCLUDED.description,
+             mime_type = EXCLUDED.mime_type,
+             pay_to = EXCLUDED.pay_to,
+             network = EXCLUDED.network,
+             scheme = EXCLUDED.scheme,
+             tags = EXCLUDED.tags,
+             icon_url = EXCLUDED.icon_url,
+             route_template = EXCLUDED.route_template,
+             input_spec = EXCLUDED.input_spec,
+             output_spec = EXCLUDED.output_spec,
+             extensions = EXCLUDED.extensions,
+             embedding = EXCLUDED.embedding,
+             settlement_tx = EXCLUDED.settlement_tx,
+             soft_dropped = false,
+             last_seen = now(),
+             updated_at = now()
+           WHERE catalog_resources.pay_to = EXCLUDED.pay_to`,
+          [
+            delta.resourceUrl,
+            state.resourceType,
+            delta.toolName || null,
+            state.serviceName || null,
+            state.description,
+            state.mimeType,
+            delta.payTo,
+            delta.network,
+            state.scheme,
+            state.tags || [],
+            state.iconUrl || null,
+            state.routeTemplate || null,
+            JSON.stringify(state.inputSpec),
+            state.outputSpec ? JSON.stringify(state.outputSpec) : null,
+            JSON.stringify(state.extensions || {}),
+            `[${embedding.join(",")}]`,
+            state.settlementTx,
+          ],
+        );
+      } else {
+        await client.query(
+          `UPDATE catalog_resources SET soft_dropped = true, updated_at = now()
+           WHERE resource_url = $1 AND tool_name_key = $2 AND pay_to = $3 AND network = $4`,
+          [delta.resourceUrl, delta.toolName || "", delta.payTo, delta.network],
+        );
+      }
+
+      await client.query(
+        `INSERT INTO catalog_delta_state (
+           catalog_key, network, pay_to, resource_url, tool_name, revision,
+           digest, operation, signer, issued_at, expires_at, payload
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10), to_timestamp($11), $12::jsonb)
+         ON CONFLICT (catalog_key) DO UPDATE SET
+           revision = EXCLUDED.revision,
+           digest = EXCLUDED.digest,
+           operation = EXCLUDED.operation,
+           signer = EXCLUDED.signer,
+           issued_at = EXCLUDED.issued_at,
+           expires_at = EXCLUDED.expires_at,
+           payload = EXCLUDED.payload,
+           updated_at = now()`,
+        [
+          key,
+          delta.network,
+          delta.payTo,
+          delta.resourceUrl,
+          delta.toolName || "",
+          delta.revision,
+          catalogDeltaDigest(delta),
+          delta.op,
+          delta.signer,
+          delta.issuedAt,
+          delta.expiresAt,
+          JSON.stringify(delta),
+        ],
+      );
+      await client.query("COMMIT");
+      return { status: "applied" };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      return { status: "rejected", reason: error instanceof Error ? error.message : String(error) };
     } finally {
       client.release();
     }

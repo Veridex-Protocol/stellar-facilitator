@@ -11,3 +11,4 @@
 export * from "./types.js";
 export * from "./embeddings.js";
 export * from "./engine.js";
+export * from "./eval/report.js";

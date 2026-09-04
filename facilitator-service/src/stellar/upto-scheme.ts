@@ -756,6 +756,6 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       return undefined;
     }
     const digest = Buffer.from(encoded.slice("sha256:".length), "hex");
-    return digest.length === 32 ? digest : parsedTerms.requestDigest;
+    return digest.length === 32 ? digest : undefined;
   }
 }

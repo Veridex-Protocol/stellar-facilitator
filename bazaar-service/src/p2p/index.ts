@@ -11,3 +11,4 @@
 export * from "./types.js";
 export * from "./node.js";
 export * from "./announcer.js";
+export * from "./catalog-delta.js";

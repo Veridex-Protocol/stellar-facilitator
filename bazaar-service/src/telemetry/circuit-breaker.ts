@@ -52,14 +52,27 @@ export class LivenessCircuitBreaker {
    * @returns Current liveness status
    */
   evaluateNodeStatus(lastSeenTimestampMs: number): LivenessStatus {
-    const elapsed = Date.now() - lastSeenTimestampMs;
-    const missedPings = Math.floor(elapsed / this.config.heartbeatIntervalMs);
+    return this.evaluateResourceStatus(lastSeenTimestampMs, null);
+  }
 
-    if (missedPings < 1) {
+  evaluateResourceStatus(
+    lastHeartbeatTimestampMs: number | null,
+    lastSettlementTimestampMs: number | null,
+    nowMs = Date.now(),
+  ): LivenessStatus {
+    const heartbeatElapsed = lastHeartbeatTimestampMs === null
+      ? Number.POSITIVE_INFINITY
+      : nowMs - lastHeartbeatTimestampMs;
+    const settlementElapsed = lastSettlementTimestampMs === null
+      ? Number.POSITIVE_INFINITY
+      : nowMs - lastSettlementTimestampMs;
+    const missedPings = Math.floor(heartbeatElapsed / this.config.heartbeatIntervalMs);
+
+    if (missedPings < 1 || settlementElapsed <= SETTLEMENT_LIVENESS_WINDOW_MS) {
       return LivenessStatus.HEALTHY;
     }
 
-    if (missedPings <= this.config.maxMissedHeartbeats) {
+    if (missedPings <= this.config.maxMissedHeartbeats || settlementElapsed <= SETTLEMENT_LIVENESS_WINDOW_MS * 7) {
       return LivenessStatus.DEGRADED;
     }
 

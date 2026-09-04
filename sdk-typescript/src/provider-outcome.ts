@@ -233,6 +233,9 @@ function validateUnsignedOutcome(outcome: ProviderOutcomeUnsigned): ProviderOutc
   if (!outcome.providerAtFault && outcome.attributable === "provider") {
     return { valid: false, error: "provider attribution requires providerAtFault" };
   }
+  if (outcome.usable && outcome.providerAtFault) {
+    return { valid: false, error: "a usable outcome cannot attribute a fault to the provider" };
+  }
   if (!/^[a-z][a-z0-9_.-]{1,63}$/.test(outcome.reasonCode)) {
     return { valid: false, error: "provider outcome reasonCode is invalid" };
   }

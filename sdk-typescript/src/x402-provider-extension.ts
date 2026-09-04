@@ -82,7 +82,7 @@ export function createProviderQualityExtension(
         const expectedResource = context.paymentPayload.resource?.url;
         const expectedSigner = typeof options.expectedSigner === "function"
           ? options.expectedSigner(payTo)
-          : config.expectedSigner;
+          : config.expectedSigner ?? payTo;
         const validation = verifyProviderOutcome(outcome, {
           expectedPayTo: payTo,
           expectedResource,
@@ -163,7 +163,7 @@ export function createProviderQualityExtension(
  */
 export function installProviderOutcomeSettlementEnrichment<T extends SchemeNetworkServer>(
   scheme: T,
-  options: Pick<ProviderQualityExtensionOptions, "nowSeconds"> = {},
+  options: Pick<ProviderQualityExtensionOptions, "nowSeconds" | "expectedSigner"> = {},
 ): T {
   const original = scheme.enrichSettlementPayload?.bind(scheme);
   scheme.enrichSettlementPayload = async (context) => {
@@ -174,6 +174,9 @@ export function installProviderOutcomeSettlementEnrichment<T extends SchemeNetwo
     const validation = verifyProviderOutcome(outcome, {
       expectedPayTo: context.requirements.payTo,
       expectedResource: context.paymentPayload.resource?.url,
+      expectedSigner: typeof options.expectedSigner === "string"
+        ? options.expectedSigner
+        : context.requirements.payTo,
       nowSeconds: options.nowSeconds,
     });
     if (!validation.valid) throw new Error(validation.error);

@@ -7,12 +7,14 @@
  */
 
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { canonicalize } from "./canonical.js";
 
 /**
  * GossipSub topic for Bazaar announcements
  */
 export const BAZAAR_ANNOUNCE_TOPIC = "/x402/bazaar/v1/announce";
+export const BAZAAR_CATALOG_DELTA_TOPIC = "/x402/bazaar/v1/catalog-delta";
 
 /**
  * Telemetry snapshot at time of heartbeat
@@ -76,6 +78,85 @@ export const AnnounceMessageSchema = z.object({
 });
 
 export type AnnounceMessage = z.infer<typeof AnnounceMessageSchema>;
+
+/**
+ * A signed full catalog snapshot. Full snapshots are used instead of patches
+ * so peers can converge after delayed or out-of-order delivery without first
+ * recovering an unseen base document.
+ */
+export const CatalogDeltaStateSchema = z.object({
+  resourceType: z.enum(["http", "mcp"]),
+  serviceName: z.string().max(32).optional(),
+  description: z.string().min(1),
+  tags: z.array(z.string().max(32)).max(5).optional(),
+  iconUrl: z.string().url().max(2048).optional(),
+  routeTemplate: z.string().optional(),
+  mimeType: z.string().max(64).default("application/json"),
+  inputSpec: z.record(z.any()),
+  outputSpec: z.record(z.any()).optional(),
+  extensions: z.record(z.any()).optional(),
+  scheme: z.string().min(1),
+  settlementTx: z.string().regex(/^[0-9a-f]{64}$/i),
+});
+
+export type CatalogDeltaState = z.infer<typeof CatalogDeltaStateSchema>;
+
+const CatalogDeltaBaseSchema = z.object({
+  v: z.literal("veridex/bazaar/catalog-delta/1"),
+  op: z.enum(["upsert", "revoke"]),
+  resourceUrl: z.string().url(),
+  toolName: z.string().default(""),
+  payTo: z.string().min(1),
+  network: z.string().min(1),
+  revision: z.number().int().nonnegative().safe(),
+  issuedAt: z.number().int().positive(),
+  expiresAt: z.number().int().positive(),
+  state: CatalogDeltaStateSchema.nullable(),
+});
+
+function refineCatalogDelta<T extends z.ZodTypeAny>(schema: T): T {
+  return schema.superRefine((delta, context) => {
+  if (delta.op === "upsert" && delta.state === null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: "upsert deltas require a catalog state" });
+  }
+  if (delta.op === "revoke" && delta.state !== null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: "revoke deltas must not carry catalog state" });
+  }
+  if (delta.expiresAt <= delta.issuedAt) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["expiresAt"], message: "expiresAt must be after issuedAt" });
+  }
+  if (delta.expiresAt - delta.issuedAt > 24 * 60 * 60) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["expiresAt"], message: "catalog delta lifetime may not exceed 24 hours" });
+  }
+  }) as unknown as T;
+}
+
+export const CatalogDeltaUnsignedSchema = refineCatalogDelta(CatalogDeltaBaseSchema);
+
+export const CatalogDeltaSchema = refineCatalogDelta(CatalogDeltaBaseSchema.extend({
+  signer: z.string().min(1),
+  signature: z.string().min(1),
+}));
+
+export type CatalogDelta = z.infer<typeof CatalogDeltaSchema>;
+export type CatalogDeltaInput = Omit<CatalogDelta, "v" | "signer" | "signature">;
+
+export const CATALOG_DELTA_DOMAIN_TAG = "VERIDEX-BAZAAR-CATALOG-DELTA:v1";
+
+export function createCatalogDeltaSignaturePayload(delta: CatalogDelta | CatalogDeltaInput): string {
+  const { signature: _signature, signer: _signer, ...unsigned } = delta as CatalogDelta;
+  return canonicalize({ domain: CATALOG_DELTA_DOMAIN_TAG, ...unsigned });
+}
+
+export function catalogDeltaDigest(delta: CatalogDelta | CatalogDeltaInput): string {
+  return createHash("sha256")
+    .update(createCatalogDeltaSignaturePayload(delta), "utf8")
+    .digest("hex");
+}
+
+export function catalogDeltaKey(delta: Pick<CatalogDelta, "resourceUrl" | "toolName" | "payTo" | "network">): string {
+  return `${delta.network}:${delta.payTo}:${delta.resourceUrl}:${delta.toolName || ""}`;
+}
 
 /**
  * Message validation result
@@ -148,6 +229,18 @@ export interface P2PNodeConfig {
 
   // Node identity (optional - will generate if not provided)
   privateKey?: Uint8Array; // Ed25519 private key for signing
+
+  /** Optional allowlist for private meshes. Relays do not need to be signers. */
+  authorizedPeerIds?: string[];
+
+  /**
+   * Resource signer delegates. Keys are `${resourceUrl}|${toolName || ""}`;
+   * the payTo owner is always accepted for classic G-address payees.
+   */
+  authorizedHeartbeatSigners?: Record<string, string[]>;
+
+  /** Catalog-delta signer delegates. Keys are `${network}:${payTo}`. */
+  authorizedCatalogSigners?: Record<string, string[]>;
 }
 
 /**
@@ -207,6 +300,7 @@ export enum P2PErrorType {
   PUBLISH_FAILED = "publish_failed",
   CONNECTION_FAILED = "connection_failed",
   NOT_INITIALIZED = "not_initialized",
+  UNAUTHORIZED = "unauthorized",
 }
 
 /**

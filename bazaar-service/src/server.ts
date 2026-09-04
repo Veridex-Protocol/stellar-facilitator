@@ -22,15 +22,17 @@ import { Announcer, createAnnouncer } from "./p2p/announcer.js";
 import { TelemetryTracker } from "./telemetry/tracker.js";
 import { BazaarSearchEngine } from "./search/engine.js";
 import { CatalogIngestionWorker } from "./catalog/ingestion.js";
-import { AnnounceMessageSchema } from "./p2p/types.js";
+import { AnnounceMessageSchema, CatalogDeltaSchema, type CatalogDelta } from "./p2p/types.js";
 import { InvalidCursorError } from "./search/cursor.js";
 import { rateLimit } from "./rate-limit.js";
 import { bodyLimit } from "hono/body-limit";
 import type { P2PNodeConfig } from "./p2p/types.js";
 import type { ResourceMetadata } from "./p2p/announcer.js";
+import { catalogDeltaKey } from "./p2p/catalog-delta.js";
 import { ProviderQualityStore } from "./provider-quality/store.js";
 import { ProviderAggregateSchema, ProviderObservationSchema } from "./provider-quality/types.js";
 import { verifyProviderAggregate, verifyProviderObservation } from "./provider-quality/crypto.js";
+import { buildProviderAggregate } from "./provider-quality/aggregator.js";
 
 /**
  * Bazaar Service configuration
@@ -60,6 +62,9 @@ export interface BazaarServiceConfig {
   /** Shared secret the facilitator presents on /catalog/ingest. Required. */
   internalToken: string;
   announcedResources: ResourceMetadata[];
+  providerAggregateIssuerSecretKey?: string;
+  providerAggregatePublishedThreshold: number;
+  providerAggregateProvisionalThreshold: number;
 }
 
 /**
@@ -86,9 +91,17 @@ export function getDefaultConfig(): BazaarServiceConfig {
         : [],
       heartbeatIntervalMs: 30_000,
       maxMissedHeartbeats: 3,
+      authorizedPeerIds: process.env.P2P_AUTHORIZED_PEER_IDS
+        ? process.env.P2P_AUTHORIZED_PEER_IDS.split(",").map((a) => a.trim()).filter(Boolean)
+        : undefined,
+      authorizedHeartbeatSigners: parseAuthorizationMap(process.env.P2P_AUTHORIZED_HEARTBEAT_SIGNERS),
+      authorizedCatalogSigners: parseAuthorizationMap(process.env.P2P_AUTHORIZED_CATALOG_SIGNERS),
     },
     stellarSecretKey: process.env.STELLAR_SECRET_KEY,
     announcedResources: parseAnnouncedResources(process.env.P2P_ANNOUNCED_RESOURCES),
+    providerAggregateIssuerSecretKey: process.env.PROVIDER_AGGREGATE_ISSUER_SECRET_KEY,
+    providerAggregatePublishedThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PUBLISHED_THRESHOLD || "100", 10),
+    providerAggregateProvisionalThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PROVISIONAL_THRESHOLD || "20", 10),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
     // Required, not optional. The previous guard read
     // `if (internalToken && ...)`, which skipped authentication entirely when
@@ -113,6 +126,20 @@ function requireInternalToken(): string {
     );
   }
   return token;
+}
+
+function parseAuthorizationMap(value?: string): Record<string, string[]> | undefined {
+  if (!value) return undefined;
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("P2P authorization maps must be JSON objects of string keys to string arrays");
+  }
+  return Object.fromEntries(Object.entries(parsed).map(([key, signers]) => {
+    if (!Array.isArray(signers) || signers.some((signer) => typeof signer !== "string")) {
+      throw new Error(`P2P authorization map entry '${key}' must contain string signers`);
+    }
+    return [key, signers];
+  }));
 }
 
 /**
@@ -418,6 +445,35 @@ export class BazaarService {
       }
     });
 
+    this.app.post("/provider-quality/aggregates/recompute", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      if (!this.config.providerAggregateIssuerSecretKey) {
+        return c.json({ error: "aggregate_issuer_not_configured" }, 503);
+      }
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      const payTo = c.req.query("payTo") || undefined;
+      try {
+        const observations = await this.providerQualityStore.listObservationsForAggregate(endpoint, payTo);
+        const aggregate = buildProviderAggregate(
+          endpoint,
+          payTo,
+          observations,
+          this.config.providerAggregateIssuerSecretKey,
+          {
+            publishedThreshold: this.config.providerAggregatePublishedThreshold,
+            provisionalThreshold: this.config.providerAggregateProvisionalThreshold,
+          },
+        );
+        await this.providerQualityStore.saveAggregate(aggregate);
+        return c.json(aggregate, 200);
+      } catch (error) {
+        return c.json({ error: "aggregate_recompute_failed", message: error instanceof Error ? error.message : String(error) }, 500);
+      }
+    });
+
     // Accept P2P announcements via HTTP (Authenticated)
     this.app.post("/announce", async (c) => {
       try {
@@ -446,6 +502,26 @@ export class BazaarService {
         return c.json({
           error: "Announcement failed",
           message: error instanceof Error ? error.message : "Unknown error",
+        }, 400);
+      }
+    });
+
+    this.app.post("/catalog/delta", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const delta = CatalogDeltaSchema.parse(await c.req.json());
+        const allowed = this.config.p2p.authorizedCatalogSigners?.[`${delta.network}:${delta.payTo}`]
+          ?? (delta.signer === delta.payTo ? [delta.payTo] : undefined);
+        const result = await this.ingestionWorker.applyCatalogDelta(delta, {
+          authorizedSigners: allowed,
+        });
+        return c.json({ ...result, key: catalogDeltaKey(delta) }, result.status === "rejected" ? 400 : 202);
+      } catch (error) {
+        return c.json({
+          error: "invalid_catalog_delta",
+          message: error instanceof Error ? error.message : String(error),
         }, 400);
       }
     });
@@ -624,6 +700,17 @@ export class BazaarService {
         await this.telemetryTracker.processHeartbeat(message);
       } catch (error) {
         console.error("[Bazaar Service] Error processing heartbeat:", error);
+      }
+    });
+
+    this.p2pNode.onCatalogDelta(async (delta: CatalogDelta) => {
+      const allowed = this.config.p2p.authorizedCatalogSigners?.[`${delta.network}:${delta.payTo}`]
+        ?? (delta.signer === delta.payTo ? [delta.payTo] : undefined);
+      const result = await this.ingestionWorker.applyCatalogDelta(delta, {
+        authorizedSigners: allowed,
+      });
+      if (result.status === "rejected") {
+        console.warn(`[Bazaar Service] Catalog delta rejected: ${result.reason}`);
       }
     });
 

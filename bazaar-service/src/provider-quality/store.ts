@@ -85,6 +85,24 @@ export class ProviderQualityStore {
     return result.rows.map(mapObservation);
   }
 
+  async listObservationsForAggregate(
+    resource: string,
+    payTo?: string,
+    windowSeconds = 30 * 24 * 60 * 60,
+    nowSeconds = Math.floor(Date.now() / 1000),
+  ): Promise<ProviderObservationRecord[]> {
+    const result = await this.db.query<ProviderObservationRow>(
+      `SELECT * FROM provider_observations
+       WHERE resource = $1
+         AND ($2::text IS NULL OR pay_to = $2)
+         AND observed_at >= to_timestamp($3)
+         AND observed_at <= to_timestamp($4)
+       ORDER BY observed_at DESC`,
+      [resource, payTo ?? null, nowSeconds - windowSeconds, nowSeconds],
+    );
+    return result.rows.map(mapObservation);
+  }
+
   async getAggregate(resource: string, payTo?: string): Promise<ProviderAggregate | null> {
     const result = await this.db.query<ProviderAggregateRow>(
       `SELECT endpoint, pay_to, state, fault_rate_upper_bound,

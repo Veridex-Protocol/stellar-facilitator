@@ -46,6 +46,25 @@ export function createSignedProviderAggregate(
   };
 }
 
+export function createSignedProviderObservation(
+  observation: Omit<ProviderObservation, "v" | "signer" | "signature">,
+  signerSecretKey: string,
+): ProviderObservation {
+  const keypair = Keypair.fromSecret(signerSecretKey);
+  const unsigned = { v: "veridex/provider-outcome/1" as const, ...observation };
+  const parsed = ProviderObservationSchema.safeParse({
+    ...unsigned,
+    signer: keypair.publicKey(),
+    signature: "placeholder",
+  });
+  if (!parsed.success) throw new Error(parsed.error.message);
+  return {
+    ...unsigned,
+    signer: keypair.publicKey(),
+    signature: keypair.sign(Buffer.from(canonicalize(unsigned), "utf8")).toString("base64"),
+  };
+}
+
 export function verifyProviderObservation(
   observation: ProviderObservation,
   options: ProviderQualityVerificationOptions = {},
