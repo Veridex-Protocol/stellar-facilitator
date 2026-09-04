@@ -59,6 +59,7 @@ export interface BazaarServiceConfig {
   stellarSecretKey?: string;
   /** Horizon endpoint used to confirm the settlements behind catalog entries. */
   horizonUrl: string;
+  sorobanRpcUrl: string;
   /** Shared secret the facilitator presents on /catalog/ingest. Required. */
   internalToken: string;
   announcedResources: ResourceMetadata[];
@@ -109,6 +110,7 @@ export function getDefaultConfig(): BazaarServiceConfig {
     providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
     providerAggregateRecomputeQueueLimit: parseInt(process.env.PROVIDER_AGGREGATE_RECOMPUTE_QUEUE_LIMIT || "256", 10),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
+    sorobanRpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org",
     // Required, not optional. The previous guard read
     // `if (internalToken && ...)`, which skipped authentication entirely when
     // the variable was unset - an open write endpoint on the public catalog.
@@ -258,6 +260,7 @@ export class BazaarService {
     this.searchEngine = new BazaarSearchEngine(config.database);
     this.ingestionWorker = new CatalogIngestionWorker(config.database, {
       horizonUrl: config.horizonUrl,
+      sorobanRpcUrl: config.sorobanRpcUrl,
     });
     this.providerQualityStore = new ProviderQualityStore(this.db);
 

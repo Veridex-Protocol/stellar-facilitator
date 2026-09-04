@@ -97,6 +97,11 @@ export const CatalogDeltaStateSchema = z.object({
   extensions: z.record(z.any()).optional(),
   scheme: z.string().min(1),
   settlementTx: z.string().regex(/^[0-9a-f]{64}$/i),
+  uptoContractId: z.string().optional(),
+  settlementToken: z.string().optional(),
+  settlementMaxAmount: z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
+  settlementActual: z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
+  settlementResultDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/i).optional(),
 });
 
 export type CatalogDeltaState = z.infer<typeof CatalogDeltaStateSchema>;
@@ -127,6 +132,17 @@ function refineCatalogDelta<T extends z.ZodTypeAny>(schema: T): T {
   }
   if (delta.expiresAt - delta.issuedAt > 24 * 60 * 60) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["expiresAt"], message: "catalog delta lifetime may not exceed 24 hours" });
+  }
+  if (delta.op === "upsert" && delta.state?.scheme === "upto") {
+    for (const [field, value] of [
+      ["uptoContractId", delta.state.uptoContractId],
+      ["settlementToken", delta.state.settlementToken],
+      ["settlementMaxAmount", delta.state.settlementMaxAmount],
+      ["settlementActual", delta.state.settlementActual],
+      ["settlementResultDigest", delta.state.settlementResultDigest],
+    ] as const) {
+      if (!value) context.addIssue({ code: z.ZodIssueCode.custom, path: ["state", field], message: `upto deltas require ${field}` });
+    }
   }
   }) as unknown as T;
 }

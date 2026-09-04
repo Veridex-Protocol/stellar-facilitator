@@ -17,7 +17,7 @@ import type { Pool as PoolType } from "pg";
 import { z } from "zod";
 import { isIP } from "node:net";
 import { generateResourceEmbedding } from "../search/embeddings.js";
-import { verifySettlement } from "./settlement-proof.js";
+import { verifySettlement, type SettlementProofOptions } from "./settlement-proof.js";
 import { verifyOwnerSignature } from "./owner-signature.js";
 import type { DatabaseConfig } from "../search/types.js";
 import {
@@ -65,6 +65,7 @@ export interface IngestionRequest {
    * happened. See settlement-proof.ts.
    */
   settlementTx: string;
+  settlementProof?: Pick<SettlementProofOptions, "scheme" | "uptoContractId" | "expectedToken" | "expectedMaxAmount" | "expectedActual" | "expectedResultDigest">;
 }
 
 /**
@@ -83,9 +84,11 @@ export interface IngestionResult {
 export class CatalogIngestionWorker {
   private pool: PoolType;
   private horizonUrl: string;
+  private sorobanRpcUrl: string;
 
-  constructor(config: DatabaseConfig, options: { horizonUrl: string }) {
+  constructor(config: DatabaseConfig, options: { horizonUrl: string; sorobanRpcUrl: string }) {
     this.horizonUrl = options.horizonUrl;
+    this.sorobanRpcUrl = options.sorobanRpcUrl;
     this.pool = new Pool({
       host: config.host,
       port: config.port,
@@ -120,6 +123,8 @@ export class CatalogIngestionWorker {
       // 2. Confirm a real settlement backs this entry on Horizon.
       const settlement = await verifySettlement(request.settlementTx, request.payTo, {
         horizonUrl: this.horizonUrl,
+        sorobanRpcUrl: this.sorobanRpcUrl,
+        ...request.settlementProof,
       });
       if (!settlement.valid) {
         await client.query("ROLLBACK");
@@ -310,6 +315,13 @@ export class CatalogIngestionWorker {
         }
         const settlement = await verifySettlement(state.settlementTx, delta.payTo, {
           horizonUrl: this.horizonUrl,
+          sorobanRpcUrl: this.sorobanRpcUrl,
+          scheme: state.scheme,
+          uptoContractId: state.uptoContractId,
+          expectedToken: state.settlementToken,
+          expectedMaxAmount: state.settlementMaxAmount,
+          expectedActual: state.settlementActual,
+          expectedResultDigest: state.settlementResultDigest,
         });
         if (!settlement.valid) {
           await client.query("ROLLBACK");
