@@ -49,6 +49,11 @@ jobs:
         run: npm test -- --run
         working-directory: ${{ matrix.package }}
 
+      - name: Canonical buyer facade proof
+        if: matrix.package == 'sdk-typescript'
+        run: npm test -- --run src/__tests__/veridex-client.test.ts
+        working-directory: sdk-typescript
+
   python:
     runs-on: ubuntu-latest
     steps:

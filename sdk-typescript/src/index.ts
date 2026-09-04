@@ -12,3 +12,4 @@ export * from "./provider-outcome.js";
 export * from "./provider-quality.js";
 export * from "./response-aware.js";
 export * from "./x402-provider-extension.js";
+export * from "./veridex-client.js";

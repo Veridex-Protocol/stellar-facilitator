@@ -36,6 +36,8 @@ Start at [`docs/guide/`](docs/guide/README.md).
 Full documentation is organized under [`docs/`](docs/) and throughout the workspace:
 
 ### Guides & Integration Paths
+- **[Package Selection](docs/package-selection.md)**: Which official or Veridex package to use for each role.
+- **[Golden Path](docs/golden-path.md)**: The shortest supported buyer, seller, discovery, and MCP flows.
 - **[Developer Guides Index](docs/guide/README.md)**: Role-based walkthroughs for integrating and operating.
   - **[Seller Path](docs/guide/seller.md)**: Host an API/MCP tool, return HTTP 402 challenges, and auto-list in the Bazaar.
   - **[Buyer & Agent Path](docs/guide/buyer.md)**: Discover endpoints via Bazaar/MCP and execute Stellar payments.
@@ -43,6 +45,10 @@ Full documentation is organized under [`docs/`](docs/) and throughout the worksp
 
 ### Architecture & Operations
 - **[System Architecture](docs/architecture.md)**: System design, payment and discovery planes, trust boundaries, and release invariants.
+- **[Package Selection](docs/package-selection.md)**: Which official or Veridex package to use for each role.
+- **[Golden Path](docs/golden-path.md)**: The shortest supported buyer, seller, discovery, and MCP flows.
+- **TypeScript high-level buyer facade and advanced Bazaar/facilitator helpers; Python discovery/raw transport helpers; TypeScript, Python, and Go seller helpers**
+| `sdk-typescript/` | `@veridex/stellar` buyer facade, Bazaar, and facilitator helpers | [README](sdk-typescript/README.md) |
 - **[Deployment Guide](docs/deployment.md)**: Production deployment guide, environment variables, PostgreSQL configuration, and Docker setup.
 - **[Testnet Go-Live Runbook](testnet_docs.md)**: Operational checklist, boot-gated validation rules, channel pool sizing, and known limits.
 - **[Bazaar Database Setup](bazaar-service/database_setup.md)**: PostgreSQL + pgvector schema initialization and migrations.
@@ -70,7 +76,7 @@ Full documentation is organized under [`docs/`](docs/) and throughout the worksp
   - [Bazaar Discovery API OpenAPI Spec](docs/openapi/bazaar.yaml)
 
 ### Workspace Component Documentation
-- **[SDKs Overview](sdks/README.md)** (with [TypeScript SDK](sdk-typescript/README.md) & [Python SDK](sdk-python/README.md))
+- **[SDKs Overview](sdks/README.md)** (with [`@veridex/stellar`](sdk-typescript/README.md) & Python advanced helpers [sdk-python](sdk-python/README.md))
 - **[MCP Buyer Server](mcp-server/README.md)**
 - **[Soroban Smart Contracts](contracts/README.md)**
 - **[Interactive Playground](playground/README.md)**
@@ -131,7 +137,7 @@ Stated here rather than blurred into the list above:
 | `bazaar-service/` | Federated Catalog & Hybrid Search Engine | [README](bazaar-service/README.md) |
 | `mcp-server/` | Model Context Protocol Discovery & Payment Server | [README](mcp-server/README.md) |
 | `playground/` | Next.js sandbox: pay on testnet, then verify the payment yourself | [README](playground/README.md) |
-| `sdk-typescript/` | TypeScript Client & Seller Helpers | [README](sdk-typescript/README.md) |
+| `sdk-typescript/` | `@veridex/stellar` buyer facade, Bazaar, and facilitator helpers | [README](sdk-typescript/README.md) |
 | `sdk-python/` | Python Client & Seller Helpers | [README](sdk-python/README.md) |
 | `sdks/` | Multi-language seller helpers (TypeScript, Python, Go) | [README](sdks/README.md) |
 | `contracts/upto-settlement/`| Soroban `upto` Smart Contract | [README](contracts/upto-settlement/README.md) |

@@ -13,7 +13,12 @@ from .types import PaymentResponse, FacilitatorScheme
 
 @dataclass
 class PaymentRequest:
-    """A canonical x402 payload and the requirements it was signed against."""
+    """A pre-built x402 payload for advanced facilitator integrations.
+
+    This client does not create Stellar authorization entries or perform the
+    HTTP 402 challenge/retry loop. Use the TypeScript `@veridex/stellar`
+    facade or official x402 tooling for the canonical buyer experience.
+    """
     resource_url: str
     payment_payload: Dict[str, Any]
     payment_requirements: Dict[str, Any]
@@ -29,29 +34,14 @@ class FacilitatorClient:
 
     Args:
         facilitator_url: Facilitator service URL
-        network: Stellar network (pubnet, testnet, futurenet)
-        client_secret_key: Client Stellar secret key for signing
+        network: Stellar network (pubnet or testnet)
         timeout: Request timeout in seconds
-
-    Example:
-        >>> client = FacilitatorClient(
-        ...     facilitator_url="http://localhost:3002",
-        ...     network="testnet",
-        ...     client_secret_key="S..."
-        ... )
-        >>> payment = client.pay(PaymentRequest(
-        ...     resource_url="https://api.example.com/tool",
-        ...     amount_stroops="100000"
-        ... ))
-        >>> if payment.status == "success":
-        ...     print(f"TX: {payment.transaction_hash}")
     """
 
     def __init__(
         self,
         facilitator_url: str,
         network: str = "testnet",
-        client_secret_key: Optional[str] = None,
         timeout: int = 30,
     ):
         self.facilitator_url = facilitator_url.rstrip("/")
@@ -88,7 +78,7 @@ class FacilitatorClient:
             Payment response with transaction hash or error
 
         Raises:
-            ValueError: If client secret key not configured
+            # ValueError: If client secret key not configured
             requests.RequestException: If request fails
         """
         url = f"{self.facilitator_url}/settle"

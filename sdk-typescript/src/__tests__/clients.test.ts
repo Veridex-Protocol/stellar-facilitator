@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Keypair } from "@stellar/stellar-sdk";
 import { BazaarClient, createBazaarClient } from "../bazaar-client.js";
 import { FacilitatorClient, createFacilitatorClient } from "../facilitator-client.js";
 
@@ -148,6 +149,22 @@ describe("FacilitatorClient", () => {
     expect(supported.kinds[0].scheme).toBe("exact");
     // A buyer reads this to know whether it needs XLM for fees.
     expect(supported.kinds[0].extra?.areFeesSponsored).toBe(true);
+  });
+
+  it("does not claim sponsored fees when the facilitator does not advertise them", async () => {
+    stubFetch({
+      kinds: [{ x402Version: 2, scheme: "exact", network: "stellar:testnet", extra: { areFeesSponsored: false } }],
+      signers: { "stellar:*": ["GABC"] },
+    });
+    await expect(createFacilitatorClient({
+      ...config,
+      clientSecretKey: Keypair.random().secret(),
+      requireSponsoredFees: true,
+    }).pay({
+      resourceUrl: "https://seller.example/data",
+      amountStroops: "1",
+      payTo: "GABC",
+    })).rejects.toThrow(/sponsored fees/);
   });
 
   it("reads the capability descriptor", async () => {
