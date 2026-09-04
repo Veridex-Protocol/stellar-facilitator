@@ -217,7 +217,10 @@ export class X402Facilitator {
           errorReason: "upto_scheme_not_configured",
         };
       }
-      const preferredSigner = this.uptoScheme.getAuthorizedFacilitator(payload, requirements);
+      const parsedPreferredSigner = this.uptoScheme.getAuthorizedFacilitator(payload, requirements);
+      const preferredSigner = parsedPreferredSigner && this.uptoScheme.signingAddresses.has(parsedPreferredSigner)
+        ? parsedPreferredSigner
+        : undefined;
       return this.scheduler.withSigner(
         () => this.uptoScheme!.settle(payload, requirements),
         preferredSigner,

@@ -18,7 +18,7 @@ The Bazaar Service provides a trustless discovery layer where client software ca
          │                                   ├── Broadcast Signed GossipSub Msg   │
          │                                   │                                    │
          │                                   │◄── GET /discovery/search ──────────┤
-         │                                   │    (Natural language / filters)    │
+         │                                   │    (Lexical hybrid / filters)      │
          │                                   ├── Hybrid Search & RRF Ranking      │
          │                                   │─── Return Ranked JSON Results ────►│
 ```

@@ -97,6 +97,33 @@ describe("BazaarClient", () => {
     expect(new BazaarClient({ bazaarUrl: BAZAAR_URL })).toBeInstanceOf(BazaarClient);
     expect(createBazaarClient({ bazaarUrl: BAZAAR_URL })).toBeInstanceOf(BazaarClient);
   });
+
+  it("reads explicit insufficient provider-quality data", async () => {
+    const seen = stubFetch({
+      v: "veridex/provider-aggregate/1",
+      endpoint: "https://provider.example/fx",
+      state: "insufficient_data",
+      faultRateUpperBound: 1,
+      faultsObserved: 0,
+      n: 0,
+      window: "30d",
+      retrievedAt: 1_700_000_000,
+    });
+    const result = await createBazaarClient({ bazaarUrl: BAZAAR_URL }).providerQuality("https://provider.example/fx");
+    expect(new URL(seen[0].url).pathname).toBe("/v1/provider");
+    expect(result.state).toBe("insufficient_data");
+  });
+
+  it("reads digest-only provider observations", async () => {
+    const seen = stubFetch({ endpoint: "https://provider.example/fx", observations: [] });
+    const result = await createBazaarClient({ bazaarUrl: BAZAAR_URL }).providerObservations(
+      "https://provider.example/fx",
+      { limit: 5 },
+    );
+    expect(new URL(seen[0].url).pathname).toBe("/v1/provider/observations");
+    expect(new URL(seen[0].url).searchParams.get("limit")).toBe("5");
+    expect(result.observations).toEqual([]);
+  });
 });
 
 describe("FacilitatorClient", () => {

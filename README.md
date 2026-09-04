@@ -111,14 +111,15 @@ Full documentation is organized under [`docs/`](docs/) and throughout the worksp
 
 Stated here rather than blurred into the list above:
 
-- **Semantic retrieval.** The vector leg of Bazaar ranking is 384-dimensional
+- **Learned semantic retrieval.** The default vector leg of Bazaar ranking is 384-dimensional
   feature hashing. It is a second lexical signal, not a learned embedding.
 - **Catalog binding to a URL.** Entries are bound to a confirmed payment and one
   payment lists one resource, but the ledger does not record which URL was
   served. Binding that needs the resource server to sign the pairing.
-- **`upto` audited.** The contract is deployed and advertised on testnet, with a
-  reproducible wasm hash, but it has had no independent security review and is
-  not integrated end to end.
+- **`upto` facilitator-path conformance.** The contract is deployed and boot-gated
+  on testnet, with a reproducible wasm hash, but the stock HTTP seller-to-facilitator
+  path has not been independently exercised in this repository. Contract tests and
+  facilitator validation cover the core bounds; no independent security review exists.
 - **A live ledger-skew recovery.** The retry is tested deterministically; it has
   not yet been observed rescuing a real degraded RPC window.
 

@@ -8,7 +8,7 @@ Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x4
 
 This MCP server enables compatible clients to:
 
-1. **Discover resources** - Search Bazaar catalog with semantic/keyword queries
+1. **Discover resources** - Search Bazaar catalog with lexical-hybrid/keyword queries
 2. **Execute payments** - Pay for resource access via x402 Stellar protocol
 3. **Manage escrow** - Check balance and deposit funds for metered billing
 
@@ -16,7 +16,7 @@ This MCP server enables compatible clients to:
 
 ### `discover_resources`
 
-Search Veridex Bazaar catalog using hybrid semantic + keyword search.
+Search Veridex Bazaar catalog using BM25 plus deterministic feature-hash lexical retrieval.
 
 **Input:**
 ```json
