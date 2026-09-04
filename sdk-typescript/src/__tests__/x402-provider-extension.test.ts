@@ -39,7 +39,10 @@ function makeContext(outcomeHeader: string, scheme = "exact"): SettleContext {
     },
     declaredExtensions: {},
     phase: "after-handler",
-    transportContext: { responseHeaders: { [PROVIDER_OUTCOME_HEADER]: outcomeHeader } },
+    transportContext: {
+      responseHeaders: { [PROVIDER_OUTCOME_HEADER]: outcomeHeader },
+      responseBody: Buffer.from('{"value":"0.12"}'),
+    },
   } as SettleContext;
 }
 
@@ -84,6 +87,28 @@ describe("x402 provider-quality extension", () => {
     const context = makeContext(Buffer.from(JSON.stringify(signedOutcome)).toString("base64"), "upto");
     const enrichment = await scheme.enrichSettlementPayload(context);
     expect(enrichment).toEqual({ existing: true, resultDigest: signedOutcome.responseDigest });
+  });
+
+  it("rejects an outcome whose digest does not match the returned bytes", async () => {
+    const outcome = createProviderOutcome({
+      ...signedOutcome,
+      responseDigest: computeSha256Digest("different response"),
+    }, signer.secret());
+    const extension = createProviderQualityExtension({
+      requireOutcome: true,
+      nowSeconds: 1_700_000_100,
+    });
+
+    const result = await extension.hooks!.onBeforeSettle!(
+      {},
+      makeContext(Buffer.from(JSON.stringify(outcome)).toString("base64")),
+    );
+
+    expect(result).toMatchObject({
+      abort: true,
+      reason: "provider_outcome_invalid",
+      message: "provider outcome responseDigest does not match the returned bytes",
+    });
   });
 
   it("writes a bounded upto override without involving an indexer", () => {

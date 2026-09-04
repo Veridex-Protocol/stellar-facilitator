@@ -135,6 +135,34 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
     return signers;
   }
 
+  getAuthorizedFacilitator(
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+  ): string | undefined {
+    try {
+      if (payload.accepted.scheme !== "upto" || requirements.scheme !== "upto") return undefined;
+      const stellarPayload = payload.payload as { transaction?: string };
+      if (typeof stellarPayload.transaction !== "string") return undefined;
+      const transaction = new Transaction(
+        stellarPayload.transaction,
+        getNetworkPassphrase(requirements.network),
+      );
+      if (transaction.operations.length !== 1 || transaction.operations[0].type !== "invokeHostFunction") return undefined;
+      const invokeOp = transaction.operations[0] as Operation.InvokeHostFunction;
+      const func = invokeOp.func;
+      if (!func || func.switch().name !== "hostFunctionTypeInvokeContract") return undefined;
+      const invokeContractArgs = func.invokeContract();
+      if (Address.fromScAddress(invokeContractArgs.contractAddress()).toString() !== this.contractId) return undefined;
+      if (invokeContractArgs.functionName().toString() !== "settle") return undefined;
+      const rawArgs = invokeContractArgs.args();
+      if (rawArgs.length < 2) return undefined;
+      const terms = scValToNative(rawArgs[1]) as Record<string, unknown>;
+      return typeof terms.facilitator === "string" ? terms.facilitator : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async verify(
     payload: PaymentPayload,
     requirements: PaymentRequirements,
@@ -172,7 +200,17 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       payer = verifyResult.payer!;
 
       // 2. Select signer account from pool
-      const signer = this.signerMap.get(this.selectSigner([...this.signingAddresses]));
+      const selectedSignerAddress = this.selectSigner([...this.signingAddresses]);
+      if (selectedSignerAddress !== parsedTerms.facilitator) {
+        return {
+          success: false,
+          network: payload.accepted.network,
+          transaction: "",
+          errorReason: "settle_upto_stellar_facilitator_selection_mismatch",
+          payer,
+        };
+      }
+      const signer = this.signerMap.get(selectedSignerAddress);
       if (!signer) {
         return {
           success: false,

@@ -67,6 +67,7 @@ export interface BazaarServiceConfig {
   providerAggregateProvisionalThreshold: number;
   providerQualityAuthorizedSigners?: string[];
   providerAggregateAuthorizedIssuers?: string[];
+  providerAggregateRecomputeQueueLimit?: number;
 }
 
 /**
@@ -106,6 +107,7 @@ export function getDefaultConfig(): BazaarServiceConfig {
     providerAggregateProvisionalThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PROVISIONAL_THRESHOLD || "20", 10),
     providerQualityAuthorizedSigners: parseCsv(process.env.PROVIDER_QUALITY_AUTHORIZED_SIGNERS),
     providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
+    providerAggregateRecomputeQueueLimit: parseInt(process.env.PROVIDER_AGGREGATE_RECOMPUTE_QUEUE_LIMIT || "256", 10),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
     // Required, not optional. The previous guard read
     // `if (internalToken && ...)`, which skipped authentication entirely when
@@ -240,6 +242,10 @@ export class BazaarService {
   private httpServer?: ServerType;
   private livenessInterval?: NodeJS.Timeout;
   private heartbeatInterval?: NodeJS.Timeout;
+  private serviceReady = false;
+  private stopping = false;
+  private providerAggregateRecomputeScheduled = false;
+  private readonly pendingProviderAggregateRecomputes = new Map<string, { endpoint: string; payTo?: string }>();
 
   constructor(config: BazaarServiceConfig) {
     this.config = config;
@@ -335,7 +341,7 @@ export class BazaarService {
       const p2pStats = this.p2pNode.getStats();
 
       return c.json({
-        status: dbHealth.connected ? "ok" : "degraded",
+        status: dbHealth.connected && !dbHealth.error ? "ok" : "degraded",
         timestamp: Date.now(),
         database: dbHealth,
         p2p: {
@@ -344,6 +350,25 @@ export class BazaarService {
           uptime: p2pStats.uptime,
         },
       });
+    });
+
+    this.app.get("/ready", async (c) => {
+      const dbHealth = await this.db.healthCheck();
+      const p2pStats = this.p2pNode.getStats();
+      const ready = this.serviceReady &&
+        dbHealth.connected &&
+        !dbHealth.error &&
+        p2pStats.peerId.length > 0;
+      return c.json({
+        status: ready ? "ready" : "not_ready",
+        serviceStarted: this.serviceReady,
+        database: dbHealth,
+        p2p: {
+          peerId: p2pStats.peerId,
+          connectedPeers: p2pStats.connectedPeers,
+        },
+        timestamp: Date.now(),
+      }, ready ? 200 : 503);
     });
 
     // Statistics
@@ -431,7 +456,19 @@ export class BazaarService {
       const payTo = c.req.query("payTo");
       try {
         const aggregate = await this.providerQualityStore.getAggregate(endpoint, payTo);
-        if (!aggregate) return c.json({ state: "insufficient_data", endpoint, ...(payTo ? { payTo } : {}) }, 200);
+        if (!aggregate) {
+          return c.json({
+            v: "veridex/provider-aggregate/1",
+            endpoint,
+            ...(payTo ? { payTo } : {}),
+            state: "insufficient_data",
+            faultRateUpperBound: 1,
+            faultsObserved: 0,
+            n: 0,
+            window: "30d",
+            retrievedAt: Math.floor(Date.now() / 1000),
+          }, 200);
+        }
         const verification = verifyProviderAggregate(aggregate, {
           expectedEndpoint: endpoint,
           expectedPayTo: payTo,
@@ -615,6 +652,7 @@ export class BazaarService {
           return c.json({ error: "invalid_provider_observation", message: verification.error }, 400);
         }
         const record = await this.providerQualityStore.recordObservation({ observation });
+        this.enqueueProviderAggregateRecompute(observation.resource, observation.payTo);
         return c.json({ status: "accepted", id: record.id }, 202);
       } catch (error) {
         return c.json({
@@ -692,11 +730,12 @@ export class BazaarService {
    */
   async start(): Promise<void> {
     console.log("[Bazaar Service] Starting Veridex Bazaar Discovery Service...");
+    this.stopping = false;
 
     // Check database
     console.log("[Bazaar Service] Checking database connection...");
     const dbHealth = await this.db.healthCheck();
-    if (!dbHealth.connected) {
+    if (!dbHealth.connected || dbHealth.error) {
       throw new Error(`Database connection failed: ${dbHealth.error}`);
     }
     console.log("[Bazaar Service] Database OK");
@@ -791,6 +830,7 @@ export class BazaarService {
       port: this.config.port,
       hostname: this.config.host,
     });
+    this.serviceReady = true;
 
     this.livenessInterval = setInterval(() => {
       this.telemetryTracker.pruneOfflineNodes().catch((error) =>
@@ -813,6 +853,9 @@ export class BazaarService {
    */
   async stop(): Promise<void> {
     console.log("[Bazaar Service] Stopping service...");
+    this.stopping = true;
+    this.serviceReady = false;
+    this.pendingProviderAggregateRecomputes.clear();
 
     if (this.livenessInterval) {
       clearInterval(this.livenessInterval);
@@ -841,6 +884,50 @@ export class BazaarService {
    */
   getApp(): Hono {
     return this.app;
+  }
+
+  private enqueueProviderAggregateRecompute(endpoint: string, payTo?: string): void {
+    if (!this.config.providerAggregateIssuerSecretKey || this.stopping) return;
+    const key = `${endpoint}|${payTo ?? ""}`;
+    const queueLimit = Math.max(1, this.config.providerAggregateRecomputeQueueLimit ?? 256);
+    if (!this.pendingProviderAggregateRecomputes.has(key) && this.pendingProviderAggregateRecomputes.size >= queueLimit) {
+      console.warn(`[Bazaar Service] Provider aggregate recompute queue is full; dropping ${key}`);
+      return;
+    }
+    this.pendingProviderAggregateRecomputes.set(key, { endpoint, payTo });
+    if (this.providerAggregateRecomputeScheduled) return;
+    this.providerAggregateRecomputeScheduled = true;
+    setTimeout(() => {
+      this.providerAggregateRecomputeScheduled = false;
+      this.drainProviderAggregateRecomputeQueue().catch((error) =>
+        console.error("[Bazaar Service] Provider aggregate recomputation failed:", error),
+      );
+    }, 0);
+  }
+
+  private async drainProviderAggregateRecomputeQueue(): Promise<void> {
+    while (!this.stopping && this.pendingProviderAggregateRecomputes.size > 0) {
+      const next = this.pendingProviderAggregateRecomputes.values().next().value as
+        { endpoint: string; payTo?: string } | undefined;
+      if (!next) return;
+      this.pendingProviderAggregateRecomputes.delete(`${next.endpoint}|${next.payTo ?? ""}`);
+      try {
+        await this.recomputeProviderAggregate(next.endpoint, next.payTo);
+      } catch (error) {
+        console.error(`[Bazaar Service] Failed to recompute provider aggregate for ${next.endpoint}:`, error);
+      }
+    }
+  }
+
+  private async recomputeProviderAggregate(endpoint: string, payTo?: string): Promise<void> {
+    const issuerSecretKey = this.config.providerAggregateIssuerSecretKey;
+    if (!issuerSecretKey) return;
+    const observations = await this.providerQualityStore.listObservationsForAggregate(endpoint, payTo);
+    const aggregate = buildProviderAggregate(endpoint, payTo, observations, issuerSecretKey, {
+      publishedThreshold: this.config.providerAggregatePublishedThreshold,
+      provisionalThreshold: this.config.providerAggregateProvisionalThreshold,
+    });
+    await this.providerQualityStore.saveAggregate(aggregate);
   }
 }
 

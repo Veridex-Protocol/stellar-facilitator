@@ -64,8 +64,12 @@ export class ProviderOutcomeReplayGuard {
 }
 
 export function computeSha256Digest(value: unknown): string {
-  const bytes = typeof value === "string" ? value : canonicalizeJson(value);
-  return `sha256:${createHash("sha256").update(bytes, "utf8").digest("hex")}`;
+  const bytes = typeof value === "string"
+    ? Buffer.from(value, "utf8")
+    : value instanceof Uint8Array
+      ? Buffer.from(value)
+      : Buffer.from(canonicalizeJson(value), "utf8");
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 export function canonicalProviderOutcome(outcome: ProviderOutcomeUnsigned): string {

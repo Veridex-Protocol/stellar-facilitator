@@ -217,7 +217,11 @@ export class X402Facilitator {
           errorReason: "upto_scheme_not_configured",
         };
       }
-      return this.scheduler.withSigner(() => this.uptoScheme!.settle(payload, requirements));
+      const preferredSigner = this.uptoScheme.getAuthorizedFacilitator(payload, requirements);
+      return this.scheduler.withSigner(
+        () => this.uptoScheme!.settle(payload, requirements),
+        preferredSigner,
+      );
     }
 
     return {

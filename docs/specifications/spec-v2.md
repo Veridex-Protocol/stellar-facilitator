@@ -2,10 +2,10 @@
 ## Proposal & Comprehensive Architecture Specification (v2.0.0)
 
 **Document Version:** 2.0.0  
-**Status:** Proposal for Maintainers & Technical Steering Committee  
+**Status:** Implemented incrementally; production-readiness claims remain gated by the evidence matrix below
 **Target Networks:** `stellar:testnet`, `stellar:pubnet`  
 **License:** Apache License 2.0 (OSI Approved)  
-**New v2 Features:** P2P Libp2p Federated Relayer Mesh, Active Node Heartbeat Ping Protocol, Telemetry-Enriched Composite Quality Ranking, Distributed Multi-Facilitator Catalog Gossip, Real-Time Liveness Circuit Breakers  
+**Implemented v2 surfaces:** Signed Libp2p announcements, signed catalog deltas, telemetry-ranked discovery, provider-quality observations/aggregates, and liveness circuit breakers. Active probing, learned semantic retrieval, and public-network readiness remain gated.
 
 ---
 
@@ -13,21 +13,21 @@
 
 This document presents **Version 2.0 of the Architecture Specification & Grant Proposal** for the **x402 Facilitator with Bazaar (Discovery) Support RFP** on Stellar. 
 
-While v1.0 established a solid foundation with standard REST endpoints, Soroban auth entry validation, and passive database cataloging, **Version 2.0 introduces a paradigm shift in x402 discovery: a P2P Federated Relayer Mesh with Active Node Heartbeats and Telemetry-Enriched Dynamic Ranking.**
+While v1.0 established a solid foundation with standard REST endpoints, Soroban auth entry validation, and passive database cataloging, this revision adds signed telemetry, response-aware provider outcomes, deterministic catalog federation, and telemetry-ranked discovery. The system does not treat a heartbeat as an active endpoint probe, and the default vector leg remains lexical feature hashing.
 
 ### Core v2 Innovations Offered to Maintainers
 
-1. **Active P2P Node Discovery & Heartbeat Protocol (`/x402/bazaar/v1/announce`)**:
-   Resource servers and micro-facilitators no longer rely exclusively on passive payment-triggered indexing. They actively join a `js-libp2p` GossipSub mesh, broadcasting signed liveness pings and metadata announcements upon startup.
+1. **Signed P2P Node Discovery & Heartbeat Protocol (`/x402/bazaar/v1/announce`)**:
+  Resource servers and micro-facilitators can join a `js-libp2p` GossipSub mesh and broadcast signed liveness self-reports and metadata announcements. These messages measure participation and reported telemetry; they are not active probes of the resource endpoint.
 
 2. **Telemetry-Enriched Composite Ranking Algorithm**:
-   Search results are no longer ranked purely by static text matching. The search engine computes a multi-dimensional composite score combining natural-language semantic vector similarity (BM25 + `pgvector`), real-time ping latency, peer uptime history, and verified settlement success rates.
+  Search results combine BM25, a deterministic feature-hash lexical vector leg, liveness, reported latency, and settlement-derived reliability. A learned embedding provider is available behind an abstraction but is not the default or a semantic-search claim.
 
-3. **Decentralized Multi-Facilitator Catalog Mesh**:
-   Fulfills Section 3.2's mandate to avoid turning Stellar discovery into a "walled garden." Independent facilitators gossip verified catalog blocks peer-to-peer, keeping catalog listings synchronized across the ecosystem without centralized database lock-in.
+3. **Signed Catalog Delta Federation**:
+  Independent nodes can exchange signed full-snapshot catalog deltas over a dedicated GossipSub topic. Durable revisions, tombstones, settlement proofs, peer authorization, and deterministic conflict ordering are implemented; broad multi-operator deployment remains an evidence gate.
 
 4. **Liveness Circuit Breakers & Auto-Pruning**:
-   Dead, offline, or unresponsive endpoints are automatically demoted and soft-dropped after missing consecutive heartbeat windows, protecting clients from attempting calls to broken APIs.
+  Dead or disconnected mesh participants are demoted after missed heartbeat windows. A confirmed settlement is an independent, wider liveness signal. Provider correctness is evaluated separately from both signals.
 
 ```
                                   VERIDEX V2 P2P BAZAAR ARCHITECTURE

@@ -14,7 +14,7 @@ import { ping } from "@libp2p/ping";
 import { identify } from "@libp2p/identify";
 import { noise } from "@libp2p/noise";
 import { mplex } from "@libp2p/mplex";
-import { gossipsub } from "@chainsafe/libp2p-gossipsub";
+import { gossipsub } from "@libp2p/gossipsub";
 import { Keypair } from "@stellar/stellar-sdk";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";

@@ -28,6 +28,19 @@ export interface ProviderAggregate extends ProviderAggregateUnsigned {
   signature: string;
 }
 
+/** Public response used when an indexer has no observations to aggregate yet. */
+export interface ProviderAggregateInsufficientData {
+  v: "veridex/provider-aggregate/1";
+  endpoint: string;
+  payTo?: string;
+  state: "insufficient_data";
+  faultRateUpperBound: 1;
+  faultsObserved: 0;
+  n: 0;
+  window: string;
+  retrievedAt: number;
+}
+
 export interface ProviderAggregateValidationOptions {
   nowSeconds?: number;
   maxAgeSeconds?: number;
@@ -35,6 +48,7 @@ export interface ProviderAggregateValidationOptions {
   expectedEndpoint?: string;
   expectedPayTo?: string;
   expectedIssuer?: string;
+  authorizedIssuers?: string[];
 }
 
 export interface ProviderAggregateValidation {
@@ -45,6 +59,7 @@ export interface ProviderAggregateValidation {
 export interface AggregateLookup {
   status: "fresh" | "cached" | "unavailable" | "invalid";
   aggregate?: ProviderAggregate;
+  state?: ProviderAggregateState;
   stale: boolean;
   error?: string;
 }
@@ -142,6 +157,9 @@ export function verifyProviderAggregate(
   if (options.expectedIssuer && aggregate.issuer !== options.expectedIssuer) {
     return { valid: false, error: "provider aggregate issuer is not authorized" };
   }
+  if (options.authorizedIssuers && !options.authorizedIssuers.includes(aggregate.issuer)) {
+    return { valid: false, error: "provider aggregate issuer is not authorized" };
+  }
 
   let keypair: Keypair;
   try {
@@ -214,7 +232,11 @@ export class ProviderAggregateClient {
         headers: { Accept: "application/json" },
       });
       if (!response.ok) throw new Error(`aggregate endpoint returned HTTP ${response.status}`);
-      const aggregate = (await response.json()) as ProviderAggregate;
+      const responseBody = (await response.json()) as unknown;
+      if (isInsufficientDataAggregate(responseBody, endpoint, payTo)) {
+        return { status: "fresh", state: "insufficient_data", stale: false };
+      }
+      const aggregate = responseBody as ProviderAggregate;
       const validation = verifyProviderAggregate(aggregate, {
         expectedEndpoint: endpoint,
         expectedPayTo: payTo,
@@ -259,6 +281,14 @@ export class SellerPolicyEngine {
   }
 
   evaluate(endpoint: string, lookup: AggregateLookup): SellerPolicyDecision {
+    if (lookup.state === "insufficient_data") {
+      const action = this.config.insufficientData;
+      return {
+        action,
+        reason: `${lookup.state}: no provider observations are available for ${endpoint}`,
+        warning: action === "warn" ? "provider quality evidence is not sufficient for an unconditional sale" : undefined,
+      };
+    }
     if (!lookup.aggregate) {
       return this.decisionForUnavailable(lookup.error || "no valid provider aggregate");
     }
@@ -332,4 +362,24 @@ function validateUnsignedAggregate(aggregate: ProviderAggregateUnsigned): Provid
   if (!Number.isInteger(aggregate.n) || aggregate.n < 0 || !Number.isInteger(aggregate.faultsObserved) || aggregate.faultsObserved < 0 || aggregate.faultsObserved > aggregate.n) return { valid: false, error: "aggregate counts are invalid" };
   if (!Number.isInteger(aggregate.retrievedAt) || aggregate.retrievedAt <= 0 || !aggregate.window) return { valid: false, error: "aggregate timestamp and window are required" };
   return { valid: true };
+}
+
+function isInsufficientDataAggregate(
+  value: unknown,
+  endpoint: string,
+  payTo?: string,
+): value is ProviderAggregateInsufficientData {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ProviderAggregateInsufficientData>;
+  return candidate.v === "veridex/provider-aggregate/1" &&
+    candidate.endpoint === endpoint &&
+    (payTo === undefined || candidate.payTo === payTo) &&
+    candidate.state === "insufficient_data" &&
+    candidate.faultRateUpperBound === 1 &&
+    candidate.faultsObserved === 0 &&
+    candidate.n === 0 &&
+    typeof candidate.window === "string" &&
+    typeof candidate.retrievedAt === "number" &&
+    Number.isInteger(candidate.retrievedAt) &&
+    candidate.retrievedAt > 0;
 }

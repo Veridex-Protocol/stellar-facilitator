@@ -111,4 +111,26 @@ describe("provider-quality crypto and aggregation", () => {
     expect(verifyProviderAggregate({ ...aggregate, n: 101 }, { nowSeconds: 1_700_000_100 }).valid).toBe(false);
     expect(ProviderAggregateSchema.parse(aggregate).state).toBe("published");
   });
+
+  it("accepts only configured aggregate issuers", () => {
+    const issuer = Keypair.random();
+    const aggregate = createSignedProviderAggregate({
+      endpoint: resource,
+      payTo,
+      state: "provisional",
+      faultRateUpperBound: 0.2,
+      faultsObserved: 5,
+      n: 20,
+      window: "30d",
+      retrievedAt: 1_700_000_000,
+    }, issuer.secret());
+    expect(verifyProviderAggregate(aggregate, {
+      nowSeconds: 1_700_000_100,
+      authorizedIssuers: [Keypair.random().publicKey()],
+    }).valid).toBe(false);
+    expect(verifyProviderAggregate(aggregate, {
+      nowSeconds: 1_700_000_100,
+      authorizedIssuers: [issuer.publicKey()],
+    }).valid).toBe(true);
+  });
 });

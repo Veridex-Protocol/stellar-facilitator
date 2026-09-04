@@ -93,7 +93,8 @@ export class ProviderQualityStore {
     const result = await this.db.query(
       `UPDATE provider_observations
        SET settlement_tx = COALESCE(settlement_tx, $3)
-       WHERE signer = $1 AND signature = $2`,
+       WHERE signer = $1 AND signature = $2
+         AND (settlement_tx IS NULL OR settlement_tx = $3)`,
       [signer, signature, settlementTx],
     );
     return result.rowCount === 1;

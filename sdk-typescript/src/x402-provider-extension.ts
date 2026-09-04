@@ -12,6 +12,7 @@ import type {
 import {
   decodeProviderOutcomeHeader,
   encodeProviderOutcomeHeader,
+  computeSha256Digest,
   PROVIDER_OUTCOME_HEADER,
   verifyProviderOutcome,
   type ProviderOutcome,
@@ -100,6 +101,15 @@ export function createProviderQualityExtension(
           };
         }
 
+        const responseDigestError = validateResponseDigest(outcome, context);
+        if (responseDigestError) {
+          return {
+            abort: true as const,
+            reason: "provider_outcome_invalid",
+            message: responseDigestError,
+          };
+        }
+
         if (context.requirements.scheme === "upto") {
           if (outcome.usageAtomic === undefined) {
             return {
@@ -180,6 +190,8 @@ export function installProviderOutcomeSettlementEnrichment<T extends SchemeNetwo
       nowSeconds: options.nowSeconds,
     });
     if (!validation.valid) throw new Error(validation.error);
+    const responseDigestError = validateResponseDigest(outcome, context);
+    if (responseDigestError) throw new Error(responseDigestError);
 
     return {
       ...existing,
@@ -213,6 +225,18 @@ function readOutcome(context: SettleContext): ProviderOutcome | undefined {
   const raw = Object.entries(headers).find(([name]) => name.toLowerCase() === PROVIDER_OUTCOME_HEADER.toLowerCase())?.[1];
   if (!raw) return undefined;
   return decodeProviderOutcomeHeader(raw);
+}
+
+function validateResponseDigest(
+  outcome: ProviderOutcome,
+  context: SettleContext,
+): string | undefined {
+  const transport = context.transportContext as { responseBody?: Buffer } | undefined;
+  if (!transport?.responseBody) return "provider outcome response body is unavailable";
+  const expectedDigest = computeSha256Digest(transport.responseBody);
+  return outcome.responseDigest === expectedDigest
+    ? undefined
+    : "provider outcome responseDigest does not match the returned bytes";
 }
 
 function mergeDeclaration(

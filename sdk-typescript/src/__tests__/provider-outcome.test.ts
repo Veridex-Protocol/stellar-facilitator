@@ -173,6 +173,30 @@ describe("signed provider aggregates and seller policy", () => {
     expect(decision.warning).toContain("offline");
   });
 
+  it("keeps insufficient data distinct from an invalid signed aggregate", async () => {
+    const client = new ProviderAggregateClient({
+      indexerUrl: "https://indexer.example",
+      fetchImpl: (async () => new Response(JSON.stringify({
+        v: "veridex/provider-aggregate/1",
+        endpoint: resource,
+        payTo: payTo.publicKey(),
+        state: "insufficient_data",
+        faultRateUpperBound: 1,
+        faultsObserved: 0,
+        n: 0,
+        window: "30d",
+        retrievedAt: 1_700_000_000,
+      }))) as typeof fetch,
+      now: () => 1_700_000_100_000,
+    });
+    const lookup = await client.get(resource, payTo.publicKey());
+    expect(lookup).toMatchObject({ status: "fresh", state: "insufficient_data", stale: false });
+    expect(lookup.aggregate).toBeUndefined();
+
+    const decision = new SellerPolicyEngine({ insufficientData: "hold" }).evaluate(resource, lookup);
+    expect(decision.action).toBe("hold");
+  });
+
   it("holds a published aggregate above the configured policy ceiling", () => {
     const decision = new SellerPolicyEngine({ maxFaultRateUpperBound: 0.15 }).evaluate(resource, {
       status: "fresh",
@@ -189,5 +213,37 @@ describe("signed provider aggregates and seller policy", () => {
       }, payTo.secret()),
     });
     expect(decision.action).toBe("stop");
+  });
+
+  it("preserves the last valid aggregate during a bounded indexer outage", async () => {
+    let now = 1_700_000_000_000;
+    const aggregate = createProviderAggregate({
+      endpoint: resource,
+      payTo: payTo.publicKey(),
+      state: "published",
+      faultRateUpperBound: 0.1,
+      faultsObserved: 5,
+      n: 100,
+      window: "30d",
+      retrievedAt: 1_700_000_000,
+    }, payTo.secret());
+    let calls = 0;
+    const client = new ProviderAggregateClient({
+      indexerUrl: "https://indexer.example",
+      cacheTtlMs: 1,
+      maxStaleMs: 60_000,
+      now: () => now,
+      fetchImpl: (async () => {
+        calls++;
+        if (calls === 1) return new Response(JSON.stringify(aggregate));
+        throw new Error("indexer unavailable");
+      }) as typeof fetch,
+    });
+    expect((await client.get(resource, payTo.publicKey())).status).toBe("fresh");
+    now += 2;
+    const outage = await client.get(resource, payTo.publicKey());
+    expect(outage.status).toBe("cached");
+    expect(outage.stale).toBe(true);
+    expect(outage.aggregate?.state).toBe("published");
   });
 });
