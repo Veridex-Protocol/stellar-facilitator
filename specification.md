@@ -202,9 +202,9 @@ export class LivenessCircuitBreaker {
 
 ## 4. Stellar `upto` Settlement Scheme Specification
 
-Section 3.4 requires authoring `scheme_upto_stellar.md` and implementing a Soroban smart contract (`upto_escrow.rs`) enforcing the 5 core `upto` properties natively on Stellar.
+Section 3.4 is implemented by [`scheme_upto_stellar.md`](docs/specifications/scheme_upto_stellar.md) and the stateless Soroban contract at [`contracts/upto-settlement/src/lib.rs`](contracts/upto-settlement/src/lib.rs). The older `upto_escrow.rs` text below is a historical proposal, not the deployed implementation.
 
-### 4.1 Soroban Smart Contract (`upto_escrow.rs`)
+### 4.1 Historical Soroban Contract Draft (`upto_escrow.rs`)
 
 ```rust
 //! Soroban Upto Escrow & Settlement Contract for x402
@@ -486,8 +486,8 @@ All v2 packages operate strictly under the **Apache License 2.0**. CI automates 
 │  PHASE 2: Facilitator Core & Channel Pool (Weeks 3 - 4)                                 │
 │  - Standalone REST + WebSocket Hono server, 50 Channel account manager, Fee sponsoring │
 │                                                                                         │
-│  PHASE 3: Upstream Stellar `upto` Scheme & Soroban Contract (Weeks 5 - 6)                │
-│  - Author scheme_upto_stellar.md, compile & test upto_escrow.rs on Soroban testnet      │
+│  PHASE 3: Stellar `upto` Scheme & Soroban Contract (Weeks 5 - 6)                        │
+│  - Implement scheme_upto_stellar.md, test contracts/upto-settlement, gate deployment    │
 │                                                                                         │
 │  PHASE 4: Agent MCP Discovery Server & Multi-Language SDKs (Weeks 7 - 8)                │
 │  - Standalone MCP server, TS/Python/Go seller & buyer SDK helpers                       │
@@ -505,6 +505,6 @@ All v2 packages operate strictly under the **Apache License 2.0**. CI automates 
 2. Implement @veridex/bazaar-service using PostgreSQL + pgvector and a js-libp2p GossipSub P2P mesh topic /x402/bazaar/v1/announce.
 3. Enforce soft-drop rules in x402/typescript/packages/extensions/src/bazaar/facilitator.ts (isValidServiceName, sanitizeTags, isValidIconUrl, isValidRouteTemplate).
 4. Implement GET /discovery/search with composite quality scoring combining vector similarity, BM25 text match, 30-day node ping uptime, and response latency.
-5. Author scheme_upto_stellar.md and build the Soroban upto_escrow.rs smart contract enforcing single settlement and max cap.
+5. Use the implemented `scheme_upto_stellar.md` and `contracts/upto-settlement/src/lib.rs`; complete facilitator-path conformance and independent security review before public-network use.
 6. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools for compatible clients.
 7. Verify wire-level conformance using an unmodified canonical x402 client on stellar:testnet and stellar:pubnet with extra.areFeesSponsored = true.

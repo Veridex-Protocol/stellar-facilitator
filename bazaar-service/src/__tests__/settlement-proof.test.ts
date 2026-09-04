@@ -116,4 +116,42 @@ describe("settlement proof", () => {
     expect(result.valid).toBe(false);
     expect(result.reason).toMatch(/could not be reached/);
   });
+
+  it("requires a matching Settled event for upto catalog proof", async () => {
+    const contractId = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+    const token = "CBUSYNQKASUYFWYC3M2GUEDMX4AIVWPALDBYJPNK6554BREHTGZ2IUNF";
+    const resultDigest = "sha256:" + "b".repeat(64);
+    const event = {
+      contractId,
+      topics: ["settled", "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGO6V", PAY_TO, "settlement-id"],
+      data: {
+        token,
+        max_amount: 1000n,
+        actual: 375n,
+        result_digest: Buffer.from("b".repeat(64), "hex"),
+      },
+    };
+    const proofOptions = {
+      horizonUrl: HORIZON,
+      scheme: "upto",
+      uptoContractId: contractId,
+      expectedToken: token,
+      expectedMaxAmount: "1000",
+      expectedActual: "375",
+      expectedResultDigest: resultDigest,
+      fetchImpl: stubFetch(RECENT, CREDITED),
+      fetchUptoTransaction: async () => ({
+        status: "SUCCESS",
+        ledger: 4104581,
+        createdAt: RECENT.created_at,
+        events: [event],
+      }),
+    } as const;
+
+    await expect(verifySettlement(TX, PAY_TO, proofOptions)).resolves.toMatchObject({ valid: true });
+    await expect(verifySettlement(TX, PAY_TO, {
+      ...proofOptions,
+      expectedResultDigest: "sha256:" + "c".repeat(64),
+    })).resolves.toMatchObject({ valid: false, reason: expect.stringMatching(/result digest/) });
+  });
 });
