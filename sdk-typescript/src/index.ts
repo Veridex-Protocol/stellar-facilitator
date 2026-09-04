@@ -8,3 +8,5 @@
 export * from "./bazaar-client.js";
 export * from "./facilitator-client.js";
 export * from "./types.js";
+export * from "./provider-outcome.js";
+export * from "./response-aware.js";

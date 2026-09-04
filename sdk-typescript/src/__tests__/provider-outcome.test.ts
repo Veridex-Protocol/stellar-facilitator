@@ -1,0 +1,129 @@
+import { describe, expect, it } from "vitest";
+import { Keypair } from "@stellar/stellar-sdk";
+import {
+  ProviderOutcomeReplayGuard,
+  computeSha256Digest,
+  createProviderOutcome,
+  verifyProviderOutcome,
+} from "../provider-outcome.js";
+import { executeResponseAware } from "../response-aware.js";
+
+const resource = "https://provider.example/fx";
+const payTo = Keypair.random();
+const requestDigest = computeSha256Digest({ pair: "XLM/USD" });
+const responseDigest = computeSha256Digest({ value: "0.12" });
+
+function outcome(overrides: Record<string, unknown> = {}) {
+  return createProviderOutcome(
+    {
+      resource,
+      payTo: payTo.publicKey(),
+      requestDigest,
+      responseDigest,
+      observedAt: 1_700_000_000,
+      usable: true,
+      providerAtFault: false,
+      attributable: "unknown",
+      reasonCode: "ok",
+      callId: "call-1",
+      ...overrides,
+    },
+    payTo.secret(),
+  );
+}
+
+describe("signed provider outcomes", () => {
+  it("binds the signature to resource, payee, and response facts", () => {
+    const signed = outcome();
+    expect(verifyProviderOutcome(signed, { nowSeconds: 1_700_000_100 })).toEqual({ valid: true });
+
+    expect(
+      verifyProviderOutcome({ ...signed, payTo: Keypair.random().publicKey() }, { nowSeconds: 1_700_000_100 }).valid,
+    ).toBe(false);
+    expect(
+      verifyProviderOutcome({ ...signed, responseDigest: computeSha256Digest("different") }, { nowSeconds: 1_700_000_100 }).valid,
+    ).toBe(false);
+  });
+
+  it("rejects stale, future, and replayed outcomes", () => {
+    const guard = new ProviderOutcomeReplayGuard();
+    const signed = outcome();
+    expect(verifyProviderOutcome(signed, { nowSeconds: 1_700_000_100, replayGuard: guard }).valid).toBe(true);
+    expect(verifyProviderOutcome(signed, { nowSeconds: 1_700_000_100, replayGuard: guard }).valid).toBe(false);
+    expect(verifyProviderOutcome(signed, { nowSeconds: 1_700_001_000 }).valid).toBe(false);
+    expect(verifyProviderOutcome(outcome({ observedAt: 1_700_000_500 }), { nowSeconds: 1_700_000_100 }).valid).toBe(false);
+  });
+});
+
+describe("response-aware settlement", () => {
+  it("settles a usable response", async () => {
+    let settlements = 0;
+    const result = await executeResponseAware({
+      execute: async () => ({ result: { ok: true }, outcome: outcome() }),
+      settle: async () => {
+        settlements++;
+        return "tx";
+      },
+      outcomeValidation: { nowSeconds: 1_700_000_100 },
+    });
+
+    expect(result).toMatchObject({ chargeDisposition: "settle", settled: true, settlement: "tx" });
+    expect(settlements).toBe(1);
+  });
+
+  it("skips settlement for provider-attributed unusable responses", async () => {
+    let settlements = 0;
+    const result = await executeResponseAware({
+      execute: async () => ({
+        result: { stale: true },
+        outcome: outcome({ usable: false, providerAtFault: true, attributable: "provider", reasonCode: "data_stale" }),
+      }),
+      settle: async () => {
+        settlements++;
+        return "must-not-run";
+      },
+      outcomeValidation: { nowSeconds: 1_700_000_100 },
+    });
+
+    expect(result).toMatchObject({ chargeDisposition: "skip", settled: false });
+    expect(settlements).toBe(0);
+  });
+
+  it("uses explicit local policy for caller and ambiguous failures", async () => {
+    let settlements = 0;
+    const result = await executeResponseAware({
+      execute: async () => ({
+        result: { rejected: true },
+        outcome: outcome({ usable: false, attributable: "caller", reasonCode: "invalid_input" }),
+      }),
+      settle: async () => {
+        settlements++;
+        return "tx";
+      },
+      callerFailurePolicy: "settle",
+      outcomeValidation: { nowSeconds: 1_700_000_100 },
+    });
+
+    expect(result).toMatchObject({ chargeDisposition: "policy_decision", settled: true });
+    expect(settlements).toBe(1);
+  });
+
+  it("does not consult aggregate reputation to trigger settlement", async () => {
+    let settlements = 0;
+    const result = await executeResponseAware({
+      execute: async () => ({
+        result: { stale: true },
+        outcome: outcome({ usable: false, providerAtFault: false, attributable: "unknown", reasonCode: "unknown" }),
+      }),
+      settle: async () => {
+        settlements++;
+        return "must-not-run";
+      },
+      ambiguousFailurePolicy: "skip",
+      outcomeValidation: { nowSeconds: 1_700_000_100 },
+    });
+
+    expect(result.settled).toBe(false);
+    expect(settlements).toBe(0);
+  });
+});
