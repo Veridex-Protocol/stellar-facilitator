@@ -209,6 +209,7 @@ SETTLE_QUEUE_TIMEOUT_MS=30000
 # ── Demo resource server (the seller) ────────────────────────────────────────
 SELLER_ADDRESS=${accounts.seller.public}
 SELLER_SECRET_KEY=${accounts.seller.secret}
+PROVIDER_OUTCOME_SECRET_KEY=${accounts.seller.secret}
 DEMO_SERVER_PORT=3003
 DEMO_SERVER_URL=http://localhost:3003
 

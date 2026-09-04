@@ -17,11 +17,21 @@ import { config as loadDotenv } from "dotenv";
 loadDotenv({ path: [".env", "../.env"], quiet: true });
 
 import { serve } from "@hono/node-server";
+import { Keypair } from "@stellar/stellar-sdk";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { Hono } from "hono";
+import {
+  createProviderOutcome,
+  createProviderQualityExtension,
+  digestBytes,
+  digestJson,
+  encodeProviderOutcome,
+  PROVIDER_OUTCOME_HEADER,
+  PROVIDER_QUALITY_EXTENSION_KEY,
+} from "./provider-quality.js";
 
 /**
  * Reads a required environment variable.
@@ -44,6 +54,14 @@ const facilitatorUrl = (process.env.FACILITATOR_URL ?? "http://localhost:3002").
 const payTo = required("SELLER_ADDRESS");
 const asset = required("PAYMENT_ASSET");
 const amount = process.env.PAYMENT_AMOUNT ?? "100000";
+const providerOutcomeSecretKey = required("PROVIDER_OUTCOME_SECRET_KEY");
+const providerOutcomeSigner = Keypair.fromSecret(providerOutcomeSecretKey);
+if (providerOutcomeSigner.publicKey() !== payTo) {
+  throw new Error("PROVIDER_OUTCOME_SECRET_KEY must correspond to SELLER_ADDRESS for the reference seller");
+}
+
+const bazaarUrl = process.env.BAZAAR_URL?.replace(/\/+$/, "");
+const bazaarToken = process.env.BAZAAR_INTERNAL_TOKEN;
 
 /**
  * Waits for the facilitator to answer `/supported`.
@@ -82,7 +100,27 @@ await waitForFacilitator(facilitatorUrl);
 
 const resourceServer = new x402ResourceServer(
   new HTTPFacilitatorClient({ url: facilitatorUrl }),
-).register(NETWORK, new ExactStellarScheme());
+).register(NETWORK, new ExactStellarScheme()).registerExtension(
+  createProviderQualityExtension({
+    requireOutcome: true,
+    onObservation: (outcome) => {
+      if (!bazaarUrl || !bazaarToken) return;
+      return fetch(`${bazaarUrl}/provider-quality/observations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${bazaarToken}` },
+        body: JSON.stringify(outcome),
+      }).then(() => undefined).catch(() => undefined);
+    },
+    onSettlement: (outcome, context) => {
+      if (!bazaarUrl || !bazaarToken || !context.result.transaction) return;
+      return fetch(`${bazaarUrl}/provider-quality/observations/settlement`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${bazaarToken}` },
+        body: JSON.stringify({ signer: outcome.signer, signature: outcome.signature, settlementTx: context.result.transaction }),
+      }).then(() => undefined).catch(() => undefined);
+    },
+  }),
+);
 
 const app = new Hono();
 
@@ -108,15 +146,18 @@ app.use(
         mimeType: "application/json",
         tags: ["demo", "testnet"],
         // Declared so a settled payment exercises Bazaar catalog ingestion.
-        extensions: declareDiscoveryExtension({
-          output: {
-            example: {
-              resource: "paid-resource",
-              message: "Payment settled on Stellar testnet.",
-              servedAt: "2026-01-01T00:00:00.000Z",
+        extensions: {
+          ...declareDiscoveryExtension({
+            output: {
+              example: {
+                resource: "paid-resource",
+                message: "Payment settled on Stellar testnet.",
+                servedAt: "2026-01-01T00:00:00.000Z",
+              },
             },
-          },
-        }),
+          }),
+          [PROVIDER_QUALITY_EXTENSION_KEY]: { requireOutcome: true },
+        },
       },
     },
     resourceServer,
@@ -128,13 +169,30 @@ app.use(
   ),
 );
 
-app.get("/paid-resource", (c) =>
-  c.json({
+app.get("/paid-resource", (c) => {
+  const body = {
     resource: "paid-resource",
     message: "Payment settled on Stellar testnet. This JSON is the thing you bought.",
     servedAt: new Date().toISOString(),
-  }),
-);
+  };
+  const response = c.json(body);
+  const outcome = createProviderOutcome({
+    resource: c.req.url,
+    payTo,
+    requestDigest: digestJson({ method: c.req.method, url: c.req.url }),
+    responseDigest: digestBytes(JSON.stringify(body)),
+    observedAt: Math.floor(Date.now() / 1000),
+    usable: true,
+    providerAtFault: false,
+    attributable: "unknown",
+    reasonCode: "ok",
+    responseStatus: 200,
+    callId: c.req.header("X-Request-Id") || undefined,
+    signerSecretKey: providerOutcomeSecretKey,
+  });
+  response.headers.set(PROVIDER_OUTCOME_HEADER, encodeProviderOutcome(outcome));
+  return response;
+});
 
 serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
 

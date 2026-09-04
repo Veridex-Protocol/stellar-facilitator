@@ -151,8 +151,11 @@ services:
       DEMO_SERVER_PORT: 3003
       FACILITATOR_URL: http://facilitator:3002
       SELLER_ADDRESS: ${SELLER_ADDRESS}
+      PROVIDER_OUTCOME_SECRET_KEY: ${PROVIDER_OUTCOME_SECRET_KEY:-${SELLER_SECRET_KEY}}
       PAYMENT_ASSET: ${PAYMENT_ASSET}
       PAYMENT_AMOUNT: ${PAYMENT_AMOUNT:-100000}
+      BAZAAR_URL: http://bazaar:3001
+      BAZAAR_INTERNAL_TOKEN: ${BAZAAR_INTERNAL_TOKEN:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3003/health"]
       interval: 15s
