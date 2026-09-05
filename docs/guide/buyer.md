@@ -185,7 +185,11 @@ curl -s http://localhost:3002/supported | jq '.kinds[] | select(.scheme=="upto")
   "x402Version": 2,
   "scheme": "upto",
   "network": "stellar:testnet",
-  "extra": { "contractId": "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2" }
+  "extra": {
+    "contractId": "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2",
+    "facilitator": "the advertised facilitator signer",
+    "areFeesSponsored": true
+  }
 }
 ```
 
@@ -195,7 +199,7 @@ Your authorization commits you to a specific set of things and nothing beyond th
 
 The facilitator separately signs the amount it charged and a digest of what it delivered, which means the ledger records what you were charged and what for rather than only the facilitator's own log saying so.
 
-The scheme is advertised on testnet only and it is not audited, so treat it as experimental. Contract and validator tests exist, but the complete stock HTTP seller-to-facilitator conformance path remains an evidence gate. If `upto` is absent from `/supported`, that facilitator has no confirmed contract and you should not attempt it.
+The scheme is advertised on testnet only and it is not audited, so treat it as experimental. Veridex's custom HTTP seller/client path is testnet-proven; upstream `@x402/stellar` still exposes exact only, so upstream stock `upto` interoperability is not implied. If `upto` is absent from `/supported`, that facilitator has no confirmed contract and you should not attempt it.
 
 ## Handling failure
 

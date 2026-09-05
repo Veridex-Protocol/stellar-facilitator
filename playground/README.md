@@ -125,10 +125,10 @@ Stated here rather than implied by omission:
   wait until filtered search returns correct results — filters are currently
   applied after candidate retrieval, so a filtered query can come back empty
   while matching resources sit in the catalog.
-- **The metered `upto` flow.** The settlement contract is deployed on testnet
-  and has 27 passing tests, but the facilitator does not route `upto` through
-  `/verify` or `/settle`, so there is no honest way to demo it as a facilitator
-  feature yet.
+- **The metered `upto` flow in this playground.** The facilitator and custom
+  HTTP seller/client path are proven on testnet, but this browser playground
+  still exposes the exact flow only. The `upto` contract and adapter remain
+  experimental and unaudited.
 - **Mainnet.** Nothing here has run against `stellar:pubnet`, and the server
   refuses to try.
 

@@ -11,6 +11,7 @@
  */
 
 import {
+  Account,
   Address,
   BASE_FEE,
   FeeBumpTransaction,
@@ -222,6 +223,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       }
 
       const facilitatorAccount = await server.getAccount(signer.address);
+      const sourceSequence = facilitatorAccount.sequenceNumber();
 
       // 3. Determine actual amount and result digest
       // Actual charged amount defaults to requirements.amount or payload settlement metadata
@@ -287,7 +289,7 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       });
 
       // 5. Build preliminary transaction for auth signing & simulation
-      const initialTx = new TransactionBuilder(facilitatorAccount, {
+      const initialTx = new TransactionBuilder(new Account(signer.address, sourceSequence), {
         fee: BASE_FEE,
         networkPassphrase,
       })
@@ -361,16 +363,31 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
         auth: signedAuthEntries,
       });
 
-      const sorobanData = initialSim.transactionData.build();
-
-      const rebuiltTx = new TransactionBuilder(facilitatorAccount, {
+      const authorizedTx = new TransactionBuilder(new Account(signer.address, sourceSequence), {
         fee: BASE_FEE,
         networkPassphrase,
-        sorobanData,
       })
         .setTimeout(requirements.maxTimeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS)
         .addOperation(finalOp)
         .build();
+
+      // The unsigned verification simulation does not include the nonce
+      // ledger entries needed by the now-signed auth entries. Re-simulate the
+      // assembled authorization and build the final footprint from that
+      // result, as required for a submit-ready Soroban transaction.
+      const preparedSim = await server.simulateTransaction(authorizedTx);
+      if (!rpc.Api.isSimulationSuccess(preparedSim)) {
+        return {
+          success: false,
+          network: payload.accepted.network,
+          transaction: "",
+          errorReason: "settle_upto_simulation_failed",
+          errorMessage: preparedSim.error,
+          payer,
+        };
+      }
+      const preparedTx = rpc.assembleTransaction(authorizedTx, preparedSim).build();
+      const rebuiltTx = this.applyAuthEntries(preparedTx, signedAuthEntries, networkPassphrase);
 
       // 8. Sign transaction envelope
       const { signedTxXdr, error: signError } = await signer.signTransaction(rebuiltTx.toXDR(), {
@@ -415,11 +432,15 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
 
       const sendResult = await server.sendTransaction(txToSubmit);
       if (sendResult.status !== "PENDING") {
+        const detail = "errorResult" in sendResult
+          ? JSON.stringify(sendResult.errorResult)
+          : `status=${sendResult.status}`;
         return {
           success: false,
           network: payload.accepted.network,
           transaction: sendResult.hash || "",
           errorReason: "settle_upto_stellar_transaction_submission_failed",
+          errorMessage: detail,
           payer,
         };
       }
@@ -648,7 +669,13 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
       }
 
       // 6. Simulation & auth entry verification
-      const simResponse = await server.simulateTransaction(transaction);
+      // Soroban treats a partially authorized transaction as an attempted
+      // invocation and can return InvalidAction instead of describing the
+      // remaining auth entries. Simulate an equivalent envelope without auth
+      // entries, then compare the returned payer entry with the signed entry
+      // carried by the client payload below.
+      const simulationTransaction = this.withoutAuthEntries(transaction, networkPassphrase);
+      const simResponse = await server.simulateTransaction(simulationTransaction);
       if (!rpc.Api.isSimulationSuccess(simResponse)) {
         return {
           response: {
@@ -761,6 +788,20 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
     }
 
     return undefined;
+  }
+
+  private withoutAuthEntries(transaction: Transaction, networkPassphrase: string): Transaction {
+    return this.applyAuthEntries(transaction, [], networkPassphrase);
+  }
+
+  private applyAuthEntries(
+    transaction: Transaction,
+    auth: xdr.SorobanAuthorizationEntry[],
+    networkPassphrase: string,
+  ): Transaction {
+    const envelope = transaction.toEnvelope();
+    envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth(auth);
+    return TransactionBuilder.fromXDR(envelope.toXDR("base64"), networkPassphrase) as Transaction;
   }
 
   private async pollForTransaction(

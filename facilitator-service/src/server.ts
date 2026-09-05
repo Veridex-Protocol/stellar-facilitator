@@ -312,7 +312,9 @@ export class FacilitatorService {
         x402Version: 2,
         scheme: "upto",
         network,
-        extra: { contractId: this.capabilities.uptoContractId },
+        extra: this.x402Facilitator.getUptoExtra(network as any) ?? {
+          contractId: this.capabilities.uptoContractId,
+        },
       });
     }
 

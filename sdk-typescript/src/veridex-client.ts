@@ -6,8 +6,10 @@
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { createUptoStellarClient } from "./upto-client.js";
 
 export type VeridexNetwork = "stellar:testnet" | "stellar:pubnet";
+export type VeridexPaymentScheme = "exact" | "upto";
 
 export type VeridexErrorCode =
   | "invalid_configuration"
@@ -32,6 +34,12 @@ export class VeridexClientError extends Error {
 export interface VeridexClientOptions {
   network: VeridexNetwork;
   privateKey: string;
+  /** Exact remains the default; use upto for a bounded metered payment route. */
+  scheme?: VeridexPaymentScheme;
+  /** Optional override for the deployed network-specific upto contract. */
+  uptoContractId?: string;
+  /** Optional Soroban RPC endpoint for custom runtimes or testnet mirrors. */
+  rpcUrl?: string;
   /** Optional fetch implementation for tests, proxies, or custom runtimes. */
   fetch?: typeof globalThis.fetch;
 }
@@ -55,10 +63,26 @@ export class VeridexClient {
     this.network = options.network;
     try {
       const signer = createEd25519Signer(options.privateKey, options.network);
-      const x402 = new x402Client().register(
+      const preferredScheme = options.scheme ?? "exact";
+      const x402 = new x402Client((_version, accepts) => {
+        const selected = accepts.find((requirement) => requirement.scheme === preferredScheme);
+        if (!selected) throw new Error(`No ${preferredScheme} payment option was advertised`);
+        return selected;
+      })
+        .register(
         options.network,
         new ExactStellarScheme(signer),
-      );
+        );
+      if (preferredScheme === "upto") {
+        x402.register(
+          options.network,
+          createUptoStellarClient({
+            signer,
+            contractId: options.uptoContractId,
+            rpcUrl: options.rpcUrl,
+          }),
+        );
+      }
       this.fetchWithPayment = wrapFetchWithPayment(
         options.fetch ?? globalThis.fetch,
         x402,

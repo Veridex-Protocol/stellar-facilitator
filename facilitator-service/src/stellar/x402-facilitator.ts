@@ -262,6 +262,22 @@ export class X402Facilitator {
   }
 
   /**
+   * Upto clients need the signer that will authorize the response-dependent
+   * half of the contract call. Advertise one actual signer in the requirement
+   * metadata; the remaining signers are still published in the shared signer
+   * map for discovery and scheduler visibility.
+   */
+  getUptoExtra(network: Network): Record<string, unknown> | undefined {
+    if (!this.uptoScheme) return undefined;
+    const signer = this.uptoScheme.getSigners(network)[0];
+    return {
+      contractId: this.uptoScheme.contractId,
+      areFeesSponsored: this.areFeesSponsored,
+      ...(signer ? { facilitator: signer } : {}),
+    };
+  }
+
+  /**
    * Signer addresses for `/supported`.
    *
    * @param network - CAIP-2 network identifier

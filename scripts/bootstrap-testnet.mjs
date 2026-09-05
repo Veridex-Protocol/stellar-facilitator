@@ -28,6 +28,8 @@ const ENV_PATH = join(ROOT, ".env");
 const FRIENDBOT = "https://friendbot.stellar.org";
 const HORIZON = "https://horizon-testnet.stellar.org";
 const SOROBAN_RPC = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
+const UPTO_ESCROW_CONTRACT_ID_TESTNET = process.env.UPTO_ESCROW_CONTRACT_ID_TESTNET
+  ?? "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2";
 const BAZAAR_HOST_PORT = process.env.BAZAAR_HOST_PORT ?? "3001";
 const BAZAAR_P2P_HOST_PORT = process.env.BAZAAR_P2P_HOST_PORT ?? "4001";
 const BAZAAR_P2P_WS_HOST_PORT = process.env.BAZAAR_P2P_WS_HOST_PORT ?? "4002";
@@ -227,6 +229,7 @@ BUYER_SECRET_KEY=${accounts.buyer.secret}
 # Native XLM's Stellar Asset Contract: SEP-41, and no trustline required.
 PAYMENT_ASSET=${nativeSac}
 PAYMENT_AMOUNT=100000
+UPTO_ESCROW_CONTRACT_ID_TESTNET=${UPTO_ESCROW_CONTRACT_ID_TESTNET}
 
 # ── Bazaar ───────────────────────────────────────────────────────────────────
 BAZAAR_URL=http://localhost:${BAZAAR_HOST_PORT}

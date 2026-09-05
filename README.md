@@ -1,8 +1,8 @@
 # Veridex Stellar x402 Facilitator
 
-Apache-2.0 implementation of canonical x402 v2 `exact` payments on Stellar, a
-federated Bazaar discovery service, an MCP buyer, and a draft `upto` Soroban
-contract.
+Apache-2.0 implementation of canonical x402 v2 `exact` and experimental
+testnet `upto` payments on Stellar, a federated Bazaar discovery service, and
+an MCP buyer.
 
 ## Settle a payment yourself
 
@@ -111,7 +111,7 @@ Full documentation is organized under [`docs/`](docs/) and throughout the worksp
 - TypeScript and Python buyer clients; TypeScript, Python, and Go seller helpers
 - Soroban `upto` settlement contract, **deployed to testnet** at
   [`CAHV6TIA…`](https://stellar.expert/explorer/testnet/contract/CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2)
-  and boot-gated, though not yet audited
+  and boot-gated, though not yet audited; custom HTTP `upto` settlement is proven on testnet
 
 ## Not built
 
@@ -122,10 +122,9 @@ Stated here rather than blurred into the list above:
 - **Catalog binding to a URL.** Entries are bound to a confirmed payment and one
   payment lists one resource, but the ledger does not record which URL was
   served. Binding that needs the resource server to sign the pairing.
-- **`upto` facilitator-path conformance.** The contract is deployed and boot-gated
-  on testnet, with a reproducible wasm hash, but the stock HTTP seller-to-facilitator
-  path has not been independently exercised in this repository. Contract tests and
-  facilitator validation cover the core bounds; no independent security review exists.
+- **Upstream stock `upto` interoperability.** The custom Veridex seller/client HTTP
+  path is proven on testnet, but upstream `@x402/stellar` currently exposes exact
+  only. The contract and adapter also have no independent security review.
 - **A live ledger-skew recovery.** The retry is tested deterministically; it has
   not yet been observed rescuing a real degraded RPC window.
 
