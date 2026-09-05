@@ -1,5 +1,6 @@
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, xdr } from "@stellar/stellar-sdk";
 import type { ClientWallet } from "./types";
+import { fetchWithTimeout } from "./http";
 
 const WALLET_STORAGE_KEY = "veridex_playground_wallet_v2";
 
@@ -41,11 +42,13 @@ export async function fundFromFriendbot(
   publicKey: string
 ): Promise<void> {
   const url = `${friendbotUrl}?addr=${encodeURIComponent(publicKey)}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Friendbot funding failed (${res.status}): ${text}`);
-  }
+  const res = await fetchWithTimeout(url, {}, 30_000, "Friendbot funding request");
+  if (res.ok) return;
+
+  const text = await res.text();
+  if (res.status === 400 && /already funded|op_already_exists/i.test(text)) return;
+
+  throw new Error(`Friendbot funding failed (${res.status}): ${text}`);
 }
 
 export async function fetchNativeBalance(
@@ -53,7 +56,8 @@ export async function fetchNativeBalance(
   publicKey: string
 ): Promise<string> {
   try {
-    const res = await fetch(`${horizonUrl}/accounts/${publicKey}`);
+    const url = `${horizonUrl}/accounts/${publicKey}`;
+    const res = await fetchWithTimeout(url, {}, 10_000, "Horizon account request");
     if (res.status === 404) return "0.0000000";
     if (!res.ok) throw new Error(`Horizon account lookup failed (${res.status})`);
     const data = await res.json();
@@ -69,26 +73,39 @@ export async function waitForRpcVisibility(
   publicKey: string,
   timeoutMs = 15000
 ): Promise<void> {
+  const accountKey = xdr.LedgerKey.account(
+    new xdr.LedgerKeyAccount({ accountId: Keypair.fromPublicKey(publicKey).xdrPublicKey() })
+  ).toXDR("base64");
   const deadline = Date.now() + timeoutMs;
+
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getAccount",
-          params: { address: publicKey },
-        }),
-      });
+      const res = await fetchWithTimeout(
+        rpcUrl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getLedgerEntries",
+            params: { keys: [accountKey] },
+          }),
+        },
+        5_000,
+        "Soroban RPC account request"
+      );
       if (res.ok) {
         const body = await res.json();
-        if (body.result?.sequence) return;
+        if (body.result?.entries?.length) return;
       }
     } catch {
       // retry
     }
     await new Promise((r) => setTimeout(r, 600));
   }
+
+  throw new Error(
+    `Wallet was funded but did not become visible from Soroban RPC within ${Math.ceil(timeoutMs / 1000)}s.`
+  );
 }

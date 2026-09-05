@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Zap, ShieldCheck } from "lucide-react";
+import { Zap } from "lucide-react";
 import type { PlaygroundConfig, ClientWallet } from "@/lib/types";
 
 interface NavbarProps {
@@ -12,41 +12,46 @@ interface NavbarProps {
 
 export function Navbar({ config, wallet, balance }: NavbarProps) {
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0f1620]/85 backdrop-blur-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-sky-500/30 to-indigo-500/30 border border-sky-400/40 flex items-center justify-center shadow-[0_0_16px_rgba(56,189,248,0.25)]">
-            <Zap className="w-5 h-5 text-sky-400" />
+    <header className="sticky top-0 z-50 border-b border-white/[0.07] bg-black/70 backdrop-blur-2xl">
+      <div className="mx-auto flex min-h-[72px] w-full max-w-[1440px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center gap-3.5">
+          <div className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-purple-300/30 bg-purple-600 shadow-[0_0_28px_rgba(147,51,234,0.38)]">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/25 to-transparent" />
+            <Zap className="relative h-[18px] w-[18px] fill-white text-white" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-base tracking-tight text-white">
+          <div className="flex items-center gap-3">
+            <div>
+              <div className="text-[15px] font-extrabold tracking-[-0.02em] text-white">
                 Veridex
-              </span>
-              <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-gradient-to-r from-sky-400 to-indigo-400 text-slate-950">
-                x402 Sandbox
-              </span>
+              </div>
+              <div className="hidden text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-500 sm:block">
+                Stellar protocol lab
+              </div>
             </div>
-            <p className="text-xs text-slate-400 hidden sm:block">
-              Stellar testnet payment & cryptographic proof inspector
-            </p>
+            <div className="hidden h-8 w-px bg-white/10 sm:block" />
+            <span className="hidden rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-300 sm:inline-flex">
+              x402 sandbox
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
           {wallet && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-slate-900/60 font-mono text-xs text-slate-300">
-              <span className="text-emerald-400">●</span>
-              <span>{balance ? `${balance} XLM` : "Funding..."}</span>
-              <span className="text-slate-500">|</span>
-              <span className="text-slate-400">
-                {wallet.publicKey.slice(0, 4)}...{wallet.publicKey.slice(-4)}
+            <div className="hidden items-center gap-3 rounded-full border border-white/10 bg-white/[0.04] py-1.5 pl-2 pr-3 font-mono text-[11px] md:flex">
+              <span className="flex h-6 items-center rounded-full bg-white px-2 font-bold text-black">
+                {balance ? `${balance} XLM` : "Funding"}
+              </span>
+              <span className="text-zinc-400">
+                {wallet.publicKey.slice(0, 4)}···{wallet.publicKey.slice(-4)}
               </span>
             </div>
           )}
 
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full border border-sky-400/30 bg-sky-500/10 font-mono text-xs text-sky-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-beacon" />
+          <div className="flex items-center gap-2 rounded-full border border-purple-400/25 bg-purple-500/[0.08] px-3 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.1em] text-purple-200">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-purple-400 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-purple-300" />
+            </span>
             <span>{config?.network || "stellar:testnet"}</span>
           </div>
         </div>

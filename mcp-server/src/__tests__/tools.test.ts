@@ -131,7 +131,7 @@ describe("discover_resources", () => {
 
 describe("pay_resource", () => {
   it("refuses to pay when no signing key is configured, and says so", async () => {
-    // An agent runtime with no key must get a stated reason rather than a
+    // A client runtime with no key must get a stated reason rather than a
     // request that fails somewhere further in.
     stubFetch(() => ({ ok: true }));
     const server = new VeridexMCPServer(CONFIG);

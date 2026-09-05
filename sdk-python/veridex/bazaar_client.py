@@ -8,7 +8,7 @@ Client for Veridex Bazaar discovery service.
 import requests
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
-from .types import BazaarResource, BazaarSearchResponse
+from .types import BazaarResource, BazaarSearchResponse, ProviderAggregate, provider_aggregate_from_dict
 
 
 def _to_resource(row: Dict[str, Any]) -> BazaarResource:
@@ -187,6 +187,33 @@ class BazaarClient:
         """
         url = f"{self.bazaar_url}/stats"
         response = self.session.get(url, timeout=self.timeout)
+        response.raise_for_status()
+        return response.json()
+
+    def provider_quality(self, endpoint: str, pay_to: Optional[str] = None) -> ProviderAggregate:
+        """Read signed provider-quality state without affecting payment flow."""
+        response = self.session.get(
+            f"{self.bazaar_url}/v1/provider",
+            params={"endpoint": endpoint, **({"payTo": pay_to} if pay_to else {})},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        return provider_aggregate_from_dict(response.json())
+
+    def provider_observations(
+        self, endpoint: str, pay_to: Optional[str] = None, limit: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Read digest-only provider observation history."""
+        params: Dict[str, Any] = {"endpoint": endpoint}
+        if pay_to:
+            params["payTo"] = pay_to
+        if limit is not None:
+            params["limit"] = limit
+        response = self.session.get(
+            f"{self.bazaar_url}/v1/provider/observations",
+            params=params,
+            timeout=self.timeout,
+        )
         response.raise_for_status()
         return response.json()
 

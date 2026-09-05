@@ -1,9 +1,26 @@
 {
-  "name": "@veridex/sdk",
+  "name": "@veridex/stellar",
   "version": "0.1.0",
-  "description": "Veridex TypeScript SDK - Client library for Bazaar discovery and x402 payments",
+  "description": "Veridex Stellar buyer facade, Bazaar discovery, and advanced facilitator helpers",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Veridex-Protocol/stellar-facilitator.git",
+    "directory": "sdk-typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/Veridex-Protocol/stellar-facilitator/issues"
+  },
+  "homepage": "https://github.com/Veridex-Protocol/stellar-facilitator/tree/dev/sdk-typescript",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -17,6 +34,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepack": "npm run clean && npm run build",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
@@ -24,8 +42,9 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^16.2.0",
-    "@x402/core": "^2.21.0",
-    "@x402/stellar": "^2.21.0"
+    "@x402/core": "2.21.0",
+    "@x402/fetch": "2.21.0",
+    "@x402/stellar": "2.21.0"
   },
   "devDependencies": {
     "@types/minimatch": "^5.1.2",

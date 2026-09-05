@@ -204,7 +204,7 @@ The queue is bounded by remaining authorization validity, not only by queue leng
 
 ### 6.1 PostgreSQL + pgvector production design
 
-PostgreSQL is the source of truth for a local Bazaar node. `catalog_resources` holds the normalized, payment-bound resource metadata; `resource_telemetry` holds derived liveness and reliability observations; `node_heartbeats` provides an announcement audit trail. pgvector supplies semantic candidate retrieval and PostgreSQL full-text search supplies lexical retrieval.
+PostgreSQL is the source of truth for a local Bazaar node. `catalog_resources` holds the normalized, payment-bound resource metadata; `resource_telemetry` holds derived liveness and reliability observations; `node_heartbeats` provides an announcement audit trail. pgvector supplies deterministic feature-hash lexical candidate retrieval and PostgreSQL full-text search supplies BM25-compatible lexical retrieval.
 
 Search uses a two-stage strategy:
 

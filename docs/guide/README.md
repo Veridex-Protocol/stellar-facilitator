@@ -6,7 +6,7 @@ building, because you do not need the other two.
 | I am building | Start here | You will end with |
 | --- | --- | --- |
 | An API or MCP tool I want paid for | **[Seller path](./seller.md)** | A paid endpoint that appears in the Bazaar on its first settlement |
-| A client or agent that pays for things | **[Buyer and agent path](./buyer.md)** | Code that discovers a service and pays for it without a prior integration |
+| A client or agent that pays for things | **[Buyer and agent path](./buyer.md)** | A client that discovers a service and automatically handles the 402 payment retry |
 | A facilitator others rely on | **[Operator path](./operator.md)** | A running facilitator and catalog, with the checks that keep them honest |
 
 Every command in these guides runs against `stellar:testnet` and works from a
@@ -26,6 +26,8 @@ re-read from Horizon afterwards. It takes about a minute after the first image
 build and it needs no secrets from anyone.
 
 If that works, everything in these guides will work.
+
+For package ownership and the shortest supported flows, see [Package Selection](../package-selection.md) and [Golden Path](../golden-path.md).
 
 ## What x402 is, in one pass
 

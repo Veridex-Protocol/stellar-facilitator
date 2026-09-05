@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
     const response = await fetch(target.toString(), {
       method,
       headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(85_000),
     });
 
     const responseHeaders: Record<string, string> = {};

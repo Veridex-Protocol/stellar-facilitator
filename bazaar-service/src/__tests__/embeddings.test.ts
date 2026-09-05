@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { cosineSimilarity } from "../search/embeddings.js";
+import { cosineSimilarity, HttpEmbeddingProvider, configureEmbeddingProvider, generateEmbedding, getEmbeddingProviderName } from "../search/embeddings.js";
 
 describe("Embeddings & Vector Search Utilities", () => {
   it("should calculate identical vector similarity as 1.0", () => {
@@ -25,5 +25,23 @@ describe("Embeddings & Vector Search Utilities", () => {
     const vecA = [1, 2, 3];
     const vecB = [1, 2];
     expect(() => cosineSimilarity(vecA, vecB)).toThrow("Vectors must have the same dimension");
+  });
+
+  it("keeps the deterministic feature-hash provider explicitly non-semantic", async () => {
+    expect(getEmbeddingProviderName()).toBe("feature-hash");
+    expect((await generateEmbedding("car")).length).toBe(384);
+  });
+
+  it("falls back when a configured HTTP provider fails", async () => {
+    configureEmbeddingProvider(new HttpEmbeddingProvider({
+      endpoint: "https://embeddings.example/v1",
+      fetchImpl: (async () => new Response("offline", { status: 503 })) as typeof fetch,
+    }));
+    expect((await generateEmbedding("automobile")).length).toBe(384);
+    configureEmbeddingProvider({
+      name: "feature-hash",
+      dimension: 384,
+      embed: async (text: string) => generateEmbedding(text),
+    });
   });
 });

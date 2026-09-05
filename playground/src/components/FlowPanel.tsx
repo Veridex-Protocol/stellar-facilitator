@@ -3,12 +3,10 @@
 import React, { useState } from "react";
 import {
   Play,
-  RotateCcw,
   CheckCircle2,
   XCircle,
   Clock,
   ExternalLink,
-  Copy,
   Wallet,
   AlertCircle,
 } from "lucide-react";
@@ -22,6 +20,7 @@ import {
 } from "@/lib/wallet";
 import {
   callSeller,
+  getFacilitatorCapabilities,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   header,
@@ -131,33 +130,47 @@ export function FlowPanel({
     setErrorMsg(null);
     setSteps(INITIAL_STEPS.map((s) => ({ ...s, state: "pending", summary: undefined, error: undefined, ms: undefined })));
 
-    let activeWallet = wallet;
-    if (!activeWallet) {
-      activeWallet = createWallet();
-      setWallet(activeWallet);
-      await fundFromFriendbot(config.friendbotUrl, activeWallet.publicKey);
-      await waitForRpcVisibility(config.rpcUrl, activeWallet.publicKey);
-      const bal = await fetchNativeBalance(config.horizonUrl, activeWallet.publicKey);
-      setBalance(bal);
-    }
-
-    const startedAt = new Date().toISOString();
-    let currentRun: RunRecord = {
-      startedAt,
-      wallet: activeWallet,
-    };
-
     try {
+      let activeWallet = wallet;
+      if (!activeWallet) {
+        activeWallet = createWallet();
+        setWallet(activeWallet);
+        await fundFromFriendbot(config.friendbotUrl, activeWallet.publicKey);
+        await waitForRpcVisibility(config.rpcUrl, activeWallet.publicKey);
+        const bal = await fetchNativeBalance(config.horizonUrl, activeWallet.publicKey);
+        setBalance(bal);
+      }
+
+      const startedAt = new Date().toISOString();
+      const currentRun: RunRecord = {
+        startedAt,
+        wallet: activeWallet,
+      };
+
       // Step 1: Supported
       const t0 = Date.now();
       updateStep("supported", { state: "running" });
-      const supRes = await fetch(`${config.facilitatorUrl}/supported`);
-      if (!supRes.ok) throw new Error(`/supported failed (${supRes.status})`);
-      const supBody = await supRes.json();
+      const supBody = await getFacilitatorCapabilities(config);
+      const supportedKind = Array.isArray(supBody.kinds)
+        ? supBody.kinds.find(
+            (kind: any) =>
+              kind.x402Version === 2 &&
+              kind.scheme === "exact" &&
+              kind.network === config.network
+          )
+        : undefined;
+      if (!supportedKind) {
+        throw new Error(`Facilitator does not advertise x402 v2 exact on ${config.network}`);
+      }
+      if (typeof supportedKind.extra?.areFeesSponsored !== "boolean") {
+        throw new Error("Facilitator did not declare extra.areFeesSponsored");
+      }
       updateStep("supported", {
         state: "ok",
         ms: Date.now() - t0,
-        summary: `Supported schemes: ${supBody.kinds?.length || 1} (fees sponsored)`,
+        summary: `Exact · ${config.network} · fees ${
+          supportedKind.extra.areFeesSponsored ? "sponsored" : "not sponsored"
+        }`,
       });
 
       // Step 2: Challenge
@@ -250,7 +263,13 @@ export function FlowPanel({
       const finalBal = await fetchNativeBalance(config.horizonUrl, activeWallet.publicKey);
       setBalance(finalBal);
     } catch (e: any) {
-      setErrorMsg(e.message || "Payment execution encountered an error");
+      const message = e.message || "Payment execution encountered an error";
+      setErrorMsg(message);
+      setSteps((prev) =>
+        prev.map((step) =>
+          step.state === "running" ? { ...step, state: "failed", error: message } : step
+        )
+      );
     } finally {
       setIsRunning(false);
     }
@@ -259,16 +278,17 @@ export function FlowPanel({
   return (
     <div className="space-y-6">
       {/* Wallet Summary Card */}
-      <div className="glass-panel p-6 rounded-2xl">
-        <div className="flex items-center justify-between gap-4 mb-4 pb-3 border-b border-white/10 flex-wrap">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-400/20">
-              <Wallet className="w-5 h-5" />
+      <div className="glass-panel rounded-[24px] p-5 sm:p-6">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.07] pb-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-purple-400/25 bg-purple-500/10 text-purple-200">
+              <Wallet className="h-[18px] w-[18px]" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-white">Client Testnet Wallet</h3>
-              <p className="text-xs text-slate-400">
-                Ephemeral in-browser keypair · Zero server custody
+              <p className="section-kicker mb-1">Client identity</p>
+              <h3 className="text-base font-extrabold tracking-tight text-white">Ephemeral testnet wallet</h3>
+              <p className="mt-0.5 text-[11px] text-zinc-500">
+                Generated in-browser · Zero server custody
               </p>
             </div>
           </div>
@@ -276,15 +296,15 @@ export function FlowPanel({
             <button
               onClick={handleCreateOrFundWallet}
               disabled={isRunning}
-              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 transition-colors shadow-sm"
+              className="primary-action rounded-xl px-3.5 py-2 text-[11px] font-extrabold disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {wallet ? "Fund Account" : "Generate & Fund"}
+              {wallet ? "Fund account" : "Generate & fund"}
             </button>
             {wallet && (
               <button
                 onClick={handleResetWallet}
                 disabled={isRunning}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition-colors border border-white/10"
+                className="secondary-action rounded-xl px-3.5 py-2 text-[11px] font-bold disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Reset
               </button>
@@ -293,23 +313,23 @@ export function FlowPanel({
         </div>
 
         {wallet ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
-            <div className="p-3 rounded-lg bg-slate-950/40 border border-white/5">
-              <span className="text-slate-500 block text-[11px] mb-1">PUBLIC ADDRESS</span>
-              <span className="text-slate-200 break-all">{wallet.publicKey}</span>
+          <div className="grid grid-cols-1 gap-3 font-mono text-xs md:grid-cols-2">
+            <div className="rounded-2xl border border-white/[0.06] bg-black/35 p-4">
+              <span className="mb-1.5 block text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-600">Public address</span>
+              <span className="break-all text-zinc-300">{wallet.publicKey}</span>
             </div>
-            <div className="p-3 rounded-lg bg-slate-950/40 border border-white/5 flex items-center justify-between">
+            <div className="flex items-center justify-between rounded-2xl border border-white/[0.06] bg-black/35 p-4">
               <div>
-                <span className="text-slate-500 block text-[11px] mb-1">AVAILABLE BALANCE</span>
-                <span className="text-emerald-400 font-bold text-sm">
-                  {balance} XLM (Testnet)
+                <span className="mb-1.5 block text-[9px] font-bold uppercase tracking-[0.14em] text-zinc-600">Available balance</span>
+                <span className="text-sm font-bold text-white">
+                  {balance} XLM <span className="text-purple-300">· testnet</span>
                 </span>
               </div>
               <a
                 href={`${config.explorerTxUrl.replace("/tx", "/account")}/${wallet.publicKey}`}
                 target="_blank"
                 rel="noreferrer"
-                className="p-1.5 rounded bg-white/5 hover:bg-white/10 text-sky-400 transition-colors"
+                className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-purple-300 transition-colors hover:border-purple-400/30 hover:bg-purple-500/10"
                 title="View on Stellar Expert Explorer"
               >
                 <ExternalLink className="w-4 h-4" />
@@ -317,44 +337,47 @@ export function FlowPanel({
             </div>
           </div>
         ) : (
-          <div className="p-4 rounded-xl bg-sky-500/5 border border-sky-400/20 text-xs text-sky-300">
-            Click <strong>Generate & Fund</strong> or start the payment run below. A fresh keypair will be created in this browser tab and funded with 10,000 testnet XLM automatically.
+          <div className="rounded-2xl border border-purple-400/20 bg-purple-500/[0.06] p-4 text-xs leading-relaxed text-purple-100/80">
+            Select <strong className="text-white">Generate & fund</strong> or begin the run below. A fresh keypair is created in this tab and funded with testnet XLM.
           </div>
         )}
       </div>
 
       {/* Primary Action Button */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-lg font-extrabold text-white">Live Payment Execution</h2>
-          <p className="text-xs text-slate-400">
-            Executes a real x402 challenge, cryptographic signing, fee-sponsored settlement, and Horizon verification
+      <div className="glass-panel relative flex flex-wrap items-center justify-between gap-5 overflow-hidden rounded-[24px] p-5 sm:p-6">
+        <div className="purple-orb pointer-events-none absolute -right-16 -top-20 h-52 w-52 opacity-30" />
+        <div className="relative max-w-xl">
+          <p className="section-kicker mb-1.5">Live execution</p>
+          <h2 className="text-lg font-extrabold tracking-tight text-white">Run the complete payment path</h2>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Challenge, sign, pre-flight, settle, and confirm against Stellar testnet.
           </p>
         </div>
         <button
           onClick={executePaymentFlow}
           disabled={isRunning}
-          className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-sky-400 to-indigo-500 hover:from-sky-300 hover:to-indigo-400 text-slate-950 font-bold text-sm shadow-lg shadow-sky-500/25 transition-all transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="primary-action relative flex items-center gap-2.5 rounded-2xl px-5 py-3 text-xs font-extrabold disabled:cursor-not-allowed disabled:opacity-50 sm:px-6"
         >
           {isRunning ? (
             <>
-              <div className="w-4 h-4 rounded-full border-2 border-slate-950 border-t-transparent animate-spin" />
-              <span>Settling on Stellar...</span>
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              <span>Settling on Stellar</span>
             </>
           ) : (
             <>
-              <Play className="w-4 h-4 fill-current" />
-              <span>Run Live Payment (~20s)</span>
+              <Play className="h-3.5 w-3.5 fill-current" />
+              <span>Run live payment</span>
+              <span className="font-mono text-[9px] text-purple-200">~20s</span>
             </>
           )}
         </button>
       </div>
 
       {errorMsg && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3 text-xs text-rose-300">
-          <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/[0.07] p-4 text-xs text-rose-200">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-rose-400" />
           <div>
-            <strong className="block font-bold mb-0.5">Payment Execution Stopped</strong>
+            <strong className="mb-0.5 block font-bold">Payment execution stopped</strong>
             <span>{errorMsg}</span>
           </div>
         </div>
@@ -362,6 +385,10 @@ export function FlowPanel({
 
       {/* Stepper Timeline */}
       <div className="space-y-3">
+        <div className="flex items-center justify-between px-1 pb-1">
+          <p className="section-kicker">Execution trace</p>
+          <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-600">6 protocol stages</span>
+        </div>
         {steps.map((step) => {
           const isPending = step.state === "pending";
           const isRunningState = step.state === "running";
@@ -371,38 +398,43 @@ export function FlowPanel({
           return (
             <div
               key={step.id}
-              className={`p-4 rounded-xl border transition-all ${
+              className={`rounded-2xl border p-4 transition-all sm:p-[18px] ${
                 isRunningState
-                  ? "bg-sky-500/10 border-sky-400 shadow-[0_0_20px_rgba(56,189,248,0.2)]"
+                  ? "border-purple-400/45 bg-purple-500/[0.09] shadow-[0_0_28px_rgba(147,51,234,0.12)]"
                   : isOk
-                  ? "bg-slate-900/60 border-emerald-500/30"
+                  ? "border-emerald-500/20 bg-emerald-500/[0.035]"
                   : isFailed
-                  ? "bg-rose-500/10 border-rose-500/40"
-                  : "bg-slate-900/30 border-white/5 text-slate-400"
+                  ? "border-rose-500/35 bg-rose-500/[0.07]"
+                  : "border-white/[0.06] bg-white/[0.018] text-zinc-500"
               }`}
             >
               <div className="flex items-start gap-3.5">
                 <div className="mt-0.5">
-                  {isOk && <CheckCircle2 className="w-5 h-5 text-emerald-400" />}
-                  {isFailed && <XCircle className="w-5 h-5 text-rose-400" />}
+                  {isOk && <CheckCircle2 className="h-[18px] w-[18px] text-emerald-400" />}
+                  {isFailed && <XCircle className="h-[18px] w-[18px] text-rose-400" />}
                   {isRunningState && (
-                    <div className="w-5 h-5 rounded-full border-2 border-sky-400 border-t-transparent animate-spin" />
+                    <div className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-purple-300 border-t-transparent" />
                   )}
-                  {isPending && <div className="w-5 h-5 rounded-full border-2 border-white/10" />}
+                  {isPending && <div className="h-[18px] w-[18px] rounded-full border border-white/15 bg-black/30" />}
                 </div>
 
-                <div className="flex-1 min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-sm text-white">{step.title}</span>
+                    <span className="text-[13px] font-bold text-white">{step.title}</span>
                     {step.ms !== undefined && (
-                      <span className="font-mono text-xs text-slate-500">{step.ms} ms</span>
+                      <span className="font-mono text-[10px] text-zinc-600">{step.ms} ms</span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">{step.note}</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">{step.note}</p>
 
                   {step.summary && (
-                    <div className="mt-2.5 p-2 rounded-lg bg-black/40 border border-white/5 font-mono text-xs text-emerald-300">
+                    <div className="mt-3 rounded-xl border border-white/[0.06] bg-black/40 p-2.5 font-mono text-[11px] text-emerald-300">
                       {step.summary}
+                    </div>
+                  )}
+                  {step.error && (
+                    <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/[0.06] p-2.5 font-mono text-[11px] text-rose-200">
+                      {step.error}
                     </div>
                   )}
                 </div>
@@ -414,8 +446,8 @@ export function FlowPanel({
 
       {/* Success Receipt Card */}
       {run && run.txHash && (
-        <div className="glass-panel p-6 rounded-2xl border-emerald-500/40 shadow-xl shadow-emerald-500/10">
-          <div className="flex items-center justify-between gap-4 mb-4 pb-3 border-b border-white/10">
+        <div className="glass-panel rounded-[24px] border-emerald-500/30 p-5 shadow-[0_24px_70px_rgba(16,185,129,0.08)] sm:p-6">
+          <div className="mb-4 flex items-center justify-between gap-4 border-b border-white/[0.07] pb-4">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               <h3 className="font-bold text-base text-white">
@@ -426,7 +458,7 @@ export function FlowPanel({
               href={`${config.explorerTxUrl}/${run.txHash}`}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono transition-colors"
+              className="flex items-center gap-1.5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.07] px-3 py-2 font-mono text-[10px] text-emerald-300 transition-colors hover:bg-emerald-500/15"
             >
               <span>Inspect on Explorer</span>
               <ExternalLink className="w-3.5 h-3.5" />
@@ -436,15 +468,15 @@ export function FlowPanel({
           <div className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
               <div className="p-3 rounded-lg bg-black/40 border border-white/5">
-                <span className="text-slate-500 block text-[11px]">TRANSACTION HASH</span>
-                <span className="text-slate-200 break-all">{run.txHash}</span>
+                <span className="block text-[9px] uppercase tracking-[0.18em] text-zinc-600">Transaction hash</span>
+                <span className="break-all text-zinc-300">{run.txHash}</span>
               </div>
               <div className="p-3 rounded-lg bg-black/40 border border-white/5">
-                <span className="text-slate-500 block text-[11px]">SETTLED ASSET</span>
-                <span className="text-sky-300">Native XLM (SAC)</span>
+                <span className="block text-[9px] uppercase tracking-[0.18em] text-zinc-600">Settled asset</span>
+                <span className="text-purple-300">Native XLM (SAC)</span>
               </div>
               <div className="p-3 rounded-lg bg-black/40 border border-white/5">
-                <span className="text-slate-500 block text-[11px]">CONFIRMATION DURATION</span>
+                <span className="block text-[9px] uppercase tracking-[0.18em] text-zinc-600">Confirmation duration</span>
                 <span className="text-emerald-400 font-bold">{run.totalMs} ms</span>
               </div>
             </div>

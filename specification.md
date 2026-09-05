@@ -2,10 +2,10 @@
 ## Proposal & Comprehensive Architecture Specification (v2.0.0)
 
 **Document Version:** 2.0.0  
-**Status:** Proposal for Maintainers & Technical Steering Committee  
+**Status:** Implemented incrementally; production-readiness claims remain gated by executable evidence
 **Target Networks:** `stellar:testnet`, `stellar:pubnet`  
 **License:** Apache License 2.0 (OSI Approved)  
-**New v2 Features:** P2P Libp2p Federated Relayer Mesh, Active Node Heartbeat Ping Protocol, Telemetry-Enriched Composite Quality Ranking, Distributed Multi-Facilitator Catalog Gossip, Real-Time Liveness Circuit Breakers  
+**Implemented v2 surfaces:** Signed GossipSub announcements and catalog deltas, telemetry-ranked discovery, provider-quality observations/aggregates, response-aware settlement hooks, and liveness circuit breakers. Active probing, learned semantic retrieval, and public-network readiness remain gated.
 
 ---
 
@@ -13,21 +13,21 @@
 
 This document presents **Version 2.0 of the Architecture Specification & Grant Proposal** for the **x402 Facilitator with Bazaar (Discovery) Support RFP** on Stellar. 
 
-While v1.0 established a solid foundation with standard REST endpoints, Soroban auth entry validation, and passive database cataloging, **Version 2.0 introduces a paradigm shift in x402 discovery: a P2P Federated Relayer Mesh with Active Node Heartbeats and Telemetry-Enriched Dynamic Ranking.**
+While v1.0 established a solid foundation with standard REST endpoints, Soroban auth entry validation, and passive database cataloging, this revision adds signed telemetry, response-aware provider outcomes, deterministic catalog federation, and telemetry-ranked discovery. Heartbeats are signed self-reported telemetry, not active endpoint probes; the default vector leg is lexical feature hashing.
 
 ### Core v2 Innovations Offered to Maintainers
 
-1. **Active P2P Node Discovery & Heartbeat Protocol (`/x402/bazaar/v1/announce`)**:
-   Resource servers and micro-facilitators no longer rely exclusively on passive payment-triggered indexing. They actively join a `js-libp2p` GossipSub mesh, broadcasting signed liveness pings and metadata announcements upon startup.
+1. **Signed P2P Node Discovery & Heartbeat Protocol (`/x402/bazaar/v1/announce`)**:
+  Resource servers and micro-facilitators can join a GossipSub mesh and broadcast signed liveness self-reports and metadata announcements. The messages prove the signer and freshness, not endpoint reachability.
 
 2. **Telemetry-Enriched Composite Ranking Algorithm**:
-   Search results are no longer ranked purely by static text matching. The search engine computes a multi-dimensional composite score combining natural-language semantic vector similarity (BM25 + `pgvector`), real-time ping latency, peer uptime history, and verified settlement success rates.
+  Search results combine BM25, deterministic feature-hash lexical retrieval, liveness, reported latency, and settlement-derived reliability. Learned embeddings are an optional provider abstraction, not the default claim.
 
-3. **Decentralized Multi-Facilitator Catalog Mesh**:
-   Fulfills Section 3.2's mandate to avoid turning Stellar discovery into a "walled garden." Independent facilitators gossip verified catalog blocks peer-to-peer, keeping catalog listings synchronized across the ecosystem without centralized database lock-in.
+3. **Signed Catalog Delta Federation**:
+  Independent nodes exchange signed full-snapshot deltas with durable revisions, tombstones, settlement proof, peer authorization, and deterministic conflict ordering. Broad multi-operator deployment remains evidence-gated.
 
 4. **Liveness Circuit Breakers & Auto-Pruning**:
-   Dead, offline, or unresponsive endpoints are automatically demoted and soft-dropped after missing consecutive heartbeat windows, protecting AI agents from attempting calls to broken APIs.
+   Dead, offline, or unresponsive endpoints are automatically demoted and soft-dropped after missing consecutive heartbeat windows, protecting clients from attempting calls to broken APIs.
 
 ```
                                   VERIDEX V2 P2P BAZAAR ARCHITECTURE
@@ -42,7 +42,7 @@ While v1.0 established a solid foundation with standard REST endpoints, Soroban 
 │                                                                             Libp2p Mesh │ GossipSync     │
 │                                                                                         ▼                │
 │   ┌────────────────────────┐         Telemetry & Settlement Proofs          ┌────────────────────────┐   │
-│   │   AI Agent / Buyer     ├───────────────────────────────────────────────►│ Veridex Relayer Peer B │   │
+│   │   Client / Buyer       ├───────────────────────────────────────────────►│ Veridex Relayer Peer B │   │
 │   └────────────────────────┘                                                └───────────┬────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────────────────┼────────────────┘
                                                                                           │
@@ -77,15 +77,15 @@ Veridex provides an ideal production base. Its existing codebase already supplie
 
 | RFP Requirement | RFP Section | Veridex v1 Baseline | Veridex v2 Proposal | Implementation Mechanism |
 |---|---|---|---|---|
-| **Facilitator Endpoints** | 3.1 | Standard `/verify`, `/settle`, `/supported` | Standard REST + **WebSocket P2P Telemetry Channel** | Fastify/Hono HTTP + `ws` WebSocket |
+| **Facilitator Endpoints** | 3.1 | Standard `/verify`, `/settle`, `/supported` | Standard REST plus signed asynchronous telemetry | Hono HTTP + GossipSub |
 | **Auth Entry Validation** | 3.1 | `gatherAuthEntrySignatureStatus` | Enhanced with custom `__check_auth` simulation | Soroban RPC RPC simulateTransaction |
 | **Fee Sponsorship** | 3.1 | `feeBumpSigner` in `ExactStellarScheme` | Sponsored via `FeeBumpTransaction` | Advertises `areFeesSponsored: true` |
 | **Bazaar Catalog Browsing** | 3.2 | In-memory filtering | **PostgreSQL Persistent Store + P2P Mesh Sync** | Federated Libp2p GossipSub |
 | **Bazaar Search Quality** | 3.2 | In-memory text match | **Hybrid BM25/Vector Search + Live Telemetry Scoring** | `pgvector` RRF + Telemetry Engine |
 | **Auto Cataloging** | 3.2 | Passive indexing via `PaymentPayload` | **Dual-Path: Passive Indexing + Active P2P Announce** | `/x402/bazaar/v1/announce` topic |
-| **Node Liveness & Health** | 3.2 | None (Static entries) | **Active Heartbeat Ping + Pruning Circuit Breakers** | 30s Heartbeat pings & auto-demotion |
+| **Node Liveness & Health** | 3.2 | None (Static entries) | **Signed heartbeat telemetry + pruning circuit breakers** | 30s self-reports, settlement liveness, auto-demotion |
 | **MCP Server for Agents** | 3.3 | Basic schemas | **Standalone MCP Server (`discover_resources`, `pay_resource`)** | Model Context Protocol Stdio/HTTP |
-| **Stellar `upto` Scheme** | 3.4 | EVM `upto` only | **Author `scheme_upto_stellar.md` & `upto_escrow.rs`** | Soroban Rust Smart Contract |
+| **Stellar `upto` Scheme** | 3.4 | EVM `upto` only | Soroban contract, facilitator validator, and response-aware usage binding | Boot-gated contract plus signed usage/result digest |
 | **Interoperability** | 3.2 & 3.6 | Single-facilitator catalog | **P2P Multi-Facilitator Federated Mesh** | Libp2p Kademlia DHT + GossipSub |
 | **Licensing** | 3.6 | Apache-2.0 core | **100% Permissive Apache-2.0 across full P2P stack** | Zero AGPL dependencies |
 
@@ -125,12 +125,12 @@ Resource servers and peer facilitators communicate over a dedicated `js-libp2p` 
 
 ### 3.2 Telemetry-Enriched Composite Ranking Engine
 
-To solve search relevance and prevent recommending dead APIs to AI agents, the Bazaar search engine calculates a **Composite Quality Score ($\Phi$)**:
+To solve search relevance and prevent recommending dead APIs to clients, the Bazaar search engine calculates a **Composite Quality Score ($\Phi$)**:
 
-$$\Phi = w_1 \cdot S_{\text{semantic}} + w_2 \cdot S_{\text{bm25}} + w_3 \cdot S_{\text{uptime}} + w_4 \cdot S_{\text{latency}} + w_5 \cdot S_{\text{reliability}}$$
+$$\Phi = w_1 \cdot S_{\text{vector}} + w_2 \cdot S_{\text{bm25}} + w_3 \cdot S_{\text{uptime}} + w_4 \cdot S_{\text{latency}} + w_5 \cdot S_{\text{reliability}}$$
 
 Where:
-- $S_{\text{semantic}}$: Cosine similarity score from `pgvector` embeddings ($\in [0, 1]$).
+- $S_{\text{vector}}$: Feature-hash lexical cosine similarity from `pgvector` ($\in [0, 1]$); it is not learned semantic retrieval.
 - $S_{\text{bm25}}$: Normalized full-text BM25 keyword match score ($\in [0, 1]$).
 - $S_{\text{uptime}}$: Measured 30-day node heartbeat uptime ratio ($\frac{\text{successful pings}}{\text{expected pings}}$).
 - $S_{\text{latency}}$: Exponential penalty function for response latency:
@@ -202,9 +202,9 @@ export class LivenessCircuitBreaker {
 
 ## 4. Stellar `upto` Settlement Scheme Specification
 
-Section 3.4 requires authoring `scheme_upto_stellar.md` and implementing a Soroban smart contract (`upto_escrow.rs`) enforcing the 5 core `upto` properties natively on Stellar.
+Section 3.4 is implemented by [`scheme_upto_stellar.md`](docs/specifications/scheme_upto_stellar.md) and the stateless Soroban contract at [`contracts/upto-settlement/src/lib.rs`](contracts/upto-settlement/src/lib.rs). The older `upto_escrow.rs` text below is a historical proposal, not the deployed implementation.
 
-### 4.1 Soroban Smart Contract (`upto_escrow.rs`)
+### 4.1 Historical Soroban Contract Draft (`upto_escrow.rs`)
 
 ```rust
 //! Soroban Upto Escrow & Settlement Contract for x402
@@ -295,9 +295,9 @@ impl UptoEscrowContract {
 
 ---
 
-## 5. Agent-Facing MCP Discovery Server Specification
+## 5. MCP Discovery Server Specification
 
-Section 3.3 requires exposing an MCP server allowing AI agents to discover resources and execute 402 payments autonomously.
+Section 3.3 requires exposing an MCP server that allows compatible clients to discover resources and execute 402 payments.
 
 ### 5.1 MCP Server Package Architecture (`@veridex/mcp-discovery-server`)
 
@@ -486,8 +486,8 @@ All v2 packages operate strictly under the **Apache License 2.0**. CI automates 
 │  PHASE 2: Facilitator Core & Channel Pool (Weeks 3 - 4)                                 │
 │  - Standalone REST + WebSocket Hono server, 50 Channel account manager, Fee sponsoring │
 │                                                                                         │
-│  PHASE 3: Upstream Stellar `upto` Scheme & Soroban Contract (Weeks 5 - 6)                │
-│  - Author scheme_upto_stellar.md, compile & test upto_escrow.rs on Soroban testnet      │
+│  PHASE 3: Stellar `upto` Scheme & Soroban Contract (Weeks 5 - 6)                        │
+│  - Implement scheme_upto_stellar.md, test contracts/upto-settlement, gate deployment    │
 │                                                                                         │
 │  PHASE 4: Agent MCP Discovery Server & Multi-Language SDKs (Weeks 7 - 8)                │
 │  - Standalone MCP server, TS/Python/Go seller & buyer SDK helpers                       │
@@ -499,17 +499,12 @@ All v2 packages operate strictly under the **Apache License 2.0**. CI automates 
 
 ---
 
-## 10. Actionable Engineering Team Prompt
+## 10. Implementation Checklist
 
-```text
-You are assigned to build the @veridex/stellar-bazaar-facilitator v2 suite fulfilling the Stellar x402 Bazaar RFP.
-
-Follow this blueprint strictly:
 1. Base all Stellar transaction handling on @x402/stellar and @stellar/stellar-sdk (Apache-2.0). Ensure zero AGPL dependencies exist in package.json.
 2. Implement @veridex/bazaar-service using PostgreSQL + pgvector and a js-libp2p GossipSub P2P mesh topic /x402/bazaar/v1/announce.
 3. Enforce soft-drop rules in x402/typescript/packages/extensions/src/bazaar/facilitator.ts (isValidServiceName, sanitizeTags, isValidIconUrl, isValidRouteTemplate).
 4. Implement GET /discovery/search with composite quality scoring combining vector similarity, BM25 text match, 30-day node ping uptime, and response latency.
-5. Author scheme_upto_stellar.md and build the Soroban upto_escrow.rs smart contract enforcing single settlement and max cap.
-6. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools for AI agents.
+5. Use the implemented `scheme_upto_stellar.md` and `contracts/upto-settlement/src/lib.rs`; complete facilitator-path conformance and independent security review before public-network use.
+6. Create @veridex/mcp-discovery-server exposing discover_resources and pay_resource tools for compatible clients.
 7. Verify wire-level conformance using an unmodified canonical x402 client on stellar:testnet and stellar:pubnet with extra.areFeesSponsored = true.
-```

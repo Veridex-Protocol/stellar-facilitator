@@ -36,6 +36,9 @@ export interface FacilitatorClientConfig {
 
   /** Request timeout (ms) */
   timeout?: number;
+
+  /** Require the facilitator to advertise sponsored fees before paying. */
+  requireSponsoredFees?: boolean;
 }
 
 /**
@@ -52,6 +55,7 @@ export class FacilitatorClient {
       ...config,
       clientSecretKey: config.clientSecretKey || "",
       timeout: config.timeout || 30000,
+      requireSponsoredFees: config.requireSponsoredFees ?? false,
     };
 
     if (config.customSigner) {
@@ -130,6 +134,11 @@ export class FacilitatorClient {
       throw new Error(`Exact Stellar scheme is not supported for ${network}`);
     }
 
+    const areFeesSponsored = stellarScheme.extra?.areFeesSponsored === true;
+    if (this.config.requireSponsoredFees && !areFeesSponsored) {
+      throw new Error("Facilitator does not advertise sponsored fees for this network");
+    }
+
     const paymentRequirements: PaymentRequirements = {
       scheme: "exact",
       network,
@@ -137,7 +146,7 @@ export class FacilitatorClient {
       amount: request.amountStroops,
       payTo: request.payTo,
       maxTimeoutSeconds: 60,
-      extra: { areFeesSponsored: true },
+      extra: { areFeesSponsored },
     };
     const created = await this.exactScheme.createPaymentPayload(2, paymentRequirements);
     const paymentPayload = {

@@ -4,14 +4,33 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { Keypair, Networks } from "@stellar/stellar-sdk";
+import {
+  Account,
+  Address,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+  nativeToScVal,
+  xdr,
+} from "@stellar/stellar-sdk";
 import { ChannelAccountPool } from "../channel/pool.js";
 import { X402Facilitator } from "../stellar/x402-facilitator.js";
+import { UptoStellarScheme } from "../stellar/upto-scheme.js";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import { STELLAR_TESTNET_CAIP2 } from "@x402/stellar";
 
 const ASSET = "CC7AMNLQWIEKWMSGKXC7DFEXHDTNMQ6JL2BBPRBM6RQXYZXCNKD75CVB";
 const UPTO_CONTRACT = "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2";
+
+function contractStruct(fields: Record<string, xdr.ScVal>): xdr.ScVal {
+  return xdr.ScVal.scvMap(
+    Object.keys(fields).sort().map((key) => new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol(key),
+      val: fields[key],
+    })),
+  );
+}
 
 describe("Upto Scheme Flow & Routing", () => {
   let channelPool: ChannelAccountPool;
@@ -91,6 +110,62 @@ describe("Upto Scheme Flow & Routing", () => {
     expect(result.isValid).toBe(false);
     // It should route to UptoStellarScheme and fail with malformed payload, not unsupported_scheme
     expect(result.invalidReason).toBe("invalid_upto_stellar_payload_malformed");
+  });
+
+  it("extracts the facilitator authorized by the payer before scheduling", () => {
+    const payer = Keypair.random();
+    const facilitator = Keypair.random();
+    const fakeSigner = {
+      address: facilitator.publicKey(),
+      signAuthEntry: async () => ({ signedAuthEntry: "" }),
+      signTransaction: async () => "",
+    } as any;
+    const terms = contractStruct({
+      pay_to: new Address(Keypair.random().publicKey()).toScVal(),
+      token: new Address(ASSET).toScVal(),
+      max_amount: nativeToScVal(1_000_000n, { type: "i128" }),
+      valid_after: nativeToScVal(1, { type: "u32" }),
+      deadline: nativeToScVal(100, { type: "u32" }),
+      facilitator: new Address(facilitator.publicKey()).toScVal(),
+      settlement_id: xdr.ScVal.scvBytes(Buffer.alloc(32)),
+      request_digest: xdr.ScVal.scvBytes(Buffer.alloc(32)),
+    });
+    const attestation = contractStruct({
+      settlement_id: xdr.ScVal.scvBytes(Buffer.alloc(32)),
+      actual: nativeToScVal(0n, { type: "i128" }),
+      result_digest: xdr.ScVal.scvBytes(Buffer.alloc(32)),
+    });
+    const operation = Operation.invokeHostFunction({
+      func: xdr.HostFunction.hostFunctionTypeInvokeContract(
+        new xdr.InvokeContractArgs({
+          contractAddress: new Address(UPTO_CONTRACT).toScAddress(),
+          functionName: "settle",
+          args: [new Address(payer.publicKey()).toScVal(), terms, attestation],
+        }),
+      ),
+      auth: [],
+    });
+    const transaction = new TransactionBuilder(
+      new Account(facilitator.publicKey(), "1"),
+      { fee: "100", networkPassphrase: Networks.TESTNET },
+    ).addOperation(operation).setTimeout(60).build();
+    const scheme = new UptoStellarScheme([fakeSigner], { contractId: UPTO_CONTRACT });
+    const requirements: PaymentRequirements = {
+      scheme: "upto",
+      network: STELLAR_TESTNET_CAIP2 as any,
+      asset: ASSET,
+      amount: "1000000",
+      payTo: Keypair.random().publicKey(),
+      maxTimeoutSeconds: 60,
+      extra: {},
+    };
+    const payload: PaymentPayload = {
+      x402Version: 2,
+      accepted: requirements,
+      payload: { transaction: transaction.toXDR() },
+    };
+
+    expect(scheme.getAuthorizedFacilitator(payload, requirements)).toBe(facilitator.publicKey());
   });
 
   it("rejects unsupported scheme with unsupported_scheme error", async () => {

@@ -59,7 +59,7 @@ export interface X402FacilitatorConfig {
 }
 
 export class X402Facilitator {
-  private exactScheme: ExactStellarScheme;
+  private exactScheme!: ExactStellarScheme;
   private uptoScheme?: UptoStellarScheme;
   private config: X402FacilitatorConfig;
   /**
@@ -217,7 +217,14 @@ export class X402Facilitator {
           errorReason: "upto_scheme_not_configured",
         };
       }
-      return this.scheduler.withSigner(() => this.uptoScheme!.settle(payload, requirements));
+      const parsedPreferredSigner = this.uptoScheme.getAuthorizedFacilitator(payload, requirements);
+      const preferredSigner = parsedPreferredSigner && this.uptoScheme.signingAddresses.has(parsedPreferredSigner)
+        ? parsedPreferredSigner
+        : undefined;
+      return this.scheduler.withSigner(
+        () => this.uptoScheme!.settle(payload, requirements),
+        preferredSigner,
+      );
     }
 
     return {
@@ -252,6 +259,22 @@ export class X402Facilitator {
    */
   getExtra(network: Network): Record<string, unknown> | undefined {
     return this.exactScheme.getExtra(network);
+  }
+
+  /**
+   * Upto clients need the signer that will authorize the response-dependent
+   * half of the contract call. Advertise one actual signer in the requirement
+   * metadata; the remaining signers are still published in the shared signer
+   * map for discovery and scheduler visibility.
+   */
+  getUptoExtra(network: Network): Record<string, unknown> | undefined {
+    if (!this.uptoScheme) return undefined;
+    const signer = this.uptoScheme.getSigners(network)[0];
+    return {
+      contractId: this.uptoScheme.contractId,
+      areFeesSponsored: this.areFeesSponsored,
+      ...(signer ? { facilitator: signer } : {}),
+    };
   }
 
   /**

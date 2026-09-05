@@ -7,6 +7,7 @@ export type TabId = "flow" | "wire" | "receipt" | "refusals" | "evidence";
 
 interface TabItem {
   id: TabId;
+  number: string;
   label: string;
   blurb: string;
   icon: React.ReactNode;
@@ -16,34 +17,39 @@ interface TabItem {
 const TABS: TabItem[] = [
   {
     id: "flow",
+    number: "01",
     label: "Payment Flow",
-    blurb: "Settle a live payment on Stellar in ~20s",
-    icon: <Zap className="w-4 h-4 text-sky-400" />,
+    blurb: "Settle a live payment on Stellar",
+    icon: <Zap className="h-4 w-4" />,
   },
   {
     id: "wire",
+    number: "02",
     label: "Wire Protocol",
-    blurb: "Decoded HTTP & Soroban auth entries",
-    icon: <Search className="w-4 h-4 text-indigo-400" />,
+    blurb: "Decode HTTP and Soroban auth",
+    icon: <Search className="h-4 w-4" />,
   },
   {
     id: "receipt",
+    number: "03",
     label: "Receipt & Verify",
-    blurb: "RFC 8785 signature verification & tamper test",
-    icon: <FileCheck className="w-4 h-4 text-emerald-400" />,
+    blurb: "Inspect signatures and tampering",
+    icon: <FileCheck className="h-4 w-4" />,
   },
   {
     id: "refusals",
-    label: "Refusals & Attacks",
-    blurb: "Probe 9 attack vectors against /verify",
-    icon: <ShieldAlert className="w-4 h-4 text-rose-400" />,
+    number: "04",
+    label: "Attack Lab",
+    blurb: "Probe deterministic refusals",
+    icon: <ShieldAlert className="h-4 w-4" />,
     badge: "Chaos",
   },
   {
     id: "evidence",
-    label: "CI Evidence",
-    blurb: "Real-time conformance test report",
-    icon: <BarChart3 className="w-4 h-4 text-amber-400" />,
+    number: "05",
+    label: "Test Evidence",
+    blurb: "Read the conformance report",
+    icon: <BarChart3 className="h-4 w-4" />,
   },
 ];
 
@@ -55,75 +61,107 @@ interface SidebarProps {
 
 export function Sidebar({ activeTab, setActiveTab, hasRun }: SidebarProps) {
   return (
-    <aside className="w-full lg:w-72 flex-shrink-0 flex flex-col gap-5">
-      <nav className="flex flex-col gap-1.5">
-        {TABS.map((tab) => {
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`w-full text-left p-3 rounded-xl border transition-all ${
-                active
-                  ? "bg-gradient-to-r from-sky-500/15 to-slate-900 border-sky-400/40 shadow-lg shadow-sky-500/10 text-white"
-                  : "bg-slate-900/40 border-white/5 text-slate-300 hover:bg-slate-900 hover:border-white/15"
-              }`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-1 rounded-lg bg-white/5 border border-white/10">
+    <aside className="flex w-full min-w-0 flex-col gap-4 lg:sticky lg:top-24">
+      <div className="rounded-[26px] border border-white/[0.08] bg-black/55 p-2 shadow-[0_24px_70px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+        <div className="flex items-center justify-between px-3 pb-3 pt-2">
+          <div>
+            <p className="section-kicker">Explore</p>
+            <p className="mt-1 text-xs text-zinc-500">Protocol inspection suite</p>
+          </div>
+          <span className="rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] text-zinc-500">
+            5 modules
+          </span>
+        </div>
+
+        <nav className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            const locked = tab.id !== "flow" && tab.id !== "evidence" && !hasRun;
+
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                aria-current={active ? "page" : undefined}
+                className={`group min-w-[218px] rounded-[18px] border p-3.5 text-left transition-all duration-200 lg:min-w-0 ${
+                  active
+                    ? "border-white bg-white text-black shadow-[0_12px_35px_rgba(255,255,255,0.08)]"
+                    : "border-transparent bg-white/[0.025] text-white hover:border-purple-400/25 hover:bg-purple-500/[0.07]"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-xl border transition-colors ${
+                      active
+                        ? "border-purple-500/20 bg-purple-600 text-white"
+                        : "border-white/10 bg-white/[0.04] text-purple-300 group-hover:border-purple-400/30"
+                    }`}
+                  >
                     {tab.icon}
                   </div>
-                  <span className="font-bold text-sm text-white tracking-tight">
-                    {tab.label}
-                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] font-extrabold tracking-[-0.01em]">
+                        {tab.label}
+                      </span>
+                      <span className={`font-mono text-[9px] ${active ? "text-zinc-400" : "text-zinc-600"}`}>
+                        {tab.number}
+                      </span>
+                    </div>
+                    <p className={`mt-1 truncate text-[11px] ${active ? "text-zinc-500" : "text-zinc-500"}`}>
+                      {tab.blurb}
+                    </p>
+                    <div className="mt-2 flex min-h-4 items-center gap-2">
+                      {tab.badge && (
+                        <span className={`rounded-full px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.14em] ${active ? "bg-black text-white" : "bg-rose-500/10 text-rose-300"}`}>
+                          {tab.badge}
+                        </span>
+                      )}
+                      {locked && (
+                        <span className={`font-mono text-[9px] font-bold uppercase tracking-[0.08em] ${active ? "text-purple-700" : "text-purple-300"}`}>
+                          Run payment to unlock
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                {tab.badge && (
-                  <span className="text-[10px] uppercase tracking-wider font-extrabold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                    {tab.badge}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-slate-400 mt-1.5 line-clamp-1">{tab.blurb}</p>
-              {tab.id !== "flow" && tab.id !== "evidence" && !hasRun && (
-                <span className="inline-block mt-1.5 text-[10px] uppercase font-bold tracking-wider text-amber-400">
-                  ⚡ needs 1 payment run
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </nav>
-
-      <div className="p-4 rounded-xl border border-white/10 bg-slate-900/50 backdrop-blur-sm">
-        <div className="flex items-center gap-2 mb-2 font-bold text-xs text-slate-200">
-          <Lock className="w-3.5 h-3.5 text-sky-400" />
-          <span>In-Browser Client Key</span>
-        </div>
-        <p className="text-xs text-slate-400 leading-relaxed">
-          Your Ed25519 keypair is generated directly in your browser's sessionStorage.
-          The server holds no private keys and never custodies funds.
-        </p>
+              </button>
+            );
+          })}
+        </nav>
       </div>
 
-      <div className="flex flex-col gap-2 px-1">
+      <div className="relative hidden overflow-hidden rounded-[24px] border border-purple-400/20 bg-purple-950/20 p-5 lg:block">
+        <div className="purple-orb absolute -right-10 -top-12 h-32 w-32 opacity-50" />
+        <div className="relative">
+          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-purple-300/20 bg-purple-500/10 text-purple-200">
+            <Lock className="h-4 w-4" />
+          </div>
+          <h3 className="text-sm font-bold text-white">Client-side by design</h3>
+          <p className="mt-2 text-[11px] leading-relaxed text-zinc-400">
+            The ephemeral Ed25519 key stays in this browser session. No private key reaches the server.
+          </p>
+        </div>
+      </div>
+
+      <div className="hidden flex-col gap-1 px-2 lg:flex">
         <a
           href="https://docs.veridex.network"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center justify-between text-xs text-slate-400 hover:text-sky-400 transition-colors py-1"
+          className="flex items-center justify-between rounded-lg px-2 py-2 text-[11px] text-zinc-500 transition-colors hover:bg-white/[0.03] hover:text-purple-200"
         >
-          <span>Developer Guides & Specs</span>
-          <ExternalLink className="w-3 h-3" />
+          <span>Developer guides</span>
+          <ExternalLink className="h-3 w-3" />
         </a>
         <a
           href="https://github.com/Veridex-Protocol/stellar"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center justify-between text-xs text-slate-400 hover:text-sky-400 transition-colors py-1"
+          className="flex items-center justify-between rounded-lg px-2 py-2 text-[11px] text-zinc-500 transition-colors hover:bg-white/[0.03] hover:text-purple-200"
         >
-          <span>GitHub Monorepo</span>
-          <ExternalLink className="w-3 h-3" />
+          <span>GitHub repository</span>
+          <ExternalLink className="h-3 w-3" />
         </a>
       </div>
     </aside>

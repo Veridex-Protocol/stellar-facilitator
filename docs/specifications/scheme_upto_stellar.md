@@ -22,8 +22,8 @@ publicly attributable.
 
 ## Why this needs a contract
 
-SEP-41 allowances alone are insufficient, and the RFP is explicit that a
-contract-free design must say so.
+SEP-41 allowances alone are insufficient, and a contract-free design must
+explicitly declare that limitation.
 
 An `approve` grants a spender an amount. It does not bind that spender to a
 particular recipient, so a facilitator holding an allowance may transfer to
@@ -295,7 +295,7 @@ arguments directly: a per-recipient ceiling, a rolling budget, an allowlist of
 tokens, or a cap on `max_amount` per settlement.
 
 The account sees the terms it is being asked to authorize, not merely that a call
-is being made. This is the composition the RFP asks about, and it is a further
+is being made. This is the composition that makes bounded pull payments possible on Soroban, and it is a further
 reason the argument binding in §"What the payer authorizes" is required rather
 than recommended.
 

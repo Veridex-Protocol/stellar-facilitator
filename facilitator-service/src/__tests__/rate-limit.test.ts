@@ -78,7 +78,7 @@ describe("Rate Limiting & Client IP Resolution (VDX-07)", () => {
     // 4th request exceeds max=3
     const res4 = await app.request("http://localhost/test");
     expect(res4.status).toBe(429);
-    const body = await res4.json();
+    const body = await res4.json() as { error?: string };
     expect(body.error).toBe("rate_limited");
   });
 });

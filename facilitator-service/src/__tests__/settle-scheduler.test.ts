@@ -78,6 +78,19 @@ describe("settlement scheduler", () => {
     expect(new Set(observed).size).toBe(2);
   });
 
+  it("waits for the payer-authorized signer instead of leasing another account", async () => {
+    const scheduler = new SettleScheduler([A, B], 5_000);
+    const holding = scheduler.withSigner(async (address) => {
+      expect(address).toBe(A);
+      await sleep(30);
+    }, A);
+
+    await sleep(5);
+    const selected = scheduler.withSigner(async (address) => address, A);
+    await expect(selected).resolves.toBe(A);
+    await holding;
+  });
+
   it("falls back to a real address outside a lease rather than throwing", () => {
     const scheduler = new SettleScheduler([A, B], 5_000);
     expect(settleContext.getStore()).toBeUndefined();

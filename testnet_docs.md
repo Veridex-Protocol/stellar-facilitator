@@ -132,10 +132,10 @@ Everything above runs locally. To put it on a host:
 
 ## `upto`
 
-The contract in `contracts/upto-settlement` has tests and is not deployed. The
-scheme is absent from `/supported` until it is, and cannot be re-enabled by
-setting a string: `resolveUptoGate()` confirms a contract instance exists
-on-chain at the configured id before the scheme is advertised at all.
+The contract in `contracts/upto-settlement` has tests and a recorded testnet
+deployment in [`contracts/upto-settlement/deployment.md`](contracts/upto-settlement/deployment.md).
+The scheme is absent from `/supported` until `resolveUptoGate()` confirms a
+contract instance exists on the configured network.
 
 Testnet first, then mainnet, with separate ids for each:
 
@@ -144,8 +144,8 @@ Testnet first, then mainnet, with separate ids for each:
 - [ ] Set `UPTO_ESCROW_CONTRACT_ID_TESTNET`. Restart; confirm `/supported` now
       carries the `upto` kind with that id, and that the boot log says
       `upto contract confirmed at C...`.
-- [ ] Initialize the admin; execute cap, partial-use, expiry, and replay
-      transactions against it on testnet.
+- [ ] Execute cap, zero, partial-use, expiry, replay, and response-digest
+      transactions through the facilitator path on testnet.
 - [ ] Complete facilitator and client integration, plus an independent security
       review.
 - [ ] Only then deploy to mainnet and set `UPTO_ESCROW_CONTRACT_ID_PUBNET`.

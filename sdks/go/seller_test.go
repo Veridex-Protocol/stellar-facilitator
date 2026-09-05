@@ -1,6 +1,35 @@
 package veridex
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestSHA256Digest(t *testing.T) {
+	if got := SHA256Digest([]byte("hello")); got != "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("SHA256Digest() = %q", got)
+	}
+}
+
+func TestMarshalProviderOutcome(t *testing.T) {
+	encoded, err := MarshalProviderOutcome(ProviderOutcome{
+		Version:         "veridex/provider-outcome/1",
+		Resource:        "https://provider.example/fx",
+		PayTo:           "GABC",
+		RequestDigest:   SHA256Digest([]byte("request")),
+		ResponseDigest:  SHA256Digest([]byte("response")),
+		ObservedAt:      1700000000,
+		Usable:          true,
+		ProviderAtFault: false,
+		Attributable:    "unknown",
+		ReasonCode:      "ok",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) == 0 {
+		t.Fatal("empty provider outcome")
+	}
+}
 
 // The soft-drop rules these functions implement are a trust boundary: a hostile
 // client controls this metadata and the catalog is public. Each test states the

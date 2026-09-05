@@ -22,12 +22,17 @@ import { Announcer, createAnnouncer } from "./p2p/announcer.js";
 import { TelemetryTracker } from "./telemetry/tracker.js";
 import { BazaarSearchEngine } from "./search/engine.js";
 import { CatalogIngestionWorker } from "./catalog/ingestion.js";
-import { AnnounceMessageSchema } from "./p2p/types.js";
+import { AnnounceMessageSchema, CatalogDeltaSchema, type CatalogDelta } from "./p2p/types.js";
 import { InvalidCursorError } from "./search/cursor.js";
 import { rateLimit } from "./rate-limit.js";
 import { bodyLimit } from "hono/body-limit";
 import type { P2PNodeConfig } from "./p2p/types.js";
 import type { ResourceMetadata } from "./p2p/announcer.js";
+import { catalogDeltaKey } from "./p2p/catalog-delta.js";
+import { ProviderQualityStore } from "./provider-quality/store.js";
+import { ProviderAggregateSchema, ProviderObservationSchema } from "./provider-quality/types.js";
+import { verifyProviderAggregate, verifyProviderObservation } from "./provider-quality/crypto.js";
+import { buildProviderAggregate } from "./provider-quality/aggregator.js";
 
 /**
  * Bazaar Service configuration
@@ -54,9 +59,16 @@ export interface BazaarServiceConfig {
   stellarSecretKey?: string;
   /** Horizon endpoint used to confirm the settlements behind catalog entries. */
   horizonUrl: string;
+  sorobanRpcUrl: string;
   /** Shared secret the facilitator presents on /catalog/ingest. Required. */
   internalToken: string;
   announcedResources: ResourceMetadata[];
+  providerAggregateIssuerSecretKey?: string;
+  providerAggregatePublishedThreshold: number;
+  providerAggregateProvisionalThreshold: number;
+  providerQualityAuthorizedSigners?: string[];
+  providerAggregateAuthorizedIssuers?: string[];
+  providerAggregateRecomputeQueueLimit?: number;
 }
 
 /**
@@ -83,10 +95,22 @@ export function getDefaultConfig(): BazaarServiceConfig {
         : [],
       heartbeatIntervalMs: 30_000,
       maxMissedHeartbeats: 3,
+      authorizedPeerIds: process.env.P2P_AUTHORIZED_PEER_IDS
+        ? process.env.P2P_AUTHORIZED_PEER_IDS.split(",").map((a) => a.trim()).filter(Boolean)
+        : undefined,
+      authorizedHeartbeatSigners: parseAuthorizationMap(process.env.P2P_AUTHORIZED_HEARTBEAT_SIGNERS),
+      authorizedCatalogSigners: parseAuthorizationMap(process.env.P2P_AUTHORIZED_CATALOG_SIGNERS),
     },
     stellarSecretKey: process.env.STELLAR_SECRET_KEY,
     announcedResources: parseAnnouncedResources(process.env.P2P_ANNOUNCED_RESOURCES),
+    providerAggregateIssuerSecretKey: process.env.PROVIDER_AGGREGATE_ISSUER_SECRET_KEY,
+    providerAggregatePublishedThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PUBLISHED_THRESHOLD || "100", 10),
+    providerAggregateProvisionalThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PROVISIONAL_THRESHOLD || "20", 10),
+    providerQualityAuthorizedSigners: parseCsv(process.env.PROVIDER_QUALITY_AUTHORIZED_SIGNERS),
+    providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
+    providerAggregateRecomputeQueueLimit: parseInt(process.env.PROVIDER_AGGREGATE_RECOMPUTE_QUEUE_LIMIT || "256", 10),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
+    sorobanRpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org",
     // Required, not optional. The previous guard read
     // `if (internalToken && ...)`, which skipped authentication entirely when
     // the variable was unset - an open write endpoint on the public catalog.
@@ -110,6 +134,26 @@ function requireInternalToken(): string {
     );
   }
   return token;
+}
+
+function parseAuthorizationMap(value?: string): Record<string, string[]> | undefined {
+  if (!value) return undefined;
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("P2P authorization maps must be JSON objects of string keys to string arrays");
+  }
+  return Object.fromEntries(Object.entries(parsed).map(([key, signers]) => {
+    if (!Array.isArray(signers) || signers.some((signer) => typeof signer !== "string")) {
+      throw new Error(`P2P authorization map entry '${key}' must contain string signers`);
+    }
+    return [key, signers];
+  }));
+}
+
+function parseCsv(value?: string): string[] | undefined {
+  if (!value) return undefined;
+  const values = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return values.length > 0 ? values : undefined;
 }
 
 /**
@@ -196,9 +240,14 @@ export class BazaarService {
   private telemetryTracker: TelemetryTracker;
   private searchEngine: BazaarSearchEngine;
   private ingestionWorker: CatalogIngestionWorker;
+  private providerQualityStore: ProviderQualityStore;
   private httpServer?: ServerType;
   private livenessInterval?: NodeJS.Timeout;
   private heartbeatInterval?: NodeJS.Timeout;
+  private serviceReady = false;
+  private stopping = false;
+  private providerAggregateRecomputeScheduled = false;
+  private readonly pendingProviderAggregateRecomputes = new Map<string, { endpoint: string; payTo?: string }>();
 
   constructor(config: BazaarServiceConfig) {
     this.config = config;
@@ -211,7 +260,9 @@ export class BazaarService {
     this.searchEngine = new BazaarSearchEngine(config.database);
     this.ingestionWorker = new CatalogIngestionWorker(config.database, {
       horizonUrl: config.horizonUrl,
+      sorobanRpcUrl: config.sorobanRpcUrl,
     });
+    this.providerQualityStore = new ProviderQualityStore(this.db);
 
     // Initialize announcer if secret key provided
     if (config.stellarSecretKey) {
@@ -293,7 +344,7 @@ export class BazaarService {
       const p2pStats = this.p2pNode.getStats();
 
       return c.json({
-        status: dbHealth.connected ? "ok" : "degraded",
+        status: dbHealth.connected && !dbHealth.error ? "ok" : "degraded",
         timestamp: Date.now(),
         database: dbHealth,
         p2p: {
@@ -302,6 +353,25 @@ export class BazaarService {
           uptime: p2pStats.uptime,
         },
       });
+    });
+
+    this.app.get("/ready", async (c) => {
+      const dbHealth = await this.db.healthCheck();
+      const p2pStats = this.p2pNode.getStats();
+      const ready = this.serviceReady &&
+        dbHealth.connected &&
+        !dbHealth.error &&
+        p2pStats.peerId.length > 0;
+      return c.json({
+        status: ready ? "ready" : "not_ready",
+        serviceStarted: this.serviceReady,
+        database: dbHealth,
+        p2p: {
+          peerId: p2pStats.peerId,
+          connectedPeers: p2pStats.connectedPeers,
+        },
+        timestamp: Date.now(),
+      }, ready ? 200 : 503);
     });
 
     // Statistics
@@ -381,6 +451,88 @@ export class BazaarService {
       }
     });
 
+    // Public, read-only provider reliability history. This is deliberately
+    // separate from heartbeat liveness and settlement counters.
+    this.app.get("/v1/provider", async (c) => {
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      const payTo = c.req.query("payTo");
+      try {
+        const aggregate = await this.providerQualityStore.getAggregate(endpoint, payTo);
+        if (!aggregate) {
+          return c.json({
+            v: "veridex/provider-aggregate/1",
+            endpoint,
+            ...(payTo ? { payTo } : {}),
+            state: "insufficient_data",
+            faultRateUpperBound: 1,
+            faultsObserved: 0,
+            n: 0,
+            window: "30d",
+            retrievedAt: Math.floor(Date.now() / 1000),
+          }, 200);
+        }
+        const verification = verifyProviderAggregate(aggregate, {
+          expectedEndpoint: endpoint,
+          expectedPayTo: payTo,
+          authorizedIssuers: this.config.providerAggregateAuthorizedIssuers,
+          maxAgeSeconds: 30 * 24 * 60 * 60,
+        });
+        if (!verification.valid) {
+          return c.json({ error: "provider_quality_unavailable", message: verification.error }, 503);
+        }
+        return c.json(aggregate);
+      } catch (error) {
+        console.error("[Bazaar Service] Provider aggregate read error:", error);
+        return c.json({ error: "provider_quality_unavailable" }, 503);
+      }
+    });
+
+    this.app.get("/v1/provider/observations", async (c) => {
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      try {
+        const observations = await this.providerQualityStore.listObservations(
+          endpoint,
+          c.req.query("payTo"),
+          clampLimit(c.req.query("limit")),
+        );
+        return c.json({ endpoint, observations });
+      } catch (error) {
+        console.error("[Bazaar Service] Provider observation read error:", error);
+        return c.json({ error: "provider_quality_unavailable" }, 503);
+      }
+    });
+
+    this.app.post("/provider-quality/aggregates/recompute", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      if (!this.config.providerAggregateIssuerSecretKey) {
+        return c.json({ error: "aggregate_issuer_not_configured" }, 503);
+      }
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      const payTo = c.req.query("payTo") || undefined;
+      try {
+        const observations = await this.providerQualityStore.listObservationsForAggregate(endpoint, payTo);
+        const aggregate = buildProviderAggregate(
+          endpoint,
+          payTo,
+          observations,
+          this.config.providerAggregateIssuerSecretKey,
+          {
+            publishedThreshold: this.config.providerAggregatePublishedThreshold,
+            provisionalThreshold: this.config.providerAggregateProvisionalThreshold,
+          },
+        );
+        await this.providerQualityStore.saveAggregate(aggregate);
+        return c.json(aggregate, 200);
+      } catch (error) {
+        return c.json({ error: "aggregate_recompute_failed", message: error instanceof Error ? error.message : String(error) }, 500);
+      }
+    });
+
     // Accept P2P announcements via HTTP (Authenticated)
     this.app.post("/announce", async (c) => {
       try {
@@ -409,6 +561,26 @@ export class BazaarService {
         return c.json({
           error: "Announcement failed",
           message: error instanceof Error ? error.message : "Unknown error",
+        }, 400);
+      }
+    });
+
+    this.app.post("/catalog/delta", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const delta = CatalogDeltaSchema.parse(await c.req.json());
+        const allowed = this.config.p2p.authorizedCatalogSigners?.[`${delta.network}:${delta.payTo}`]
+          ?? (delta.signer === delta.payTo ? [delta.payTo] : undefined);
+        const result = await this.ingestionWorker.applyCatalogDelta(delta, {
+          authorizedSigners: allowed,
+        });
+        return c.json({ ...result, key: catalogDeltaKey(delta) }, result.status === "rejected" ? 400 : 202);
+      } catch (error) {
+        return c.json({
+          error: "invalid_catalog_delta",
+          message: error instanceof Error ? error.message : String(error),
         }, 400);
       }
     });
@@ -463,6 +635,91 @@ export class BazaarService {
         }, 500);
       }
     });
+
+    // Internal asynchronous observation ingestion. It is never called by the
+    // facilitator before settlement and contains hashes, not raw payloads.
+    this.app.post("/provider-quality/observations", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const body = await c.req.json();
+        const observation = ProviderObservationSchema.parse(body.observation ?? body);
+        const verification = verifyProviderObservation(observation, {
+          expectedResource: observation.resource,
+          expectedPayTo: observation.payTo,
+          authorizedSigners: this.config.providerQualityAuthorizedSigners,
+          maxAgeSeconds: 15 * 60,
+        });
+        if (!verification.valid) {
+          return c.json({ error: "invalid_provider_observation", message: verification.error }, 400);
+        }
+        const record = await this.providerQualityStore.recordObservation({ observation });
+        this.enqueueProviderAggregateRecompute(observation.resource, observation.payTo);
+        return c.json({ status: "accepted", id: record.id }, 202);
+      } catch (error) {
+        return c.json({
+          error: "invalid_provider_observation",
+          message: error instanceof Error ? error.message : String(error),
+        }, 400);
+      }
+    });
+
+    // Internal aggregate ingestion. Aggregates are accepted only after
+    // signature, timestamp, endpoint, and payee checks succeed.
+    this.app.post("/provider-quality/aggregates", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const aggregate = ProviderAggregateSchema.parse(await c.req.json());
+        const verification = verifyProviderAggregate(aggregate, {
+          expectedEndpoint: aggregate.endpoint,
+          expectedPayTo: aggregate.payTo,
+          authorizedIssuers: this.config.providerAggregateAuthorizedIssuers,
+          maxAgeSeconds: 15 * 60,
+        });
+        if (!verification.valid) {
+          return c.json({ error: "invalid_provider_aggregate", message: verification.error }, 400);
+        }
+        await this.providerQualityStore.saveAggregate(aggregate);
+        return c.json({ status: "accepted" }, 202);
+      } catch (error) {
+        return c.json({
+          error: "invalid_provider_aggregate",
+          message: error instanceof Error ? error.message : String(error),
+        }, 400);
+      }
+    });
+
+    this.app.post("/provider-quality/observations/settlement", async (c) => {
+      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+        return c.json({ error: "unauthorized" }, 401);
+      }
+      try {
+        const body = await c.req.json();
+        if (
+          typeof body?.signer !== "string" ||
+          typeof body?.signature !== "string" ||
+          !/^[0-9a-f]{64}$/i.test(body?.settlementTx || "")
+        ) {
+          return c.json({ error: "invalid_settlement_correlation" }, 400);
+        }
+        const attached = await this.providerQualityStore.attachSettlement(
+          body.signer,
+          body.signature,
+          body.settlementTx,
+        );
+        return attached
+          ? c.json({ status: "attached" }, 202)
+          : c.json({ error: "provider_observation_not_found" }, 404);
+      } catch (error) {
+        return c.json({
+          error: "settlement_correlation_failed",
+          message: error instanceof Error ? error.message : String(error),
+        }, 400);
+      }
+    });
   }
 
   /**
@@ -476,11 +733,12 @@ export class BazaarService {
    */
   async start(): Promise<void> {
     console.log("[Bazaar Service] Starting Veridex Bazaar Discovery Service...");
+    this.stopping = false;
 
     // Check database
     console.log("[Bazaar Service] Checking database connection...");
     const dbHealth = await this.db.healthCheck();
-    if (!dbHealth.connected) {
+    if (!dbHealth.connected || dbHealth.error) {
       throw new Error(`Database connection failed: ${dbHealth.error}`);
     }
     console.log("[Bazaar Service] Database OK");
@@ -537,6 +795,17 @@ export class BazaarService {
       }
     });
 
+    this.p2pNode.onCatalogDelta(async (delta: CatalogDelta) => {
+      const allowed = this.config.p2p.authorizedCatalogSigners?.[`${delta.network}:${delta.payTo}`]
+        ?? (delta.signer === delta.payTo ? [delta.payTo] : undefined);
+      const result = await this.ingestionWorker.applyCatalogDelta(delta, {
+        authorizedSigners: allowed,
+      });
+      if (result.status === "rejected") {
+        console.warn(`[Bazaar Service] Catalog delta rejected: ${result.reason}`);
+      }
+    });
+
     if (this.announcer && this.config.announcedResources.length > 0) {
       const publishHeartbeats = async () => {
         for (const resource of this.config.announcedResources) {
@@ -564,6 +833,7 @@ export class BazaarService {
       port: this.config.port,
       hostname: this.config.host,
     });
+    this.serviceReady = true;
 
     this.livenessInterval = setInterval(() => {
       this.telemetryTracker.pruneOfflineNodes().catch((error) =>
@@ -586,6 +856,9 @@ export class BazaarService {
    */
   async stop(): Promise<void> {
     console.log("[Bazaar Service] Stopping service...");
+    this.stopping = true;
+    this.serviceReady = false;
+    this.pendingProviderAggregateRecomputes.clear();
 
     if (this.livenessInterval) {
       clearInterval(this.livenessInterval);
@@ -614,6 +887,50 @@ export class BazaarService {
    */
   getApp(): Hono {
     return this.app;
+  }
+
+  private enqueueProviderAggregateRecompute(endpoint: string, payTo?: string): void {
+    if (!this.config.providerAggregateIssuerSecretKey || this.stopping) return;
+    const key = `${endpoint}|${payTo ?? ""}`;
+    const queueLimit = Math.max(1, this.config.providerAggregateRecomputeQueueLimit ?? 256);
+    if (!this.pendingProviderAggregateRecomputes.has(key) && this.pendingProviderAggregateRecomputes.size >= queueLimit) {
+      console.warn(`[Bazaar Service] Provider aggregate recompute queue is full; dropping ${key}`);
+      return;
+    }
+    this.pendingProviderAggregateRecomputes.set(key, { endpoint, payTo });
+    if (this.providerAggregateRecomputeScheduled) return;
+    this.providerAggregateRecomputeScheduled = true;
+    setTimeout(() => {
+      this.providerAggregateRecomputeScheduled = false;
+      this.drainProviderAggregateRecomputeQueue().catch((error) =>
+        console.error("[Bazaar Service] Provider aggregate recomputation failed:", error),
+      );
+    }, 0);
+  }
+
+  private async drainProviderAggregateRecomputeQueue(): Promise<void> {
+    while (!this.stopping && this.pendingProviderAggregateRecomputes.size > 0) {
+      const next = this.pendingProviderAggregateRecomputes.values().next().value as
+        { endpoint: string; payTo?: string } | undefined;
+      if (!next) return;
+      this.pendingProviderAggregateRecomputes.delete(`${next.endpoint}|${next.payTo ?? ""}`);
+      try {
+        await this.recomputeProviderAggregate(next.endpoint, next.payTo);
+      } catch (error) {
+        console.error(`[Bazaar Service] Failed to recompute provider aggregate for ${next.endpoint}:`, error);
+      }
+    }
+  }
+
+  private async recomputeProviderAggregate(endpoint: string, payTo?: string): Promise<void> {
+    const issuerSecretKey = this.config.providerAggregateIssuerSecretKey;
+    if (!issuerSecretKey) return;
+    const observations = await this.providerQualityStore.listObservationsForAggregate(endpoint, payTo);
+    const aggregate = buildProviderAggregate(endpoint, payTo, observations, issuerSecretKey, {
+      publishedThreshold: this.config.providerAggregatePublishedThreshold,
+      provisionalThreshold: this.config.providerAggregateProvisionalThreshold,
+    });
+    await this.providerQualityStore.saveAggregate(aggregate);
   }
 }
 

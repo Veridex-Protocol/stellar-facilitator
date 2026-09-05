@@ -10,7 +10,7 @@ What you end up with is a running facilitator and catalog, together with the che
 git clone https://github.com/Veridex-Protocol/stellar.git && cd stellar
 npm run setup                    # Friendbot accounts, channel accounts, .env
 docker compose up --build -d postgres bazaar facilitator demo-server
-npm run conformance              # 32 checks against your own stack
+npm run conformance              # exact-payment checks against your own stack
 ```
 
 Nothing here depends on us. There is no hosted service, no API key, and no shipped contract id. Every dependency is permissively licensed, which we verified across all six package trees with no AGPL, GPL, SSPL or BUSL anywhere in a runtime path.
@@ -124,7 +124,7 @@ Set `UPTO_ESCROW_CONTRACT_ID_TESTNET` to the id printed and restart. The facilit
 
 `UPTO_ESCROW_CONTRACT_ID_PUBNET` is read separately and is never inherited from the testnet variable, so a mainnet deployment cannot silently advertise a testnet contract.
 
-The contract is stateless and has no admin, so every instance of the same wasm behaves identically. Details and the current testnet artifact are recorded in [`contracts/upto-settlement/DEPLOYMENT.md`](../../contracts/upto-settlement/DEPLOYMENT.md).
+The contract is stateless and has no admin, so every instance of the same wasm behaves identically. Details and the current testnet artifact are recorded in [`contracts/upto-settlement/deployment.md`](../../contracts/upto-settlement/deployment.md).
 
 The contract is not audited, so advertise it on testnet only.
 
@@ -151,7 +151,7 @@ Every figure there recomputes from the same log with that script. That is the st
 
 ## 8. Before going public
 
-Fund the sponsor account well above the 5 XLM floor and alert on its balance. Put a real rate limiter at the edge, since the built-in 120 per minute is a per-instance backstop rather than an edge policy. Set `CORS_ORIGINS` if this is not a public facilitator. Apply both migrations in `bazaar-service/src/db/migrations/` in order. Configure at least two Bazaar peers and verify that signed announcements propagate between them.
+Fund the sponsor account well above the 5 XLM floor and alert on its balance. Put a real rate limiter at the edge, since the built-in 120 per minute is a per-instance backstop rather than an edge policy. Set `CORS_ORIGINS` if this is not a public facilitator. Run the idempotent migration runner with `npm --prefix bazaar-service run db:migrate` (or apply the files in `bazaar-service/src/db/migrations/` in order). Configure at least two Bazaar peers and verify that signed announcements propagate between them.
 
 Alert on settlement failure rate, on `settlementConcurrency.totalRejected`, on skew retry volume, on channel account balances, on Horizon and RPC errors, and on database health.
 

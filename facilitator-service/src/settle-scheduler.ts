@@ -11,7 +11,7 @@
  * the buyer paid and got a 502.
  *
  * Agent traffic is bursty, so this is a load-shape problem rather than an edge
- * case. The remedy the RFP names is channel accounts: several funded accounts
+ * case. Channel accounts are the standard remedy: several funded accounts
  * whose sequence numbers advance independently. That is necessary but not
  * sufficient `@x402/stellar` round-robins across signers, which makes a
  * collision less likely without preventing one. With N signers, the N+1st
@@ -60,6 +60,7 @@ interface Waiter {
   reject(error: Error): void;
   timer: NodeJS.Timeout;
   queuedAt: number;
+  preferredAddress?: string;
 }
 
 export interface SettleSchedulerStats {
@@ -115,15 +116,18 @@ export class SettleScheduler {
    * @returns The leased signer, which the caller must release
    * @throws {SignerBusyError} When no signer becomes free within the timeout
    */
-  async acquire(): Promise<SignerLease> {
+  async acquire(preferredAddress?: string): Promise<SignerLease> {
     if (this.poolSize === 0) {
       throw new Error("No settlement signers are configured");
     }
+    if (preferredAddress && !this.idle.includes(preferredAddress) && !this.busy.has(preferredAddress)) {
+      throw new Error(`Settlement signer is not configured: ${preferredAddress}`);
+    }
 
-    const address = this.idle.shift();
-    if (address !== undefined) {
-      this.busy.add(address);
-      return this.leaseFor(address);
+    const selectedAddress = this.takeIdle(preferredAddress);
+    if (selectedAddress !== undefined) {
+      this.busy.add(selectedAddress);
+      return this.leaseFor(selectedAddress);
     }
 
     // Every signer is in flight. Wait in order rather than racing for a
@@ -150,9 +154,16 @@ export class SettleScheduler {
             ),
           );
         }, this.queueTimeoutMs),
+        preferredAddress,
       };
       this.waiters.push(waiter);
     });
+  }
+
+  private takeIdle(preferredAddress?: string): string | undefined {
+    const index = preferredAddress ? this.idle.indexOf(preferredAddress) : 0;
+    if (index < 0) return undefined;
+    return this.idle.splice(index, 1)[0];
   }
 
   /**
@@ -169,21 +180,29 @@ export class SettleScheduler {
         if (released) return;
         released = true;
 
-        const waiter = this.waiters.shift();
-        if (waiter) {
-          // Hand the signer straight over: it never returns to the idle list,
-          // so a later arrival cannot jump the queue.
-          clearTimeout(waiter.timer);
-          const waited = Date.now() - waiter.queuedAt;
-          if (waited > this.stats.maxObservedWaitMs) this.stats.maxObservedWaitMs = waited;
-          waiter.resolve(this.leaseFor(address));
-          return;
-        }
-
         this.busy.delete(address);
         this.idle.push(address);
+        this.processQueue();
       },
     };
+  }
+
+  private processQueue(): void {
+    while (this.idle.length > 0 && this.waiters.length > 0) {
+      const waiterIndex = this.waiters.findIndex(
+        (waiter) => !waiter.preferredAddress || this.idle.includes(waiter.preferredAddress),
+      );
+      if (waiterIndex < 0) return;
+
+      const waiter = this.waiters.splice(waiterIndex, 1)[0];
+      const address = this.takeIdle(waiter.preferredAddress);
+      if (!address) return;
+      clearTimeout(waiter.timer);
+      const waited = Date.now() - waiter.queuedAt;
+      if (waited > this.stats.maxObservedWaitMs) this.stats.maxObservedWaitMs = waited;
+      this.busy.add(address);
+      waiter.resolve(this.leaseFor(address));
+    }
   }
 
   /**
@@ -193,8 +212,8 @@ export class SettleScheduler {
    * @returns Whatever the operation returns
    * @throws {SignerBusyError} When no signer becomes free within the timeout
    */
-  async withSigner<T>(operation: (address: string) => Promise<T>): Promise<T> {
-    const lease = await this.acquire();
+  async withSigner<T>(operation: (address: string) => Promise<T>, preferredAddress?: string): Promise<T> {
+    const lease = await this.acquire(preferredAddress);
     try {
       return await settleContext.run({ address: lease.address }, () => operation(lease.address));
     } finally {

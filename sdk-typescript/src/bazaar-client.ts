@@ -6,6 +6,7 @@
  */
 
 import type { BazaarResource, BazaarSearchResponse } from "./types.js";
+import type { ProviderAggregate, ProviderAggregateInsufficientData } from "./provider-quality.js";
 
 /**
  * Bazaar Client Configuration
@@ -186,6 +187,39 @@ export class BazaarClient {
     }
 
     return (await response.json()) as any;
+  }
+
+  /** Read a signed provider-quality aggregate or an explicit insufficient-data response. */
+  async providerQuality(
+    endpoint: string,
+    payTo?: string,
+  ): Promise<ProviderAggregate | ProviderAggregateInsufficientData> {
+    const url = new URL("/v1/provider", this.config.bazaarUrl);
+    url.searchParams.set("endpoint", endpoint);
+    if (payTo) url.searchParams.set("payTo", payTo);
+    const response = await fetch(url.toString());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String((body as Record<string, unknown>).error || `Provider quality lookup failed: ${response.statusText}`));
+    }
+    return body as ProviderAggregate | ProviderAggregateInsufficientData;
+  }
+
+  /** Read digest-only provider observation history. */
+  async providerObservations(
+    endpoint: string,
+    options: { payTo?: string; limit?: number } = {},
+  ): Promise<{ endpoint: string; observations: Record<string, unknown>[] }> {
+    const url = new URL("/v1/provider/observations", this.config.bazaarUrl);
+    url.searchParams.set("endpoint", endpoint);
+    if (options.payTo) url.searchParams.set("payTo", options.payTo);
+    if (options.limit !== undefined) url.searchParams.set("limit", String(options.limit));
+    const response = await fetch(url.toString());
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(String((body as Record<string, unknown>).error || `Provider observations lookup failed: ${response.statusText}`));
+    }
+    return body as { endpoint: string; observations: Record<string, unknown>[] };
   }
 }
 

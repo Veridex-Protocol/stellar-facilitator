@@ -101,7 +101,7 @@ The two properties above are what we argue for on their merits, whichever base d
 **Costs accepted**
 
 - **More than one Stellar `upto` draft will reach the committee.** That means more review work upstream, and possibly more than one audit before the ecosystem converges. That is a normal cost of parallel drafting and we are choosing to pay it.
-- **This is an early-stage contract.** No deployment, no published wasm hash, no threat model document, and no independent audit. That will remain true until it is deployed and independently reviewed.
+- **This is an early-stage contract.** No deployment, no published wasm hash, no threat model document, and no independent audit. Other implementations of the upto scheme exist that are further along on all four. That gap closes when this one is deployed and independently reviewed.
 - **The facilitator attestation adds a signature to every settlement.** Slightly more work for the facilitator and a slightly larger auth tree, in exchange for the attribution property.
 - **The replay guard is the only state**, so a settlement writes a ledger entry and pays rent for it. Bounded by the deadline, and it is the price of the guarantee holding for smart-account payers.
 - **The committee may converge on a different base design**, and we would then implement that, having spent the effort on ours.

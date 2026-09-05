@@ -168,6 +168,11 @@ P2P_LISTEN_ADDRS=/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/tcp/4002/ws
 P2P_BOOTSTRAP_PEERS=
 ```
 
+The Compose P2P host bindings default to `4001` and `4002`. Set
+`BAZAAR_P2P_HOST_PORT` and `BAZAAR_P2P_WS_HOST_PORT` when another local node
+already owns those ports; service-to-service traffic continues to use the
+container ports and Compose DNS.
+
 **facilitator-service/.env:**
 ```bash
 FACILITATOR_PORT=3002
@@ -307,15 +312,15 @@ server {
 ### 3. Deploy Soroban Contract
 
 ```bash
-cd contracts/upto_escrow
+cd contracts/upto-settlement
 
-# Build optimized WASM
-make optimize
+# Build reproducible WASM with the pinned toolchain
+../../scripts/build-upto.sh
 
 # Deploy to pubnet
 export STELLAR_SECRET_KEY=S...
-soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/upto_escrow.optimized.wasm \
+stellar contract deploy \
+  --wasm target/wasm32v1-none/release/upto_settlement.wasm \
   --source $STELLAR_SECRET_KEY \
   --network pubnet
 
@@ -489,7 +494,8 @@ pg_isready
 psql veridex_bazaar -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
 
 # Verify connection string
-psql "host=localhost port=5432 dbname=veridex_bazaar user=postgres"
+docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
+psql "host=127.0.0.1 port=${DATABASE_HOST_PORT:-55432} dbname=veridex_bazaar user=postgres"
 ```
 
 **2. Channel pool initialization fails**

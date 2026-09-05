@@ -14,13 +14,14 @@ import { ping } from "@libp2p/ping";
 import { identify } from "@libp2p/identify";
 import { noise } from "@libp2p/noise";
 import { mplex } from "@libp2p/mplex";
-import { gossipsub } from "@chainsafe/libp2p-gossipsub";
+import { gossipsub } from "@libp2p/gossipsub";
 import { Keypair } from "@stellar/stellar-sdk";
 import { fromString as uint8ArrayFromString } from "uint8arrays/from-string";
 import { toString as uint8ArrayToString } from "uint8arrays/to-string";
 import {
   type P2PNodeConfig,
   type AnnounceMessage,
+  type CatalogDelta,
   type PeerStatus,
   type P2PStats,
   type MessageHandler,
@@ -28,11 +29,14 @@ import {
   P2PError,
   P2PErrorType,
   BAZAAR_ANNOUNCE_TOPIC,
+  BAZAAR_CATALOG_DELTA_TOPIC,
   AnnounceMessageSchema,
   createMessageHash,
   createSignaturePayload,
   DEFAULT_P2P_CONFIG,
 } from "./types.js";
+import { CatalogDeltaSchema, type CatalogDeltaInput } from "./types.js";
+import { verifyCatalogDelta } from "./catalog-delta.js";
 
 /**
  * P2P Node for Bazaar Discovery Mesh
@@ -54,6 +58,7 @@ export class P2PNode {
   private highestSequenceByNode: Map<string, number> = new Map();
   private readonly MESSAGE_CACHE_TTL_MS = 300_000; // 5 minutes
   private readonly MAX_CLOCK_SKEW_MS = 300_000;
+  private readonly MAX_MESSAGE_BYTES = 256 * 1024;
 
   // Statistics
   private stats: P2PStats = {
@@ -68,6 +73,7 @@ export class P2PNode {
 
   // Message handler callback
   private messageHandler?: MessageHandler;
+  private catalogDeltaHandler?: (delta: CatalogDelta) => Promise<void>;
 
   // Cleanup interval
   private cleanupInterval: NodeJS.Timeout | null = null;
@@ -117,9 +123,10 @@ export class P2PNode {
     console.log(`[P2P Node] PeerId: ${peerId}`);
     console.log(`[P2P Node] Listen addresses:`, this.config.listenAddrs);
 
-    // Subscribe to Bazaar announcement topic
+    // Subscribe to both liveness announcements and signed catalog snapshots.
     this.libp2p.services.pubsub.subscribe(BAZAAR_ANNOUNCE_TOPIC);
-    console.log(`[P2P Node] Subscribed to topic: ${BAZAAR_ANNOUNCE_TOPIC}`);
+    this.libp2p.services.pubsub.subscribe(BAZAAR_CATALOG_DELTA_TOPIC);
+    console.log(`[P2P Node] Subscribed to topics: ${BAZAAR_ANNOUNCE_TOPIC}, ${BAZAAR_CATALOG_DELTA_TOPIC}`);
 
     // Set up message handler
     this.libp2p.services.pubsub.addEventListener(
@@ -172,7 +179,11 @@ export class P2PNode {
       // Validate message schema
       const validated = AnnounceMessageSchema.parse(message);
 
-      if (!this.isFresh(validated) || !this.verifySignature(validated)) {
+      if (
+        !this.isFresh(validated) ||
+        !this.isHeartbeatAuthorized(validated) ||
+        !this.verifySignature(validated)
+      ) {
         throw new Error("Announcement signature or timestamp is invalid");
       }
 
@@ -198,6 +209,24 @@ export class P2PNode {
     }
   }
 
+  async publishCatalogDelta(delta: CatalogDelta): Promise<void> {
+    if (!this.libp2p) {
+      throw new P2PError(P2PErrorType.NOT_INITIALIZED, "P2P node not initialized");
+    }
+    const parsed = CatalogDeltaSchema.parse(delta);
+    const verification = verifyCatalogDelta(parsed, {
+      authorizedSigners: this.authorizedCatalogSigners(parsed),
+    });
+    if (!verification.valid) {
+      throw new P2PError(P2PErrorType.PUBLISH_FAILED, verification.error || "invalid catalog delta");
+    }
+    await this.libp2p.services.pubsub.publish(
+      BAZAAR_CATALOG_DELTA_TOPIC,
+      uint8ArrayFromString(JSON.stringify(parsed)),
+    );
+    this.stats.messagesPublished++;
+  }
+
   /**
    * Set the message handler callback
    *
@@ -205,6 +234,10 @@ export class P2PNode {
    */
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  onCatalogDelta(handler: (delta: CatalogDelta) => Promise<void>): void {
+    this.catalogDeltaHandler = handler;
   }
 
   /**
@@ -248,8 +281,18 @@ export class P2PNode {
     this.stats.messagesReceived++;
 
     try {
-      const { data, from } = evt.detail;
+      const { data, from, topic } = evt.detail;
       const fromPeerId = from.toString();
+
+      if (data.byteLength > this.MAX_MESSAGE_BYTES) {
+        this.stats.messagesSuppressed++;
+        return;
+      }
+
+      if (this.config.authorizedPeerIds && !this.config.authorizedPeerIds.includes(fromPeerId)) {
+        this.stats.messagesSuppressed++;
+        return;
+      }
 
       // Parse message JSON
       const messageStr = uint8ArrayToString(data);
@@ -259,6 +302,24 @@ export class P2PNode {
         message = JSON.parse(messageStr);
       } catch {
         console.warn("[P2P Node] Received invalid JSON message");
+        this.stats.messagesSuppressed++;
+        return;
+      }
+
+      if (topic === BAZAAR_CATALOG_DELTA_TOPIC) {
+        const delta = CatalogDeltaSchema.parse(message);
+        const verification = verifyCatalogDelta(delta, {
+          authorizedSigners: this.authorizedCatalogSigners(delta),
+        });
+        if (!verification.valid) {
+          this.stats.messagesSuppressed++;
+          return;
+        }
+        if (this.catalogDeltaHandler) await this.catalogDeltaHandler(delta);
+        return;
+      }
+
+      if (topic !== BAZAAR_ANNOUNCE_TOPIC) {
         this.stats.messagesSuppressed++;
         return;
       }
@@ -273,7 +334,7 @@ export class P2PNode {
 
       const validatedMessage = validation.message!;
 
-      if (!this.isFresh(validatedMessage)) {
+      if (!this.isFresh(validatedMessage) || !this.isHeartbeatAuthorized(validatedMessage)) {
         console.warn(`[P2P Node] Stale or future-dated message from ${validatedMessage.nodeId}`);
         this.stats.messagesSuppressed++;
         return;
@@ -364,6 +425,19 @@ export class P2PNode {
 
   private isFresh(message: AnnounceMessage): boolean {
     return Math.abs(Date.now() - message.timestamp) <= this.MAX_CLOCK_SKEW_MS;
+  }
+
+  private isHeartbeatAuthorized(message: AnnounceMessage): boolean {
+    if (!message.payTo) return true;
+    if (message.nodeId === message.payTo) return true;
+    const key = `${message.resourceUrl}|${message.toolName || ""}`;
+    return this.config.authorizedHeartbeatSigners?.[key]?.includes(message.nodeId) ?? false;
+  }
+
+  private authorizedCatalogSigners(delta: CatalogDelta): string[] | undefined {
+    const configured = this.config.authorizedCatalogSigners?.[`${delta.network}:${delta.payTo}`];
+    if (configured && configured.length > 0) return configured;
+    return delta.signer === delta.payTo ? [delta.payTo] : undefined;
   }
 
   /**

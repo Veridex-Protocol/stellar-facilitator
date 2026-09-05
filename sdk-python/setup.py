@@ -12,7 +12,7 @@ setup(
     name="veridex-sdk",
     version="0.1.0",
     author="Veridex",
-    description="Python SDK for Veridex Bazaar discovery and x402 payments",
+    description="Python helpers for Veridex Bazaar discovery and advanced facilitator HTTP transport",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/veridex/veridex",

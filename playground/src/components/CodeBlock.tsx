@@ -27,14 +27,14 @@ export function CodeBlock({ code, label }: CodeBlockProps) {
   };
 
   return (
-    <div className="my-3 rounded-lg overflow-hidden border border-white/10 bg-[#090d13] shadow-md">
-      <div className="flex items-center justify-between px-3.5 py-2 bg-[#111721] border-b border-white/10">
-        <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]" />
-          <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]" />
+    <div className="my-3 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#050506] shadow-[0_18px_50px_rgba(0,0,0,0.22)]">
+      <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-white/[0.025] px-3.5 py-2.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-white/20" />
+          <span className="h-2 w-2 shrink-0 rounded-full bg-purple-400/45" />
+          <span className="h-2 w-2 shrink-0 rounded-full bg-purple-400" />
           {label && (
-            <span className="ml-2 font-mono text-xs font-medium text-slate-400">
+            <span className="ml-2 truncate font-mono text-[10px] font-medium text-zinc-500">
               {label}
             </span>
           )}
@@ -42,7 +42,7 @@ export function CodeBlock({ code, label }: CodeBlockProps) {
         <button
           onClick={handleCopy}
           type="button"
-          className="flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded bg-white/5 hover:bg-white/10 text-slate-300 transition-colors"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.035] px-2.5 py-1.5 font-mono text-[9px] text-zinc-400 transition-colors hover:border-purple-400/25 hover:text-white"
         >
           {copied ? (
             <>
@@ -51,13 +51,13 @@ export function CodeBlock({ code, label }: CodeBlockProps) {
             </>
           ) : (
             <>
-              <Copy className="w-3 h-3 text-slate-400" />
+              <Copy className="h-3 w-3 text-purple-300" />
               <span>Copy</span>
             </>
           )}
         </button>
       </div>
-      <pre className="p-4 m-0 font-mono text-xs text-slate-200 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed max-h-[420px] overflow-y-auto">
+      <pre className="m-0 max-h-[440px] overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-[10px] leading-[1.75] text-zinc-300 sm:text-[11px]">
         {text}
       </pre>
     </div>

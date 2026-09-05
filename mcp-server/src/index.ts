@@ -4,13 +4,11 @@
  * License: Apache-2.0
  *
  * Model Context Protocol (MCP) server exposing Veridex Bazaar discovery
- * and x402 payment tools to AI agents.
+ * and x402 payment tools to compatible clients.
  *
  * Tools:
- * - discover_resources - Search the Bazaar catalog (hybrid keyword + vector ranking)
+ * - discover_resources - Search the Bazaar catalog (BM25 + feature-hash lexical ranking)
  * - pay_resource - Execute x402 Stellar payment for resource access
- * - get_escrow_balance - Check escrow account balance (Soroban)
- * - deposit_escrow - Deposit funds into escrow (Soroban)
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";

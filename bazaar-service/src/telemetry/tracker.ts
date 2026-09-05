@@ -314,11 +314,9 @@ export class TelemetryTracker {
     `);
 
     const row = result.rows[0];
-    const now = Date.now();
-
     // Count nodes by liveness status
     const telemetryResult = await this.db.query<any>(`
-      SELECT last_heartbeat_at FROM resource_telemetry
+      SELECT last_heartbeat_at, last_settlement_at FROM resource_telemetry
     `);
 
     let healthy = 0;
@@ -326,8 +324,9 @@ export class TelemetryTracker {
     let offline = 0;
 
     for (const telemetry of telemetryResult.rows) {
-      const status = this.circuitBreaker.evaluateNodeStatus(
-        telemetry.last_heartbeat_at.getTime()
+      const status = this.circuitBreaker.evaluateResourceStatus(
+        telemetry.last_heartbeat_at ? telemetry.last_heartbeat_at.getTime() : null,
+        telemetry.last_settlement_at ? telemetry.last_settlement_at.getTime() : null,
       );
 
       if (status === LivenessStatus.HEALTHY) healthy++;

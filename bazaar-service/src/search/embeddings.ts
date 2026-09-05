@@ -23,6 +23,64 @@ import { createHash } from "node:crypto";
 const EMBEDDING_DIMENSION = 384;
 let initialized = false;
 
+export interface EmbeddingProvider {
+  readonly name: string;
+  readonly dimension: number;
+  embed(text: string): Promise<number[]>;
+}
+
+class FeatureHashEmbeddingProvider implements EmbeddingProvider {
+  readonly name = "feature-hash";
+  readonly dimension = EMBEDDING_DIMENSION;
+
+  async embed(text: string): Promise<number[]> {
+    return generateFeatureHashEmbedding(text);
+  }
+}
+
+export class HttpEmbeddingProvider implements EmbeddingProvider {
+  readonly name: string;
+  readonly dimension: number;
+  private readonly endpoint: string;
+  private readonly timeoutMs: number;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(options: {
+    endpoint: string;
+    dimension?: number;
+    name?: string;
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+  }) {
+    this.endpoint = options.endpoint;
+    this.dimension = options.dimension ?? EMBEDDING_DIMENSION;
+    this.name = options.name ?? "http-embedding";
+    this.timeoutMs = options.timeoutMs ?? 5000;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    if (!/^https?:\/\//.test(this.endpoint)) {
+      throw new Error("embedding provider endpoint must use HTTP or HTTPS");
+    }
+  }
+
+  async embed(text: string): Promise<number[]> {
+    const response = await this.fetchImpl(this.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: text }),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!response.ok) throw new Error(`embedding provider returned HTTP ${response.status}`);
+    const body = await response.json() as { embedding?: unknown };
+    if (!Array.isArray(body.embedding) || body.embedding.length !== this.dimension || body.embedding.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+      throw new Error(`embedding provider must return ${this.dimension} finite numbers`);
+    }
+    return normalizeVector(body.embedding);
+  }
+}
+
+let embeddingProvider: EmbeddingProvider = new FeatureHashEmbeddingProvider();
+let embeddingProviderFallback: EmbeddingProvider = new FeatureHashEmbeddingProvider();
+
 /**
  * Initializes the embedding pipeline.
  *
@@ -32,6 +90,18 @@ let initialized = false;
  */
 export async function initializeEmbeddingModel(): Promise<void> {
   initialized = true;
+}
+
+export function configureEmbeddingProvider(provider: EmbeddingProvider, fallback?: EmbeddingProvider): void {
+  if (provider.dimension !== EMBEDDING_DIMENSION) {
+    throw new Error(`embedding provider dimension ${provider.dimension} does not match ${EMBEDDING_DIMENSION}`);
+  }
+  embeddingProvider = provider;
+  embeddingProviderFallback = fallback ?? new FeatureHashEmbeddingProvider();
+}
+
+export function getEmbeddingProviderName(): string {
+  return embeddingProvider.name;
 }
 
 /**
@@ -45,6 +115,16 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     await initializeEmbeddingModel();
   }
 
+  try {
+    return await embeddingProvider.embed(text);
+  } catch (error) {
+    if (embeddingProvider === embeddingProviderFallback) throw error;
+    console.warn(`[Embeddings] ${embeddingProvider.name} failed; using ${embeddingProviderFallback.name}:`, error);
+    return embeddingProviderFallback.embed(text);
+  }
+}
+
+async function generateFeatureHashEmbedding(text: string): Promise<number[]> {
   const normalizedText = text.toLowerCase().normalize("NFKC");
   const tokens = normalizedText.match(/[\p{L}\p{N}]+/gu) || [];
   const features = [

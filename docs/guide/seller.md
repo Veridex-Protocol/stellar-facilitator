@@ -19,6 +19,13 @@ For your own service, generate a keypair and fund it. You only need the public k
 
 The middleware handles the protocol. All you describe is what you sell and what it costs.
 
+Install the official seller packages. A basic exact payment does not require
+`@veridex/stellar`, a Bazaar database, or a P2P node.
+
+```bash
+npm install @x402/core @x402/extensions @x402/hono @x402/stellar hono @hono/node-server
+```
+
 ```ts
 import { serve } from "@hono/node-server";
 import { HTTPFacilitatorClient } from "@x402/core/server";

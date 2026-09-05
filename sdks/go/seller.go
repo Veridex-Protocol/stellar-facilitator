@@ -6,11 +6,42 @@
 package veridex
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net"
 	"net/url"
 	"regexp"
 	"strings"
 )
+
+// ProviderOutcome is the digest-only, signed response record used by a seller.
+type ProviderOutcome struct {
+	Version         string `json:"v"`
+	Resource        string `json:"resource"`
+	PayTo           string `json:"payTo"`
+	RequestDigest   string `json:"requestDigest"`
+	ResponseDigest  string `json:"responseDigest"`
+	ObservedAt      int64  `json:"observedAt"`
+	Usable          bool   `json:"usable"`
+	ProviderAtFault bool   `json:"providerAtFault"`
+	Attributable    string `json:"attributable"`
+	ReasonCode      string `json:"reasonCode"`
+	UsageAtomic     string `json:"usageAtomic,omitempty"`
+	Signer          string `json:"signer"`
+	Signature       string `json:"signature"`
+}
+
+// SHA256Digest returns the digest format shared by the TypeScript and Python SDKs.
+func SHA256Digest(value []byte) string {
+	sum := sha256.Sum256(value)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// MarshalProviderOutcome returns canonical JSON-ready bytes for transport.
+func MarshalProviderOutcome(outcome ProviderOutcome) ([]byte, error) {
+	return json.Marshal(outcome)
+}
 
 // BazaarMetadata represents Bazaar discovery metadata
 type BazaarMetadata struct {

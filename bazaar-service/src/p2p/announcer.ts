@@ -9,7 +9,11 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import {
   type AnnounceMessage,
+  type CatalogDelta,
+  type CatalogDeltaInput,
+  CatalogDeltaUnsignedSchema,
   type TelemetrySnapshot,
+  createCatalogDeltaSignaturePayload,
   createSignaturePayload,
 } from "./types.js";
 
@@ -134,6 +138,25 @@ export class Announcer {
       },
       telemetry
     );
+  }
+
+  /**
+   * Create a signed, versioned catalog snapshot. Revisions belong to the
+   * resource identity, not to the heartbeat sequence, so delayed heartbeats
+   * cannot overwrite catalog state.
+   */
+  createSignedCatalogDelta(input: CatalogDeltaInput): CatalogDelta {
+    const unsigned = CatalogDeltaUnsignedSchema.parse({
+      v: "veridex/bazaar/catalog-delta/1",
+      ...input,
+      toolName: input.toolName || "",
+    });
+    const signature = this.sign(createCatalogDeltaSignaturePayload(unsigned));
+    return {
+      ...unsigned,
+      signer: this.keypair.publicKey(),
+      signature,
+    };
   }
 
   /**

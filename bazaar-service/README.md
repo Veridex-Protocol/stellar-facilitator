@@ -6,10 +6,10 @@ Federated discovery engine and search catalog for x402-protected APIs and MCP to
 
 ## Architecture Overview
 
-The Bazaar Service provides a trustless discovery layer where AI agents and client software can search, filter, and inspect paid resources without a pre-existing integration:
+The Bazaar Service provides a trustless discovery layer where client software can search, filter, and inspect paid resources without a pre-existing integration:
 
 ```text
-  Resource Seller                  Bazaar Discovery Engine                 Agent / Buyer
+  Resource Seller                  Bazaar Discovery Engine                 Client / Buyer
          │                                   │                                    │
          ├── Settle Payment via x402 ───────►│                                    │
          │   (carrying bazaar extension)     ├── Confirm Settlement on Horizon    │
@@ -18,7 +18,7 @@ The Bazaar Service provides a trustless discovery layer where AI agents and clie
          │                                   ├── Broadcast Signed GossipSub Msg   │
          │                                   │                                    │
          │                                   │◄── GET /discovery/search ──────────┤
-         │                                   │    (Natural language / filters)    │
+         │                                   │    (Lexical hybrid / filters)      │
          │                                   ├── Hybrid Search & RRF Ranking      │
          │                                   │─── Return Ranked JSON Results ────►│
 ```

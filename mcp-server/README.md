@@ -2,21 +2,20 @@
 
 **License:** Apache-2.0
 
-Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x402 payment tools to AI agents.
+Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x402 payment tools to compatible clients.
 
 ## Overview
 
-This MCP server enables AI agents (Claude, GPT-4, etc.) to:
+This MCP server enables compatible clients to:
 
-1. **Discover resources** - Search Bazaar catalog with semantic/keyword queries
+1. **Discover resources** - Search Bazaar catalog with lexical-hybrid/keyword queries
 2. **Execute payments** - Pay for resource access via x402 Stellar protocol
-3. **Manage escrow** - Check balance and deposit funds for metered billing
 
 ## Tools
 
 ### `discover_resources`
 
-Search Veridex Bazaar catalog using hybrid semantic + keyword search.
+Search Veridex Bazaar catalog using BM25 plus deterministic feature-hash lexical retrieval.
 
 **Input:**
 ```json
@@ -31,7 +30,7 @@ Search Veridex Bazaar catalog using hybrid semantic + keyword search.
 ```
 Found 15 resources:
 
-• https://api.weather.io/forecast
+- https://api.weather.io/forecast
   Service: WeatherIO
   Description: Real-time weather forecasts with 7-day predictions
   Network: stellar:pubnet
@@ -60,7 +59,7 @@ Execute x402 Stellar payment to access a resource.
 
 **Output:**
 ```
-✓ Payment successful!
+Payment successful.
 
 Resource: https://api.weather.io/forecast
 Amount: 100000 stroops (0.0100000 XLM)
@@ -72,53 +71,6 @@ You can now access the resource with this authorization.
 
 ---
 
-### `get_escrow_balance`
-
-Check escrow account balance for a resource server.
-
-**Input:**
-```json
-{
-  "resourceServerAddress": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-}
-```
-
-**Output:**
-```
-Escrow Account:
-
-Resource Server: GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-Available Balance: 5.0000000 XLM (50000000 stroops)
-Consumed (Pending Claim): 1.2345000 XLM (12345000 stroops)
-Total Requests: 123
-Last Activity: 2026-08-02T10:30:45.000Z
-```
-
----
-
-### `deposit_escrow`
-
-Deposit XLM into escrow for prepaid resource access.
-
-**Input:**
-```json
-{
-  "resourceServerAddress": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-  "amountStroops": "100000000"
-}
-```
-
-**Output:**
-```
-✓ Deposit successful!
-
-Deposited: 10.0000000 XLM (100000000 stroops)
-New Balance: 10.0000000 XLM (100000000 stroops)
-Resource Server: GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-
-Your escrow account is ready for metered resource access.
-```
-
 ## Configuration
 
 Set environment variables:
@@ -129,10 +81,6 @@ BAZAAR_URL=http://localhost:3001
 FACILITATOR_URL=http://localhost:3002
 STELLAR_NETWORK=testnet
 STELLAR_CLIENT_SECRET_KEY=S...
-
-# Optional (for escrow tools)
-ESCROW_CONTRACT_ID=C...
-SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 ```
 
 ## Usage
@@ -144,9 +92,11 @@ npm install
 npm run build
 ```
 
-### 2. Configure Claude Desktop
+### 2. Configure an MCP client
 
-Add to `claude_desktop_config.json`:
+Add the server command to the client's MCP configuration. For the repository's
+local Docker seller, set `MCP_ALLOW_LOCAL_URLS=true`; leave it unset when the
+server may be asked to fetch arbitrary external URLs.
 
 ```json
 {
@@ -159,36 +109,23 @@ Add to `claude_desktop_config.json`:
         "FACILITATOR_URL": "http://localhost:3002",
         "STELLAR_NETWORK": "testnet",
         "STELLAR_CLIENT_SECRET_KEY": "S...",
-        "ESCROW_CONTRACT_ID": "C...",
-        "SOROBAN_RPC_URL": "https://soroban-testnet.stellar.org"
+        "MCP_ALLOW_LOCAL_URLS": "true"
       }
     }
   }
 }
 ```
 
-### 3. Restart Claude Desktop
+### 3. Restart the client
 
-The MCP server will be available to Claude with 4 new tools.
+The server exposes two tools after the client reconnects: `discover_resources` and `pay_resource`.
 
-## Example Conversation
+## Example Tool Flow
 
-**User:** Find me a weather API on Stellar
-
-**Claude:** I'll search the Veridex Bazaar for weather APIs.
-
-*[Uses `discover_resources` tool]*
-
-I found WeatherIO API with 99.8% uptime. Would you like me to pay for access?
-
-**User:** Yes, pay 0.01 XLM for it
-
-**Claude:** I'll execute the payment.
-
-*[Uses `pay_resource` tool]*
-
-Payment successful! Transaction hash: abc123...
-You can now access the WeatherIO forecast endpoint.
+1. Call `discover_resources` with `{"query":"weather API"}`.
+2. Select a resource from the ranked results.
+3. Call `pay_resource` with the resource URL and amount.
+4. Use the returned authorization to access the resource.
 
 ## Development
 
@@ -205,17 +142,11 @@ npm run typecheck
 
 ## Security
 
-- Client secret key is required for payments and escrow operations
+- Client secret key is required for payment operations
 - All transactions are signed with Stellar signatures
 - MCP server runs locally with stdio transport (no network exposure)
 
-## Integration with AI Agents
-
-### Claude Desktop
-
-See configuration above.
-
-### Custom MCP Client
+## MCP Client Integration
 
 ```typescript
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -232,7 +163,7 @@ const transport = new StdioClientTransport({
   },
 });
 
-const client = new Client({ name: 'my-agent', version: '1.0.0' }, { capabilities: {} });
+const client = new Client({ name: 'veridex-client', version: '1.0.0' }, { capabilities: {} });
 await client.connect(transport);
 
 // Call tool

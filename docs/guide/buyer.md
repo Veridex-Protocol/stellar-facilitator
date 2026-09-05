@@ -11,44 +11,62 @@ npm run setup
 grep BUYER_SECRET_KEY .env
 ```
 
-You need the payment asset only. When a facilitator advertises `areFeesSponsored: true` it pays the network fee itself, so a buyer holding USDC and no XLM can still transact. Read the flag rather than assuming it:
+You need a buyer signing key and the payment asset. When a facilitator advertises `areFeesSponsored: true` it pays the network fee itself, so a buyer holding USDC and no XLM can still transact. Read the flag rather than assuming it:
 
 ```bash
 curl -s http://localhost:3002/supported \
   | jq '.kinds[] | select(.scheme=="exact") | .extra.areFeesSponsored'
 ```
 
-## 2. Paying
+## 2. Paying with `@veridex/stellar`
 
-The library ships a drop-in `fetch` wrapper, and this is the whole integration:
+This is the recommended Veridex buyer path:
+
+`@veridex/stellar` is prepared for publication but is not yet available on the
+public npm registry. For this release candidate, build and pack the SDK from
+the repository, then install the tarball in the buyer project:
+
+```bash
+cd sdk-typescript
+npm pack
+cd ../path/to/your-project
+npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
+```
+
+After publication, use `npm install @veridex/stellar` instead.
 
 ```ts
-import { x402Client } from "@x402/core/client";
-import { wrapFetchWithPayment } from "@x402/fetch";
-import { createEd25519Signer } from "@x402/stellar";
-import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { createVeridexClient } from "@veridex/stellar";
 
-const NETWORK = "stellar:testnet";
+const client = createVeridexClient({
+  network: "stellar:testnet",
+  privateKey: process.env.BUYER_SECRET_KEY!,
+});
 
-const signer = createEd25519Signer(process.env.BUYER_SECRET_KEY!, NETWORK);
-const client = new x402Client().register(NETWORK, new ExactStellarScheme(signer));
-
-const pay = wrapFetchWithPayment(fetch, client);
-
-// Identical to fetch. The 402, the signature and the retry all happen inside.
-const response = await pay("http://localhost:3003/forecast");
+// The 402, signature, payment header, and retry happen inside.
+const response = await client.fetch("http://localhost:3003/forecast");
 console.log(await response.json());
 ```
 
-That is the entire buyer side. The wrapper receives the 402, reads the terms, signs an authorization entry, retries with it, and returns the paid response.
+That is the entire beginner buyer flow. The facade receives the 402, delegates signing to the official x402 packages, retries with the payment header, and returns the paid response.
 
-Nothing in that snippet is specific to our facilitator. It is stock `@x402/fetch`, and the same code works against any conformant Stellar facilitator. That is deliberate, and it is why our own conformance harness uses exactly this path while importing nothing from our source.
+The official `@x402/fetch` plus `@x402/stellar` packages remain a supported advanced path when you need direct x402 policy or extension registration. The repository conformance harness uses that lower-level path independently of this source tree.
 
-## 3. Bounding what you spend
+## 3. Bounding what you spend with the advanced x402 client
 
-An agent paying automatically needs a ceiling. Register a policy that rejects terms you are not willing to meet, and it runs before anything is signed:
+The high-level facade follows the payment option offered by the resource. For an explicit spend policy, use the official x402 client directly:
 
 ```ts
+import { x402Client } from "@x402/core/client";
+import { createEd25519Signer } from "@x402/stellar";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+
+const network = "stellar:testnet";
+const client = new x402Client().register(
+  network,
+  new ExactStellarScheme(createEd25519Signer(process.env.BUYER_SECRET_KEY!, network)),
+);
+
 client.registerPolicy((version, requirements) =>
   requirements.filter((r) => BigInt(r.amount) <= 1_000_000n)   // 0.1 XLM
 );
@@ -119,7 +137,7 @@ A cursor is bound to the query that issued it. Changing the query or the filters
 
 The `partialResults` flag being true means a retrieval leg filled its candidate pool, so ranking saw a truncated set and this is not a complete answer. The accompanying `partialReason` says so in words. Narrow the query if completeness matters to you.
 
-The `telemetry.livenessStatus` field reports whether the resource is currently reachable. Ranking already filters offline resources and demotes degraded ones, because handing an agent a dead endpoint is a failed task rather than a ranking inaccuracy. The field is there if you want to filter harder than that.
+The `telemetry.livenessStatus` field reports Bazaar evidence from signed heartbeat telemetry and confirmed settlements. It is not an active HTTP probe. Ranking filters offline resources and demotes degraded ones, but callers should still handle request failure.
 
 ## 5. Discover and pay, end to end
 
@@ -133,15 +151,15 @@ const found = await (await fetch(
 const resource = found.results[0];
 if (!resource) throw new Error("nothing matched");
 
-const response = await pay(resource.resourceUrl);
+const response = await client.fetch(resource.resourceUrl);
 console.log(await response.json());
 ```
 
 There is no prior integration, no API key, and no account with the seller.
 
-## 6. From inside an agent runtime
+## 6. From inside a client runtime
 
-The MCP server exposes discovery and payment as tools, so an agent can do all of the above without you writing any HTTP code.
+The MCP server exposes discovery and payment as tools, so a client or automated workflow can do all of the above without you writing any HTTP code.
 
 ```bash
 docker compose --profile mcp run --rm mcp-server
@@ -167,7 +185,11 @@ curl -s http://localhost:3002/supported | jq '.kinds[] | select(.scheme=="upto")
   "x402Version": 2,
   "scheme": "upto",
   "network": "stellar:testnet",
-  "extra": { "contractId": "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2" }
+  "extra": {
+    "contractId": "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2",
+    "facilitator": "the advertised facilitator signer",
+    "areFeesSponsored": true
+  }
 }
 ```
 
@@ -177,7 +199,7 @@ Your authorization commits you to a specific set of things and nothing beyond th
 
 The facilitator separately signs the amount it charged and a digest of what it delivered, which means the ledger records what you were charged and what for rather than only the facilitator's own log saying so.
 
-The scheme is advertised on testnet only and it is not audited, so treat it as experimental. If `upto` is absent from `/supported`, that facilitator has no contract deployed and you should not attempt it.
+The scheme is advertised on testnet only and it is not audited, so treat it as experimental. Veridex's custom HTTP seller/client path is testnet-proven; upstream `@x402/stellar` still exposes exact only, so upstream stock `upto` interoperability is not implied. If `upto` is absent from `/supported`, that facilitator has no confirmed contract and you should not attempt it.
 
 ## Handling failure
 

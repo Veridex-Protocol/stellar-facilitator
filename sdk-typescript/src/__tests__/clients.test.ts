@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Keypair } from "@stellar/stellar-sdk";
 import { BazaarClient, createBazaarClient } from "../bazaar-client.js";
 import { FacilitatorClient, createFacilitatorClient } from "../facilitator-client.js";
 
@@ -97,6 +98,33 @@ describe("BazaarClient", () => {
     expect(new BazaarClient({ bazaarUrl: BAZAAR_URL })).toBeInstanceOf(BazaarClient);
     expect(createBazaarClient({ bazaarUrl: BAZAAR_URL })).toBeInstanceOf(BazaarClient);
   });
+
+  it("reads explicit insufficient provider-quality data", async () => {
+    const seen = stubFetch({
+      v: "veridex/provider-aggregate/1",
+      endpoint: "https://provider.example/fx",
+      state: "insufficient_data",
+      faultRateUpperBound: 1,
+      faultsObserved: 0,
+      n: 0,
+      window: "30d",
+      retrievedAt: 1_700_000_000,
+    });
+    const result = await createBazaarClient({ bazaarUrl: BAZAAR_URL }).providerQuality("https://provider.example/fx");
+    expect(new URL(seen[0].url).pathname).toBe("/v1/provider");
+    expect(result.state).toBe("insufficient_data");
+  });
+
+  it("reads digest-only provider observations", async () => {
+    const seen = stubFetch({ endpoint: "https://provider.example/fx", observations: [] });
+    const result = await createBazaarClient({ bazaarUrl: BAZAAR_URL }).providerObservations(
+      "https://provider.example/fx",
+      { limit: 5 },
+    );
+    expect(new URL(seen[0].url).pathname).toBe("/v1/provider/observations");
+    expect(new URL(seen[0].url).searchParams.get("limit")).toBe("5");
+    expect(result.observations).toEqual([]);
+  });
 });
 
 describe("FacilitatorClient", () => {
@@ -121,6 +149,22 @@ describe("FacilitatorClient", () => {
     expect(supported.kinds[0].scheme).toBe("exact");
     // A buyer reads this to know whether it needs XLM for fees.
     expect(supported.kinds[0].extra?.areFeesSponsored).toBe(true);
+  });
+
+  it("does not claim sponsored fees when the facilitator does not advertise them", async () => {
+    stubFetch({
+      kinds: [{ x402Version: 2, scheme: "exact", network: "stellar:testnet", extra: { areFeesSponsored: false } }],
+      signers: { "stellar:*": ["GABC"] },
+    });
+    await expect(createFacilitatorClient({
+      ...config,
+      clientSecretKey: Keypair.random().secret(),
+      requireSponsoredFees: true,
+    }).pay({
+      resourceUrl: "https://seller.example/data",
+      amountStroops: "1",
+      payTo: "GABC",
+    })).rejects.toThrow(/sponsored fees/);
   });
 
   it("reads the capability descriptor", async () => {

@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { Keypair } from "@stellar/stellar-sdk";
-import { ShieldAlert, Play, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { Keypair, StrKey, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Buffer } from "buffer";
+import { Play } from "lucide-react";
 import type { PlaygroundConfig, ClientWallet, RunRecord } from "@/lib/types";
-import { postFacilitator } from "@/lib/x402";
+import { postFacilitator, signPayload } from "@/lib/x402";
 import { CodeBlock } from "./CodeBlock";
 
 interface RefusalsPanelProps {
@@ -22,6 +23,29 @@ interface AttackItem {
     paymentPayload: any;
     paymentRequirements: any;
   }>;
+}
+
+function inflateAuthorizationEntries(genuinePayload: any, network: string): any {
+  const passphrase =
+    network === "stellar:pubnet"
+      ? "Public Global Stellar Network ; September 2015"
+      : "Test SDF Network ; September 2015";
+  const transaction = TransactionBuilder.fromXDR(
+    genuinePayload.payload.transaction,
+    passphrase
+  ) as any;
+  const invokeOperation = transaction.tx
+    .operations()[0]
+    .body()
+    .invokeHostFunctionOp();
+  const [authorization] = invokeOperation.auth();
+
+  invokeOperation.auth(Array.from({ length: 20 }, () => authorization));
+
+  return {
+    ...genuinePayload,
+    payload: { ...genuinePayload.payload, transaction: transaction.toXDR() },
+  };
 }
 
 const ATTACKS: AttackItem[] = [
@@ -48,26 +72,23 @@ const ATTACKS: AttackItem[] = [
   {
     id: "asset",
     title: "3. Counterfeit Token Contract Attack",
-    note: "Substitutes an unauthorized SEP-41 token contract identifier.",
+    note: "Substitutes a valid but unauthorized SEP-41 contract address.",
     expectedReason: "invalid_exact_stellar_payload_wrong_asset",
     build: async ({ terms, genuinePayload }) => ({
       paymentPayload: genuinePayload,
       paymentRequirements: {
         ...terms,
-        asset: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        asset: StrKey.encodeContract(Buffer.alloc(32, 1)),
       },
     }),
   },
   {
     id: "fee_drain",
     title: "4. Facilitator Fee Drain Attack (VDX-06)",
-    note: "Requests 10 XLM fee sponsorship, exceeding the spec ceiling of 50,000 stroops.",
+    note: "Bloats the envelope with duplicated authorization entries to exceed the configured simulation-derived fee ceiling.",
     expectedReason: "invalid_exact_stellar_payload_fee_exceeds_maximum",
     build: async ({ terms, genuinePayload }) => ({
-      paymentPayload: {
-        ...genuinePayload,
-        payload: { ...genuinePayload.payload, maxFee: "100000000" },
-      },
+      paymentPayload: inflateAuthorizationEntries(genuinePayload, terms.network),
       paymentRequirements: terms,
     }),
   },
@@ -75,7 +96,7 @@ const ATTACKS: AttackItem[] = [
     id: "malformed",
     title: "5. Malformed Envelope Injection",
     note: "Submits corrupted base64 XDR bytes to test cryptographic parser isolation.",
-    expectedReason: "invalid_exact_stellar_payload_malformed_envelope",
+    expectedReason: "invalid_exact_stellar_payload_malformed",
     build: async ({ terms, genuinePayload }) => ({
       paymentPayload: {
         ...genuinePayload,
@@ -89,10 +110,11 @@ const ATTACKS: AttackItem[] = [
 export function RefusalsPanel({ config, wallet, run }: RefusalsPanelProps) {
   const [results, setResults] = useState<Record<string, { body: any; status: number; loading?: boolean }>>({});
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isRunningAll, setIsRunningAll] = useState(false);
 
   const executeAttack = async (attack: AttackItem) => {
-    if (!run?.paymentPayload || !run?.paymentRequirements) {
-      setErrorMsg("Run a payment in the Payment Flow tab first to generate signed baseline fixtures.");
+    if (!wallet || !run?.paymentRequirements) {
+      setErrorMsg("Run a payment in the Payment Flow tab first to generate fresh signed fixtures.");
       return;
     }
 
@@ -100,9 +122,14 @@ export function RefusalsPanel({ config, wallet, run }: RefusalsPanelProps) {
     setResults((prev) => ({ ...prev, [attack.id]: { body: null, status: 0, loading: true } }));
 
     try {
+      const genuinePayload = await signPayload(
+        wallet,
+        config.network,
+        run.paymentRequirements
+      );
       const probeData = await attack.build({
         terms: run.paymentRequirements,
-        genuinePayload: run.paymentPayload,
+        genuinePayload,
       });
 
       const { body, status } = await postFacilitator(config, "/verify", probeData);
@@ -119,76 +146,102 @@ export function RefusalsPanel({ config, wallet, run }: RefusalsPanelProps) {
   };
 
   const runAllProbes = async () => {
-    for (const attack of ATTACKS) {
-      await executeAttack(attack);
+    setIsRunningAll(true);
+    try {
+      for (const attack of ATTACKS) {
+        await executeAttack(attack);
+      }
+    } finally {
+      setIsRunningAll(false);
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-extrabold text-white">
-            Security Refusals & Attack Probes (Chaos Sandbox)
+          <p className="section-kicker mb-1.5">Adversarial laboratory</p>
+          <h2 className="text-xl font-extrabold tracking-tight text-white">
+            Refusal probes
           </h2>
-          <p className="text-xs text-slate-400">
-            Probe malformed transactions directly against <code className="inline">POST /verify</code>. All rejections return deterministic reason codes with zero fee spend.
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Submit altered fixtures to <code className="inline">POST /verify</code> and inspect the facilitator&apos;s exact response.
           </p>
         </div>
 
         <button
           onClick={runAllProbes}
-          className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-400 hover:to-pink-500 text-white font-bold text-xs shadow-md transition-all"
+          disabled={isRunningAll}
+          className="primary-action inline-flex min-w-[150px] items-center justify-center rounded-xl px-4 py-3 text-[11px] font-extrabold disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Run All 5 Probes
+          {isRunningAll ? "Running probes…" : "Run all five probes"}
         </button>
       </div>
 
       {errorMsg && (
-        <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+        <div className="rounded-2xl border border-rose-500/25 bg-rose-500/[0.07] p-4 text-xs text-rose-200">
           {errorMsg}
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
         {ATTACKS.map((attack) => {
           const res = results[attack.id];
-          const hasResult = res && !res.loading;
+          const hasResult = Boolean(res && !res.loading);
           const isRefused = hasResult && res.body?.isValid === false;
+          const actualReason = hasResult ? res.body?.invalidReason : undefined;
+          const reasonMatches = isRefused && actualReason === attack.expectedReason;
 
           return (
             <div
               key={attack.id}
-              className="glass-card p-5 rounded-2xl flex flex-col justify-between gap-3"
+              className="glass-card flex min-h-[240px] flex-col justify-between gap-4 rounded-[22px] p-5"
             >
               <div>
-                <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <h3 className="font-bold text-sm text-white">{attack.title}</h3>
-                  {hasResult && isRefused && (
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
-                      Refused (Protected)
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <h3 className="text-sm font-extrabold leading-snug text-white">{attack.title}</h3>
+                  {hasResult && (
+                    <span
+                      className={`shrink-0 rounded-full border px-2 py-1 font-mono text-[9px] font-bold uppercase tracking-wider ${
+                        reasonMatches
+                          ? "border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300"
+                          : "border-rose-500/20 bg-rose-500/[0.08] text-rose-300"
+                      }`}
+                    >
+                      {reasonMatches
+                        ? "Exact refusal"
+                        : isRefused
+                          ? "Reason mismatch"
+                          : "Not refused"}
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-slate-400 leading-relaxed mb-3">{attack.note}</p>
+                <p className="mb-4 text-xs leading-relaxed text-zinc-500">{attack.note}</p>
 
-                <div className="p-2 rounded-lg bg-black/40 border border-white/5 font-mono text-[11px] text-sky-300 mb-3">
-                  Expected Code: {attack.expectedReason}
+                <div className="mb-3 space-y-1 overflow-x-auto rounded-xl border border-purple-400/15 bg-purple-500/[0.05] p-3 font-mono text-[9px] leading-relaxed text-purple-200">
+                  <div>
+                    <span className="mr-1 text-zinc-600">Expected</span> {attack.expectedReason}
+                  </div>
+                  {hasResult && (
+                    <div className={reasonMatches ? "text-emerald-300" : "text-rose-300"}>
+                      <span className="mr-1 text-zinc-600">Observed</span> {actualReason ?? "accepted or unavailable"}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div>
                 <button
                   onClick={() => executeAttack(attack)}
-                  disabled={res?.loading}
-                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-mono font-bold border border-white/10 transition-colors disabled:opacity-50"
+                  disabled={isRunningAll || res?.loading}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.035] py-2.5 font-mono text-[10px] font-bold text-zinc-300 transition-colors hover:border-purple-400/25 hover:bg-purple-500/[0.07] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {res?.loading ? (
                     "Probing /verify..."
                   ) : (
                     <>
-                      <Play className="w-3.5 h-3.5 fill-current text-rose-400" />
-                      <span>Launch Attack Probe</span>
+                      <Play className="h-3.5 w-3.5 fill-current text-purple-300" />
+                      <span>Run refusal probe</span>
                     </>
                   )}
                 </button>
