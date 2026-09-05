@@ -4,9 +4,22 @@
 
 Prerequisites: Node 22+, a funded Stellar testnet account, and a running seller/facilitator.
 
+The repository demo creates funded testnet accounts and starts a seller and
+facilitator with `npm run demo`. The `@veridex/stellar` package is prepared for
+publication but is not yet on npm. Until publication, install the local SDK
+tarball from `sdk-typescript` in the buyer project:
+
 ```bash
-npm install @veridex/stellar
+cd sdk-typescript
+npm pack
+cd ../path/to/your-project
+npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
 ```
+
+`@veridex/stellar` is not yet published to npm. For the current repository
+release candidate, pack and install the SDK locally as described in its
+[package README](../sdk-typescript/README.md); use the command above after
+the package is published.
 
 ```ts
 import { createVeridexClient } from "@veridex/stellar";
@@ -45,3 +58,11 @@ Discovery is settlement-seeded: a seller appears after a payment-backed catalog 
 ## Agent / MCP
 
 Run the repository MCP server with the local stack. Its active tools are `discover_resources` and `pay_resource`; it uses the same official x402 payment flow.
+
+The local demo resource uses a private Docker hostname, so enable local URLs
+only for this local stdio session. Keep the default disabled for deployments
+that may receive untrusted tool inputs.
+
+```bash
+MCP_ALLOW_LOCAL_URLS=true docker compose --profile mcp run --rm mcp-server
+```

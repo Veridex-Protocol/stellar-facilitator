@@ -6,6 +6,19 @@ TypeScript utilities for the Veridex Stellar payment and discovery stack.
 
 The high-level buyer facade is the recommended entry point. It delegates 402 parsing, Stellar signing, payment headers, and retry to the official x402 packages.
 
+The package is currently prepared for publication but is not yet available on
+the public npm registry. Until publication, build and pack it from this
+repository, then install the generated tarball in an external project:
+
+```bash
+cd sdk-typescript
+npm pack
+cd ../path/to/your-project
+npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
+```
+
+After publication, the install command becomes:
+
 ```bash
 npm install @veridex/stellar
 ```

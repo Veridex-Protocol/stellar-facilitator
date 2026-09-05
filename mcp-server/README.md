@@ -94,7 +94,9 @@ npm run build
 
 ### 2. Configure an MCP client
 
-Add the server command to the client's MCP configuration:
+Add the server command to the client's MCP configuration. For the repository's
+local Docker seller, set `MCP_ALLOW_LOCAL_URLS=true`; leave it unset when the
+server may be asked to fetch arbitrary external URLs.
 
 ```json
 {
@@ -106,7 +108,8 @@ Add the server command to the client's MCP configuration:
         "BAZAAR_URL": "http://localhost:3001",
         "FACILITATOR_URL": "http://localhost:3002",
         "STELLAR_NETWORK": "testnet",
-        "STELLAR_CLIENT_SECRET_KEY": "S..."
+        "STELLAR_CLIENT_SECRET_KEY": "S...",
+        "MCP_ALLOW_LOCAL_URLS": "true"
       }
     }
   }

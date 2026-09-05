@@ -22,9 +22,18 @@ curl -s http://localhost:3002/supported \
 
 This is the recommended Veridex buyer path:
 
+`@veridex/stellar` is prepared for publication but is not yet available on the
+public npm registry. For this release candidate, build and pack the SDK from
+the repository, then install the tarball in the buyer project:
+
 ```bash
-npm install @veridex/stellar
+cd sdk-typescript
+npm pack
+cd ../path/to/your-project
+npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
 ```
+
+After publication, use `npm install @veridex/stellar` instead.
 
 ```ts
 import { createVeridexClient } from "@veridex/stellar";
