@@ -135,6 +135,83 @@ facilitator → settle(settlement_id, actual, result_digest)
 Nesting the approval under the payer's authorization means that signature cannot
 authorize a standalone allowance.
 
+## x402 v2 HTTP wire profile
+
+The Soroban contract ABI above is the settlement core. The HTTP profile below
+defines how a resource server carries that authorization through x402 v2.
+
+### Payment requirements
+
+The facilitator advertises a network-specific kind with at least:
+
+```json
+{
+   "x402Version": 2,
+   "scheme": "upto",
+   "network": "stellar:testnet",
+   "extra": {
+      "contractId": "C...",
+      "facilitator": "G...",
+      "areFeesSponsored": true
+   }
+}
+```
+
+The resource server merges that metadata into its `PaymentRequirements` and adds
+`extra.requestDigest`, computed from the canonical HTTP method and resource URL.
+The buyer reads the advertised contract and facilitator rather than assuming a
+shared deployment constant.
+
+### Payment payload
+
+The buyer's v2 `PaymentPayload.payload` is:
+
+```json
+{
+   "transaction": "<base64 facilitator-sourced Stellar transaction XDR>"
+}
+```
+
+The transaction source is the advertised facilitator account. Its Soroban
+invocation calls `settle(payer, terms, placeholderAttestation)`, and the payer
+signs only its own auth entry before the resource is executed. The facilitator
+auth entry is intentionally absent from the HTTP payload because its signature
+must cover the result and actual amount, which do not exist before execution.
+
+### Response-dependent settlement
+
+After the seller has produced the response, it signs a provider outcome carrying
+the response digest and atomic usage. For `upto`, it exposes the usage through
+the x402 transport override:
+
+```http
+Settlement-Overrides: {"amount":"25000"}
+```
+
+The x402 resource server converts that override into the effective settlement
+amount while preserving the payer's original ceiling in `accepted.amount`. The
+scheme's `enrichSettlementPayload` adds:
+
+```json
+{"resultDigest":"sha256:<64 hex characters>"}
+```
+
+The facilitator then reconstructs the invocation with the actual amount and
+result digest, preserves the payer auth, signs the facilitator attestation,
+re-simulates the signed auth tree, assembles the Soroban footprint, and submits
+the transaction. A failed submission or failed contract execution is not a
+successful payment.
+
+### Upstream interoperability boundary
+
+This HTTP profile uses stable x402 v2 client/server extension points, but the
+current upstream `@x402/stellar@2.21.0` package exports only exact Stellar
+client/server/facilitator schemes. The reference implementation therefore ships
+an isolated Veridex `upto` adapter and does not claim stock upstream
+interoperability. The proposed contribution is recorded in
+[`docs/rfp/upstream-contribution/README.md`](../rfp/upstream-contribution/README.md)
+and remains **not submitted**.
+
 ## Contract invariants
 
 A conforming contract MUST enforce all of the following, and MUST fail the whole
