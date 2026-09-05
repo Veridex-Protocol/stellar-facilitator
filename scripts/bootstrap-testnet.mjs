@@ -29,6 +29,8 @@ const FRIENDBOT = "https://friendbot.stellar.org";
 const HORIZON = "https://horizon-testnet.stellar.org";
 const SOROBAN_RPC = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const BAZAAR_HOST_PORT = process.env.BAZAAR_HOST_PORT ?? "3001";
+const BAZAAR_P2P_HOST_PORT = process.env.BAZAAR_P2P_HOST_PORT ?? "4001";
+const BAZAAR_P2P_WS_HOST_PORT = process.env.BAZAAR_P2P_WS_HOST_PORT ?? "4002";
 const FACILITATOR_HOST_PORT = process.env.FACILITATOR_HOST_PORT ?? "3002";
 const DEMO_SERVER_HOST_PORT = process.env.DEMO_SERVER_HOST_PORT ?? "3003";
 
@@ -199,6 +201,7 @@ FACILITATOR_PUBLIC_KEY=${accounts.facilitator.public}
 FACILITATOR_SECRET_KEY=${accounts.facilitator.secret}
 FACILITATOR_PORT=3002
 BASE_URL=http://localhost:${FACILITATOR_HOST_PORT}
+FACILITATOR_URL=http://localhost:${FACILITATOR_HOST_PORT}
 SPONSOR_FEES=true
 
 # ── Settlement throughput ────────────────────────────────────────────────────
@@ -232,6 +235,8 @@ PUBLIC_BAZAAR_URL=http://localhost:${BAZAAR_HOST_PORT}
 PUBLIC_FACILITATOR_URL=http://localhost:${FACILITATOR_HOST_PORT}
 PUBLIC_DEMO_SERVER_URL=http://localhost:${DEMO_SERVER_HOST_PORT}
 BAZAAR_HOST_PORT=${BAZAAR_HOST_PORT}
+BAZAAR_P2P_HOST_PORT=${BAZAAR_P2P_HOST_PORT}
+BAZAAR_P2P_WS_HOST_PORT=${BAZAAR_P2P_WS_HOST_PORT}
 FACILITATOR_HOST_PORT=${FACILITATOR_HOST_PORT}
 DEMO_SERVER_HOST_PORT=${DEMO_SERVER_HOST_PORT}
 BAZAAR_INTERNAL_TOKEN=${randomBytes(24).toString("hex")}

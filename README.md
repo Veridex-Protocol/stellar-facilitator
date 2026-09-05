@@ -173,9 +173,10 @@ host by default. For localhost-only SQL debugging, use the optional override:
 docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
 ```
 
-If a local process owns an HTTP port, set `BAZAAR_HOST_PORT`,
-`FACILITATOR_HOST_PORT`, or `DEMO_SERVER_HOST_PORT` before `npm run demo`; the
-script passes the matching public URLs to the conformance client.
+If a local process owns an HTTP or P2P port, set `BAZAAR_HOST_PORT`,
+`BAZAAR_P2P_HOST_PORT`, `BAZAAR_P2P_WS_HOST_PORT`, `FACILITATOR_HOST_PORT`, or
+`DEMO_SERVER_HOST_PORT` before `npm run demo`; the script passes the matching
+public URLs to the conformance client and checks every host binding before boot.
 
 `CHANNEL_POOL_SIZE=0` is the safe default and uses the configured signer. For concurrent settlement, provision persistent funded channel accounts in `CHANNEL_SECRET_KEYS`; do not enable automatic channel creation outside disposable testing.
 

@@ -45,6 +45,14 @@ else
   die "Neither 'docker compose' nor 'docker-compose' is available."
 fi
 
+if command -v lsof >/dev/null 2>&1; then
+  LSOF="$(command -v lsof)"
+elif [ -x /usr/sbin/lsof ]; then
+  LSOF=/usr/sbin/lsof
+else
+  die "lsof is required to check local port collisions. Install it or restore /usr/sbin to PATH."
+fi
+
 running_services=$($COMPOSE ps --services --status running 2>/dev/null || true)
 stack_running=yes
 for service in bazaar facilitator demo-server; do
@@ -55,6 +63,8 @@ for service in bazaar facilitator demo-server; do
 done
 
 requested_bazaar_host_port="${BAZAAR_HOST_PORT:-}"
+requested_bazaar_p2p_host_port="${BAZAAR_P2P_HOST_PORT:-}"
+requested_bazaar_p2p_ws_host_port="${BAZAAR_P2P_WS_HOST_PORT:-}"
 requested_facilitator_host_port="${FACILITATOR_HOST_PORT:-}"
 requested_demo_server_host_port="${DEMO_SERVER_HOST_PORT:-}"
 
@@ -74,19 +84,21 @@ set -a
 . ./.env
 set +a
 BAZAAR_HOST_PORT="${requested_bazaar_host_port:-${BAZAAR_HOST_PORT:-3001}}"
+BAZAAR_P2P_HOST_PORT="${requested_bazaar_p2p_host_port:-${BAZAAR_P2P_HOST_PORT:-4001}}"
+BAZAAR_P2P_WS_HOST_PORT="${requested_bazaar_p2p_ws_host_port:-${BAZAAR_P2P_WS_HOST_PORT:-4002}}"
 FACILITATOR_HOST_PORT="${requested_facilitator_host_port:-${FACILITATOR_HOST_PORT:-3002}}"
 DEMO_SERVER_HOST_PORT="${requested_demo_server_host_port:-${DEMO_SERVER_HOST_PORT:-3003}}"
-export BAZAAR_HOST_PORT FACILITATOR_HOST_PORT DEMO_SERVER_HOST_PORT
+export BAZAAR_HOST_PORT BAZAAR_P2P_HOST_PORT BAZAAR_P2P_WS_HOST_PORT FACILITATOR_HOST_PORT DEMO_SERVER_HOST_PORT
 export BAZAAR_URL="http://localhost:${BAZAAR_HOST_PORT}"
 export FACILITATOR_URL="http://localhost:${FACILITATOR_HOST_PORT}"
 export DEMO_SERVER_URL="http://localhost:${DEMO_SERVER_HOST_PORT}"
 
-for port in "$BAZAAR_HOST_PORT" "$FACILITATOR_HOST_PORT" "$DEMO_SERVER_HOST_PORT"; do
-  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || continue
+for port in "$BAZAAR_HOST_PORT" "$BAZAAR_P2P_HOST_PORT" "$BAZAAR_P2P_WS_HOST_PORT" "$FACILITATOR_HOST_PORT" "$DEMO_SERVER_HOST_PORT"; do
+  "$LSOF" -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || continue
   if [ "$stack_running" = yes ]; then
     echo "     port $port already served by this Compose stack - 'docker compose up' will reuse or replace it"
   else
-    holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1)
+    holder=$("$LSOF" -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1)
     die "Port $port is already in use${holder:+ (process: $holder)}.
   Set a different host port in .env or the environment and re-run."
   fi

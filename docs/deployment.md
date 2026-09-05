@@ -168,6 +168,11 @@ P2P_LISTEN_ADDRS=/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/tcp/4002/ws
 P2P_BOOTSTRAP_PEERS=
 ```
 
+The Compose P2P host bindings default to `4001` and `4002`. Set
+`BAZAAR_P2P_HOST_PORT` and `BAZAAR_P2P_WS_HOST_PORT` when another local node
+already owns those ports; service-to-service traffic continues to use the
+container ports and Compose DNS.
+
 **facilitator-service/.env:**
 ```bash
 FACILITATOR_PORT=3002
