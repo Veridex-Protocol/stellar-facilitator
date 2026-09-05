@@ -1,0 +1,6 @@
+# Optional localhost-only PostgreSQL access for SQL debugging.
+# The normal Compose stack keeps PostgreSQL on the internal Docker network.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${DATABASE_HOST_PORT:-55432}:5432"

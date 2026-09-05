@@ -1,79 +1,24 @@
-#!/bin/bash
-
-# Veridex Stellar Facilitator - Installation Script
+#!/usr/bin/env bash
+# Veridex Stellar Facilitator - reproducible dependency installation
 # License: Apache-2.0
 
-set -e
+set -euo pipefail
 
-echo "=========================================="
-echo "Veridex Stellar Facilitator Installation"
-echo "=========================================="
-echo ""
+cd "$(dirname "$0")"
 
-# Check if running from correct directory
-if [ ! -f "docker-compose.yml" ]; then
-    echo "Error: Please run this script from the stellar-facilitator directory"
+command -v node >/dev/null 2>&1 || {
+    printf '%s\n' "Node.js 22 or newer is required." >&2
     exit 1
-fi
+}
 
-# Clean lockfiles
-echo "Cleaning old lockfiles..."
-find . -name "bun.lockb" -delete
-find . -name "package-lock.json" -delete
+command -v npm >/dev/null 2>&1 || {
+    printf '%s\n' "npm is required." >&2
+    exit 1
+}
 
-# Install Bazaar Service
-echo ""
-echo "Installing Bazaar Service..."
-cd bazaar-service
-npm install
-cd ..
+npm run install:all
 
-# Install Facilitator Service
-echo ""
-echo "Installing Facilitator Service..."
-cd facilitator-service
-npm install
-cd ..
-
-# Install MCP Server
-echo ""
-echo "Installing MCP Server..."
-cd mcp-server
-npm install
-cd ..
-
-# Install TypeScript SDK
-echo ""
-echo "Installing TypeScript SDK..."
-cd sdk-typescript
-npm install
-cd ..
-
-# Install Python SDK
-echo ""
-echo "Installing Python SDK..."
-cd sdk-python
-pip install -e . 2>/dev/null || echo "Python SDK installation skipped (pip not available)"
-cd ..
-
-# Build Soroban Contract
-echo ""
-echo "Building Soroban Contract..."
-cd contracts/upto_escrow
-if command -v cargo &> /dev/null; then
-    cargo build --target wasm32-unknown-unknown --release 2>/dev/null || echo "Soroban build skipped (rust not available)"
-else
-    echo "Cargo not found, skipping Soroban build"
-fi
-cd ../..
-
-echo ""
-echo "=========================================="
-echo "Installation Complete!"
-echo "=========================================="
-echo ""
-echo "Next steps:"
-echo "1. Copy .env.example to .env and configure your settings"
-echo "2. Run 'docker-compose up -d' to start services"
-echo "3. Check health: curl http://localhost:3001/health"
+printf '\nDependencies installed from the repository lockfiles.\n'
+printf 'Next: npm run demo\n'
+printf 'The optional Python SDK and Soroban contract toolchain have separate setup requirements documented in docs/.\n'
 echo ""

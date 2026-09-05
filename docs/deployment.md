@@ -489,7 +489,8 @@ pg_isready
 psql veridex_bazaar -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
 
 # Verify connection string
-psql "host=localhost port=5432 dbname=veridex_bazaar user=postgres"
+docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
+psql "host=127.0.0.1 port=${DATABASE_HOST_PORT:-55432} dbname=veridex_bazaar user=postgres"
 ```
 
 **2. Channel pool initialization fails**

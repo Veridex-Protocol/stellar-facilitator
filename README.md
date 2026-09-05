@@ -166,6 +166,17 @@ docker compose up --build postgres bazaar facilitator demo-server
 - Demo resource server: `http://localhost:3003`
 - Optional MCP stdio server: `docker compose --profile mcp run --rm mcp-server`
 
+The database is internal to the Compose network and is not published to the
+host by default. For localhost-only SQL debugging, use the optional override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
+```
+
+If a local process owns an HTTP port, set `BAZAAR_HOST_PORT`,
+`FACILITATOR_HOST_PORT`, or `DEMO_SERVER_HOST_PORT` before `npm run demo`; the
+script passes the matching public URLs to the conformance client.
+
 `CHANNEL_POOL_SIZE=0` is the safe default and uses the configured signer. For concurrent settlement, provision persistent funded channel accounts in `CHANNEL_SECRET_KEYS`; do not enable automatic channel creation outside disposable testing.
 
 ## Verify

@@ -16,7 +16,7 @@
  * License: Apache-2.0
  */
 
-import { existsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -28,6 +28,9 @@ const ENV_PATH = join(ROOT, ".env");
 const FRIENDBOT = "https://friendbot.stellar.org";
 const HORIZON = "https://horizon-testnet.stellar.org";
 const SOROBAN_RPC = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
+const BAZAAR_HOST_PORT = process.env.BAZAAR_HOST_PORT ?? "3001";
+const FACILITATOR_HOST_PORT = process.env.FACILITATOR_HOST_PORT ?? "3002";
+const DEMO_SERVER_HOST_PORT = process.env.DEMO_SERVER_HOST_PORT ?? "3003";
 
 const force = process.argv.includes("--force");
 
@@ -195,7 +198,7 @@ SOROBAN_RPC_URL=${SOROBAN_RPC}
 FACILITATOR_PUBLIC_KEY=${accounts.facilitator.public}
 FACILITATOR_SECRET_KEY=${accounts.facilitator.secret}
 FACILITATOR_PORT=3002
-BASE_URL=http://localhost:3002
+BASE_URL=http://localhost:${FACILITATOR_HOST_PORT}
 SPONSOR_FEES=true
 
 # ── Settlement throughput ────────────────────────────────────────────────────
@@ -211,7 +214,7 @@ SELLER_ADDRESS=${accounts.seller.public}
 SELLER_SECRET_KEY=${accounts.seller.secret}
 PROVIDER_OUTCOME_SECRET_KEY=${accounts.seller.secret}
 DEMO_SERVER_PORT=3003
-DEMO_SERVER_URL=http://localhost:3003
+DEMO_SERVER_URL=http://localhost:${DEMO_SERVER_HOST_PORT}
 
 # ── Buyer (the stock x402 client in conformance/) ────────────────────────────
 BUYER_ADDRESS=${accounts.buyer.public}
@@ -223,7 +226,14 @@ PAYMENT_ASSET=${nativeSac}
 PAYMENT_AMOUNT=100000
 
 # ── Bazaar ───────────────────────────────────────────────────────────────────
-BAZAAR_URL=http://localhost:3001
+BAZAAR_URL=http://localhost:${BAZAAR_HOST_PORT}
+BAZAAR_BASE_URL=http://localhost:${BAZAAR_HOST_PORT}
+PUBLIC_BAZAAR_URL=http://localhost:${BAZAAR_HOST_PORT}
+PUBLIC_FACILITATOR_URL=http://localhost:${FACILITATOR_HOST_PORT}
+PUBLIC_DEMO_SERVER_URL=http://localhost:${DEMO_SERVER_HOST_PORT}
+BAZAAR_HOST_PORT=${BAZAAR_HOST_PORT}
+FACILITATOR_HOST_PORT=${FACILITATOR_HOST_PORT}
+DEMO_SERVER_HOST_PORT=${DEMO_SERVER_HOST_PORT}
 BAZAAR_INTERNAL_TOKEN=${randomBytes(24).toString("hex")}
 PROVIDER_AGGREGATE_ISSUER_SECRET_KEY=${accounts.facilitator.secret}
 PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS=${accounts.facilitator.public}
@@ -235,7 +245,8 @@ DATABASE_USER=postgres
 DATABASE_PASSWORD=${randomBytes(16).toString("hex")}
 `;
 
-writeFileSync(ENV_PATH, env);
+writeFileSync(ENV_PATH, env, { mode: 0o600 });
+chmodSync(ENV_PATH, 0o600);
 
 process.stdout.write(`\nWrote ${ENV_PATH}\n`);
 process.stdout.write(`  payment asset  ${nativeSac} (native XLM SAC)\n`);

@@ -37,25 +37,26 @@ if ! docker info >/dev/null 2>&1; then
     npm run conformance        (in a third)"
 fi
 
-# A port in use is only a problem when something *other than this stack* holds
-# it. Re-running against an already-running stack is fine; a stack left running
-# by a different clone is not, because it pays a different seller and the
-# harness then fails confusingly.
-for port in 3001 3002 3003; do
-  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || continue
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE="docker-compose"
+else
+  die "Neither 'docker compose' nor 'docker-compose' is available."
+fi
 
-  health=$(curl -fsS --max-time 3 "http://localhost:$port/health" 2>/dev/null || true)
-  case "$health" in
-    *'"status":"ok"'*|*'"status":"degraded"'*)
-      echo "     port $port already served by this stack - 'docker compose up' will reuse or replace it"
-      ;;
-    *)
-      holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1)
-      die "Port $port is held by something that is not this stack${holder:+ (process: $holder)}.
-  Stop it and re-run, or change the port in .env."
-      ;;
-  esac
+running_services=$($COMPOSE ps --services --status running 2>/dev/null || true)
+stack_running=yes
+for service in bazaar facilitator demo-server; do
+  if ! printf '%s\n' "$running_services" | grep -qx "$service"; then
+    stack_running=no
+    break
+  fi
 done
+
+requested_bazaar_host_port="${BAZAAR_HOST_PORT:-}"
+requested_facilitator_host_port="${FACILITATOR_HOST_PORT:-}"
+requested_demo_server_host_port="${DEMO_SERVER_HOST_PORT:-}"
 
 # ── 1. accounts ──────────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
@@ -66,29 +67,46 @@ else
   say "1/4  Using existing .env"
 fi
 
+# Make the generated project configuration authoritative for this run. This
+# prevents stale exported credentials from another local stack overriding the
+# seller identity or facilitator accounts used by the fresh .env.
+set -a
+. ./.env
+set +a
+BAZAAR_HOST_PORT="${requested_bazaar_host_port:-${BAZAAR_HOST_PORT:-3001}}"
+FACILITATOR_HOST_PORT="${requested_facilitator_host_port:-${FACILITATOR_HOST_PORT:-3002}}"
+DEMO_SERVER_HOST_PORT="${requested_demo_server_host_port:-${DEMO_SERVER_HOST_PORT:-3003}}"
+export BAZAAR_HOST_PORT FACILITATOR_HOST_PORT DEMO_SERVER_HOST_PORT
+export BAZAAR_URL="http://localhost:${BAZAAR_HOST_PORT}"
+export FACILITATOR_URL="http://localhost:${FACILITATOR_HOST_PORT}"
+export DEMO_SERVER_URL="http://localhost:${DEMO_SERVER_HOST_PORT}"
+
+for port in "$BAZAAR_HOST_PORT" "$FACILITATOR_HOST_PORT" "$DEMO_SERVER_HOST_PORT"; do
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || continue
+  if [ "$stack_running" = yes ]; then
+    echo "     port $port already served by this Compose stack - 'docker compose up' will reuse or replace it"
+  else
+    holder=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -F c 2>/dev/null | sed -n 's/^c//p' | head -1)
+    die "Port $port is already in use${holder:+ (process: $holder)}.
+  Set a different host port in .env or the environment and re-run."
+  fi
+done
+
 # ── 2. stack ─────────────────────────────────────────────────────────────────
 say "2/4  Starting postgres + bazaar + facilitator + demo resource server"
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE="docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE="docker-compose"
-else
-  die "Neither 'docker compose' nor 'docker-compose' is available."
-fi
-
 $COMPOSE up --build -d postgres bazaar facilitator demo-server
 
 # ── 3. wait ──────────────────────────────────────────────────────────────────
 say "3/4  Waiting for every service to report healthy"
 for i in $(seq 1 90); do
-  bazaar_ok=$(curl -fsS http://localhost:3001/health >/dev/null 2>&1 && echo yes || echo no)
-  facilitator_ok=$(curl -fsS http://localhost:3002/health >/dev/null 2>&1 && echo yes || echo no)
-  demo_ok=$(curl -fsS http://localhost:3003/health >/dev/null 2>&1 && echo yes || echo no)
+  bazaar_ok=$(curl -fsS "${BAZAAR_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
+  facilitator_ok=$(curl -fsS "${FACILITATOR_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
+  demo_ok=$(curl -fsS "${DEMO_SERVER_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
 
   if [ "$bazaar_ok" = yes ] && [ "$facilitator_ok" = yes ] && [ "$demo_ok" = yes ]; then
-    echo "     bazaar       http://localhost:3001  ready"
-    echo "     facilitator  http://localhost:3002  ready"
-    echo "     demo server  http://localhost:3003  ready"
+    echo "     bazaar       ${BAZAAR_URL}  ready"
+    echo "     facilitator  ${FACILITATOR_URL}  ready"
+    echo "     demo server  ${DEMO_SERVER_URL}  ready"
     break
   fi
   if [ "$i" = 90 ]; then
