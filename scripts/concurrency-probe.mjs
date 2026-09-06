@@ -79,8 +79,7 @@ async function signOne() {
  * @param index - Probe index, for the report
  * @returns What happened
  */
-async function settleOne(index) {
-  const body = await signOne();
+async function settleOne(index, body) {
   const startedAt = Date.now();
   try {
     const response = await fetch(`${FACILITATOR_URL}/settle`, {
@@ -118,8 +117,26 @@ if (!asJson) {
 }
 
 const before = await (await fetch(`${FACILITATOR_URL}/stats`)).json();
+const preparationStartedAt = Date.now();
+const prepared = [];
+const preparationFailures = [];
+for (let index = 1; index <= CONCURRENCY; index++) {
+  try {
+    prepared.push({ index, body: await signOne() });
+  } catch (error) {
+    preparationFailures.push({
+      index,
+      reason: "payload_preparation_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+const preparationMs = Date.now() - preparationStartedAt;
 const startedAt = Date.now();
-const results = await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => settleOne(i + 1)));
+const results = [
+  ...(await Promise.all(prepared.map(({ index, body }) => settleOne(index, body)))),
+  ...preparationFailures.map((failure) => ({ ...failure, status: 0, ms: 0, success: false })),
+].sort((left, right) => left.index - right.index);
 const wallMs = Date.now() - startedAt;
 const after = await (await fetch(`${FACILITATOR_URL}/stats`)).json();
 
@@ -152,7 +169,12 @@ const sequenceErrors = Object.entries(reasonCounts)
 
 const report = {
   concurrency: CONCURRENCY,
-  signerPoolSize: signers.length,
+  totalRequests: CONCURRENCY,
+  signerPoolSize: before.settlementConcurrency.poolSize,
+  advertisedSigners: signers.length,
+  preparationMs,
+  preparedPayments: prepared.length,
+  preparationFailures: preparationFailures.length,
   wallClockMs: wallMs,
   throughputPerSecond: wallMs > 0 ? CONCURRENCY / (wallMs / 1000) : null,
   succeeded: succeeded.length,

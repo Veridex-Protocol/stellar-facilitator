@@ -177,4 +177,25 @@ describe("live catalog payment-term validation", () => {
     expect(result).toEqual({ valid: true });
     expect(fetchedUrl).toBe("http://demo-server:3003/paid-resource");
   });
+
+  it("accepts a challenge that names the exact configured transport URL", async () => {
+    const publicExpected = { ...expected, resourceUrl: "http://localhost:3203/paid-resource" };
+    const result = await validateLivePaymentTerms(publicExpected, {
+      allowedOrigins: ["http://localhost:3203"],
+      transportOriginMap: { "http://localhost:3203": "http://demo-server:3003" },
+      fetchImpl: async () => {
+        const paymentRequired = {
+          x402Version: 2,
+          resource: { url: "http://demo-server:3003/paid-resource" },
+          accepts: [{ ...expected }],
+        };
+        return new Response(null, {
+          status: 402,
+          headers: { "payment-required": Buffer.from(JSON.stringify(paymentRequired)).toString("base64") },
+        });
+      },
+    });
+
+    expect(result).toEqual({ valid: true });
+  });
 });

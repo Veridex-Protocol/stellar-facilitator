@@ -144,7 +144,7 @@ export async function resolveUptoGate(
   }
 
   try {
-    const server = new SorobanRpc.Server(rpcUrl);
+    const server = new SorobanRpc.Server(rpcUrl, { allowHttp: network === "testnet" });
     const entry = await server.getContractData(
       contractId,
       xdr.ScVal.scvLedgerKeyContractInstance(),

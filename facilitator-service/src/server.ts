@@ -973,7 +973,8 @@ export class FacilitatorService {
         } : {}),
       };
     const event = await this.catalogOutbox.enqueue(result.transaction, payload);
-    return this.deliverCatalogEvent(event);
+    void this.drainCatalogOutbox();
+    return encodeQueuedCatalogResponse(event.id);
   }
 
   private async deliverCatalogEvent(event: CatalogOutboxEvent): Promise<string | undefined> {
@@ -1215,6 +1216,16 @@ function classifyPublicReason(reason: string) {
   if (reason === LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR || reason.startsWith("unexpected_")) return "internal_error" as const;
   if (reason.includes("unsupported_scheme") || reason === LOCAL_REASONS.UNSUPPORTED_SCHEME_OR_NETWORK) return "unsupported_payment_scheme" as const;
   return "payment_rejected" as const;
+}
+
+function encodeQueuedCatalogResponse(transaction: string): string {
+  return Buffer.from(JSON.stringify({
+    bazaar: {
+      status: "queued",
+      reason: "Catalog validation is running asynchronously and does not affect settlement.",
+      transaction,
+    },
+  })).toString("base64");
 }
 
 /**

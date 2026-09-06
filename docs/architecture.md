@@ -2,7 +2,7 @@
 
 **Architecture version:** 3.0-draft
 
-**Last reviewed:** 2026-08-13
+**Last reviewed:** 2026-09-06
 
 **Networks:** `stellar:testnet`, then `stellar:pubnet`
 
@@ -20,7 +20,7 @@ The system is deliberately split into two planes:
 - The **payment plane** verifies and settles exact payments. It is non-custodial: value moves from payer to `payTo`; the facilitator only supplies transaction submission and, when enabled, network-fee sponsorship.
 - The **discovery plane** indexes payment-bound listings, measures service liveness, and makes ranked recommendations. Discovery is advisory. A malicious or stale listing can cause a failed request, but cannot alter a payment's signed recipient, asset, or amount.
 
-`upto` is a planned second settlement scheme for metered usage. It must not be enabled on a public network until the contract and facilitator validator satisfy the design in section 7. The existing prototype signs the actual amount and uses persistent nonce storage; it is not the storage-less, single-signature `upto` design described here.
+`upto` is the second, experimental settlement scheme for metered usage. The active `upto-settlement` contract binds payer, recipient, token, ceiling, validity, facilitator, settlement id, and request/result evidence; it enforces `actual <= max` and contract-level replay protection. It is proven on Stellar testnet but remains unaudited and approval-gated for pubnet. The older `upto_escrow` prototype is not the advertised scheme.
 
 ### 1.1 Evidence and delivery status
 
@@ -28,11 +28,13 @@ This distinction is intentional: it keeps the architecture persuasive without cl
 
 | Capability                                                   | Repository status                                             | Production / testnet claim                                                           |
 | ------------------------------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Canonical`exact` facilitator surface                       | Implemented with`@x402/stellar` integration and local tests | Pending durable idempotency/outbox hardening and public testnet transaction evidence |
-| PostgreSQL + pgvector catalog and hybrid search              | Implemented locally                                           | Pending operated testnet catalog evidence and durable post-settlement outbox         |
-| Signed libp2p announcements, telemetry, and liveness scoring | Prototype implemented locally                                 | Pending full-envelope owner binding and multi-operator testnet exercise              |
-| MCP discovery and paid-call path                             | Implemented locally                                           | Pending client-side signer isolation and end-to-end agent recording                  |
-| Correct`upto` contract and auth-tree validator             | **Required redesign**                                   | Not deployable until the gates in section 7.6 pass                                   |
+| Canonical `exact` facilitator surface | Official `@x402/stellar`, channel signer leases, receipts, stable errors | Testnet-proven with stock public client; latest clean run is in the RFP report |
+| PostgreSQL + pgvector catalog and hybrid search | Implemented with live 402 validation and periodic quarantine | Testnet-proven catalog/restart/revalidation; embedding worker remains target-only |
+| Durable post-settlement outbox | Transaction-keyed atomic file spool and named Compose volume | PostgreSQL-down payment/retention/replay drill passed; production HA spool is future work |
+| Signed libp2p announcements, telemetry, and liveness scoring | Full signed deltas, owner/delegate authority, conflict/revoke/restore | Local three-node proof; multi-process persistence and multi-operator deployment remain prototype |
+| MCP discovery and paid-call path | Two-phase challenge/externally signed submission; no buyer key in MCP | Keyless MCP payment proven on testnet; paid seller content remains explicitly untrusted data |
+| Active `upto` contract and auth-tree validator | Implemented in `contracts/upto-settlement` and facilitator scheme | Testnet-proven partial/zero/replay and HTTP flow; experimental and unaudited |
+| Search quality evidence | 10-document, 50-query reviewed regression set | Lexical and feature-hash/RRF metrics committed; in-memory latency is not production throughput |
 
 The public release checklist, deployed contract IDs/WASM hashes, testnet transaction hashes, conformance reports, and search-quality reports are release artifacts - not prose promises.
 
@@ -99,13 +101,13 @@ flowchart LR
 
 | Component            | Responsibility                                                                  | Durable state                                                         | Failure behavior                                                    |
 | -------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Facilitator service  | `/supported`, `/verify`, `/settle`, transaction rebuilding and submission | Idempotency receipts, channel health, operational metrics             | Rejects unsafe/expired requests; never guesses a settlement result. |
-| Channel-account pool | Leases sequence-number sources and reconciles uncertain submissions             | Operator-managed channel keys and per-channel state                   | Quarantines sequence-drifted accounts until reconciled.             |
+| Facilitator service  | `/supported`, `/verify`, `/settle`, transaction rebuilding and submission | In-process receipts, durable catalog outbox, channel health, operational metrics | Rejects unsafe/expired requests; never guesses a settlement result. |
+| Channel-account pool | Leases sequence-number sources and quarantines uncertain submissions | Operator-managed channel keys; process-local lease/quarantine state | Requires authenticated explicit recovery after reconciliation. |
 | PostgreSQL Bazaar    | Catalog, search index metadata, telemetry, announcement audit trail             | PostgreSQL 16 + pgvector                                              | Search may degrade; settlement continues.                           |
-| Embedding worker     | Generates and versions vector representations                                   | Embedding version and job status                                      | New listing remains browseable/text-searchable if embedding fails.  |
+| Embedding worker     | Target production component for versioned learned representations | Not implemented as an independent durable worker | Current ingestion uses synchronous feature hashing with fallback; settlement remains independent. |
 | P2P mesh             | Propagates signed owner/facilitator announcements                               | Ephemeral peer and replay cache; audit copies in PostgreSQL           | Mesh failure does not block local catalog or payment.               |
-| MCP server           | Search and paid-call orchestration                                              | No payer signing key                                                  | Returns structured error; delegates signing to the client wallet.   |
-| `upto` contract    | Enforces the variable settlement cap, recipient binding, and auth path          | No balance; only host-managed temporary authorization/allowance state | Scheme unavailable until independently verified and deployed.       |
+| MCP server           | Search, challenge preparation, and externally signed paid-call submission | No payer signing key | Returns structured errors/data and delegates signing/policy to the client wallet. |
+| `upto` contract | Enforces variable cap, recipient/token/facilitator binding, validity, and replay | Settlement ids and consumed-authorization state; never a user balance | Testnet-only until independent audit and pubnet approval. |
 
 ### 4.1 Repository map
 
@@ -123,7 +125,8 @@ bazaar-service/
   src/telemetry/                # heartbeat and liveness state
 
 mcp-server/src/index.ts         # discover_resources and pay_resource tools
-contracts/upto-settlement/      # prototype; replaced before scheme enablement
+contracts/upto-settlement/      # active experimental testnet contract
+contracts/upto_escrow/          # obsolete development prototype, not advertised
 docs/openapi/                   # facilitator and Bazaar API contracts
 ```
 
@@ -158,7 +161,7 @@ sequenceDiagram
     S-->>Q: Confirmed transaction
     Q-->>F: Hash + final status
     F-->>R: PAYMENT-RESPONSE receipt
-    F-->>B: Outbox event after confirmed settlement
+    F-->>B: Durable queued outbox event after confirmed settlement
     B->>B: Validate, embed, upsert catalog asynchronously
     R-->>A: Protected response
 ```
@@ -198,7 +201,7 @@ flowchart TD
 
 Channel accounts are sequence-number sources, not custodians. The production pool uses pre-provisioned, persistent operator keys. It is sized from the target settlement rate and observed ledger close time; it is not sized by a fixed marketing number. A fee-bump signer may pay the fee, but does not make a single source account concurrent.
 
-The queue is bounded by remaining authorization validity, not only by queue length. If a request cannot be submitted before its auth expiry, it is rejected with a retryable code and `Retry-After`, before consuming channel capacity or sponsorship budget.
+The current queue is bounded by a configured timeout and signer count. Saturation is rejected with `settlement_capacity_exceeded`, `Retry-After`, and an explicit no-funds-moved message. Binding queue admission directly to remaining authorization validity remains target production work.
 
 ## 6. Bazaar discovery plane
 
@@ -217,13 +220,13 @@ The result must return its `searchMethod`, `partialResults` state, opaque cursor
 
 ```mermaid
 flowchart LR
-    P["Confirmed x402 settlement<br/>with Bazaar extension"] --> O["Durable outbox event"]
+    P["Confirmed x402 settlement<br/>with Bazaar extension"] --> O["Durable transaction-keyed<br/>file-spool outbox event"]
     A["Owner-signed mesh announcement"] --> G["Signature, freshness,<br/>sequence and provenance gate"]
     O --> V["Schema + integrity validation"]
     G --> V
     V -->|"invalid"| X["Soft-drop / rejection reason<br/>No public listing"]
     V -->|"valid"| N["Normalize URL, route,<br/>payTo and metadata"]
-    N --> E["Embedding job<br/>versioned and retryable"]
+    N --> E["Current: synchronous feature hash<br/>Target: versioned worker"]
     E --> PG[("PostgreSQL + pgvector")]
     PG --> S["Browse and hybrid search"]
     S --> M["MCP discover_resources"]
@@ -268,7 +271,7 @@ Peer identity is transport identity; listing authority is the Stellar owner/dele
 
 Heartbeat data is evidence about availability, not self-reported truth. A node records the signed heartbeat, uses direct probes where permitted, and calculates liveness over a rolling window. After one missed window a listing is degraded; after the configured maximum it is excluded from default results until a valid fresh observation arrives.
 
-Ranking signals are bounded and decayed:
+Ranking signals are bounded. Time-decayed distinct-payer and anti-concentration scoring remain target production work:
 
 - text/vector relevance remains the dominant query-fit signal;
 - settlement quality uses distinct-payer, time-decayed events where privacy policy permits, not raw volume alone;
@@ -312,7 +315,7 @@ The remaining allowance is bounded twice: it is usable only by the settlement co
 
 ### 7.3 Required contract shape
 
-The target contract has a single public settlement operation conceptually equivalent to:
+The target contract has a single public settlement operation conceptually equivalent to the active implementation, with additional request/facilitator/replay terms omitted here for brevity:
 
 ```rust
 pub fn settle(
@@ -334,7 +337,7 @@ pub fn settle(
 }
 ```
 
-This is illustrative, not deployable source. The production implementation requires audited error handling, exact Soroban SDK/XDR compatibility, and complete authorization-tree test vectors.
+This is illustrative, not deployable source. The active contract is testnet-proven and has deterministic property/auth-tree tests; production still requires independent audit and exact release artifact review.
 
 ### 7.4 `upto` invariants and facilitator validation
 
@@ -353,7 +356,7 @@ The facilitator must pin the operation target to its advertised `upto` contract 
 
 Transferring the maximum into a contract and refunding the remainder introduces contract custody, per-asset authorization complications, clawback exposure, and a shared balance-storage hotspot. Persistent contract nonce storage is also unnecessary if the Soroban host consumes the signed auth-entry nonce; it creates rent/TTL work and obscures the actual replay authority.
 
-The current prototype uses `require_auth()` over a call that includes `actual_amount`, and persistent nonce storage. It is retained only as a development reference and must be replaced before the `upto` route is advertised or deployed. This document supersedes any older prose that describes that prototype as production-ready.
+The obsolete `contracts/upto_escrow` prototype used a different custody/auth model and is retained only as development history. The advertised testnet scheme uses `contracts/upto-settlement`; it is not production-ready or audited.
 
 ### 7.6 Migration and release gates
 
@@ -370,11 +373,11 @@ The current prototype uses `require_auth()` over a call that includes `actual_am
 
 | Failure                      | Payment behavior                                        | Discovery behavior                                           | Operator action                                      |
 | ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------- |
-| PostgreSQL unavailable       | Exact settlement continues; outbox retains catalog work | Browse/search degraded or unavailable                        | Restore DB; replay idempotent outbox jobs.           |
+| PostgreSQL unavailable       | Settlement continues; file-spool outbox retains catalog work | Browse/search degraded or unavailable | Restore DB/Bazaar; replay drains automatically. |
 | Embedding worker unavailable | Settlement continues                                    | New listing uses lexical/browse path and is backfilled later | Retry with versioned job.                            |
 | Mesh unavailable             | Settlement and local catalog continue                   | Local index remains searchable; federation pauses            | Reconnect with bounded replay.                       |
-| Primary RPC unavailable      | Fail over only after health and response checks         | No direct impact                                             | Reconcile submitted hashes; do not resubmit blindly. |
-| Channel submission uncertain | Do not reuse the channel                                | No direct impact                                             | Quarantine, fetch status, then release/reset.        |
+| Primary RPC unavailable      | Testnet coordinator health-checks and uses a secondary; submission is sent once | No direct impact | Reconcile submitted hashes; do not resubmit blindly. |
+| Channel submission uncertain | Unsuccessful result with a transaction hash quarantines the leased signer | No direct impact | Reconcile, then use authenticated explicit recovery. |
 | Fee treasury below reserve   | Fail closed before sponsorship                          | No direct impact                                             | Alert and replenish under operator controls.         |
 
 ### 8.2 Threat-to-control matrix
@@ -410,9 +413,9 @@ The Bazaar exposes:
 - `GET /discovery/resources` - deterministic browse with `type`, `payTo`, `network`, `scheme`, extensions, limit, and cursor/offset compatibility.
 - `GET /discovery/search` - hybrid natural-language search with structural filters, opaque cursor pagination, `partialResults`, `searchMethod`, provenance, and ranking explanation fields.
 
-The MCP surface exposes `discover_resources` and `pay_resource`. It performs discovery and the HTTP 402 retry loop, but never holds a payer signing key. The wallet/smart-account signer remains client-side and applies its own allow-lists, budgets, approval rules, and spending policy to the complete authorization tree.
+The MCP surface exposes `discover_resources` and `pay_resource`. The first paid call returns a bounded challenge; the client wallet signs externally; the second call re-fetches and matches the live challenge before forwarding the signature. MCP never holds a payer signing key. The browser proof demonstrates local atomic-unit policy; a deployed smart-account `$10/$2/$12` stablecoin fixture remains target evidence.
 
-Seller helpers must validate discovery metadata before publication; buyer helpers must preflight recipient trustline/token readiness where possible before an authorization is spent. Error codes are shared across Bazaar, facilitator, MCP, and SDKs.
+Seller helpers validate discovery metadata before publication; buyer helpers should preflight recipient trustline/token readiness where possible before an authorization is spent. A canonical registry now defines outward Veridex errors and generated package-local snapshots are CI-checked; canonical x402 reason fields remain unchanged and carry the shared metadata in `extra.veridexError`.
 
 ## 10. Verification and release evidence
 

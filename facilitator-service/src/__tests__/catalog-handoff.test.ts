@@ -102,7 +102,13 @@ describe("post-settlement catalog handoff", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ success: true, transaction: "a".repeat(64) });
+      const extension = response.headers.get("extension-responses");
+      expect(extension).toBeTruthy();
+      expect(JSON.parse(Buffer.from(extension!, "base64").toString("utf8"))).toMatchObject({
+        bazaar: { status: "queued", transaction: "a".repeat(64) },
+      });
       expect(Date.now() - startedAt).toBeLessThan(300);
+      await new Promise((resolve) => setTimeout(resolve, 40));
       const pendingResponse = await service.getApp().request("/stats");
       expect(((await pendingResponse.json()) as any).catalogOutbox.pending).toBe(1);
 

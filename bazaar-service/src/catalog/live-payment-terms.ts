@@ -48,11 +48,12 @@ export async function validateLivePaymentTerms(
 ): Promise<LivePaymentTermsResult> {
   const target = await validateTarget(expected.resourceUrl, options);
   if (!target.valid || !target.url) return target;
+  const fetchUrl = transportUrl(target.url, options.transportOriginMap);
 
   const fetchImpl = options.fetchImpl ?? fetch;
   let response: Response;
   try {
-    response = await fetchImpl(transportUrl(target.url, options.transportOriginMap), {
+    response = await fetchImpl(fetchUrl, {
       method: "GET",
       redirect: "error",
       headers: { Accept: "application/json" },
@@ -100,7 +101,11 @@ export async function validateLivePaymentTerms(
     const liveResource = typeof challenge.resource === "string"
       ? challenge.resource
       : challenge.resource?.url;
-    if (!liveResource || canonicalUrl(liveResource) !== canonicalUrl(expected.resourceUrl)) {
+    const allowedResourceUrls = new Set([
+      canonicalUrl(expected.resourceUrl),
+      canonicalUrl(fetchUrl.href),
+    ]);
+    if (!liveResource || !allowedResourceUrls.has(canonicalUrl(liveResource))) {
       return reject(
         "catalog_live_payment_resource_mismatch",
         "live payment resource does not match submitted discovery metadata",

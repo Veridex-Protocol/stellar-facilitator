@@ -761,7 +761,7 @@ await check("the settle response tells the seller whether the listing landed", a
   const decoded = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
   assert(decoded.bazaar, "EXTENSION-RESPONSES carries no 'bazaar' entry");
   assert(
-    ["success", "rejected"].includes(decoded.bazaar.status),
+    ["success", "rejected", "queued"].includes(decoded.bazaar.status),
     `unexpected cataloging status '${decoded.bazaar.status}'`,
   );
   return decoded.bazaar;
