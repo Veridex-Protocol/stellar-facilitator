@@ -449,15 +449,15 @@ Prometheus metrics available at:
 ```
 # Bazaar
 veridex_search_requests_total
-veridex_search_latency_seconds
-veridex_p2p_peers
-veridex_telemetry_nodes_tracked
+veridex_search_latency
+veridex_catalog_resources_total
+veridex_p2p_messages_total
 
 # Facilitator
-veridex_settlement_requests_total
-veridex_settlement_success_total
-veridex_channel_pool_available
-veridex_channel_pool_in_use
+veridex_settlements_total
+veridex_settlement_failures_total
+veridex_channel_available
+veridex_channel_in_use
 ```
 
 ### Grafana Dashboard

@@ -54,6 +54,7 @@ import {
   loadCapabilityJobs,
   type CapabilityJob,
 } from "./capability-descriptor.js";
+import { createFacilitatorMetrics, type PrometheusRegistry } from "./metrics.js";
 
 /** Legacy (pre-canonical) Stellar request, served only under /legacy/*. */
 const X402StellarRequestSchema = z.object({
@@ -197,6 +198,7 @@ export class FacilitatorService {
   private settler: StellarTransactionSettler;
   private x402Facilitator: X402Facilitator;
   private logger: Logger;
+  private metrics: PrometheusRegistry;
   private httpServer?: ServerType;
   private serviceReady = false;
   private capabilities: VerifiedCapabilities;
@@ -213,6 +215,7 @@ export class FacilitatorService {
   constructor(config: FacilitatorServiceConfig, logger: Logger = createLogger()) {
     this.config = config;
     this.logger = logger;
+    this.metrics = createFacilitatorMetrics();
     this.app = new Hono();
 
     this.channelPool = createChannelPool(config.channelPool);
@@ -393,6 +396,16 @@ export class FacilitatorService {
       });
     });
 
+    this.app.get("/metrics", (c) => {
+      const scheduler = this.x402Facilitator.getSchedulerStats();
+      const channels = this.channelPool.getStats();
+      this.metrics.set("veridex_channel_available", Math.max(0, scheduler.poolSize - scheduler.inFlight));
+      this.metrics.set("veridex_channel_in_use", scheduler.inFlight);
+      this.metrics.set("veridex_channel_quarantined", channels.error);
+      c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      return c.body(this.metrics.render());
+    });
+
     this.app.get("/supported", (c) => c.json(this.buildSupported()));
 
     this.app.get("/.well-known/x402", (c) =>
@@ -435,6 +448,8 @@ export class FacilitatorService {
 
       const { paymentPayload, paymentRequirements } = body as any;
       this.stats.totalVerifications++;
+      this.metrics.increment("veridex_verifications_total");
+      this.metrics.increment("veridex_rpc_requests_total");
 
       try {
         let attempts = 0;
@@ -475,6 +490,9 @@ export class FacilitatorService {
           invalidMessage: `${describeReason(reason)} (detail: ${errorDetail(error)})`,
         };
         this.logger.warn("verify raised", { reason, detail: errorDetail(error) });
+        if (reason === LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE) {
+          this.metrics.increment("veridex_rpc_failures_total");
+        }
         this.logger.outcome({
           endpoint: "/verify",
           outcome: isClientFault ? "invalid" : "error",
@@ -518,6 +536,8 @@ export class FacilitatorService {
 
       const { paymentPayload, paymentRequirements } = body as any;
       this.stats.totalSettlements++;
+      this.metrics.increment("veridex_settlements_total");
+      this.metrics.increment("veridex_rpc_requests_total");
 
       try {
         let attempts = 0;
@@ -538,6 +558,8 @@ export class FacilitatorService {
         this.recordSkew(attempts, result.success);
 
         if (!result.success) {
+          this.metrics.increment("veridex_settlement_failures_total");
+          this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
           this.logger.outcome({
             endpoint: "/settle",
             outcome: "failed",
@@ -576,6 +598,7 @@ export class FacilitatorService {
           latencyMs: Math.round(performance.now() - startedAt),
           skewRetries: attempts - 1,
         });
+        this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
         return c.json(receipt ? { ...result, receipt } : result, 200);
       } catch (error) {
         // Being refused for capacity is a definite "no funds moved", which is
@@ -589,6 +612,11 @@ export class FacilitatorService {
           errorReason: reason,
           errorMessage: busy ? (error as SignerBusyError).message : `${describeReason(reason)} (detail: ${errorDetail(error)})`,
         };
+        this.metrics.increment("veridex_settlement_failures_total");
+        this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
+        if (reason === LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE) {
+          this.metrics.increment("veridex_rpc_failures_total");
+        }
         if (busy) {
           this.logger.warn("settlement refused: all signers busy", {
             waitedMs: (error as SignerBusyError).waitedMs,

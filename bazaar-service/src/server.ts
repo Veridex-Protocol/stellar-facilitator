@@ -33,6 +33,7 @@ import { ProviderQualityStore } from "./provider-quality/store.js";
 import { ProviderAggregateSchema, ProviderObservationSchema } from "./provider-quality/types.js";
 import { verifyProviderAggregate, verifyProviderObservation } from "./provider-quality/crypto.js";
 import { buildProviderAggregate } from "./provider-quality/aggregator.js";
+import { createBazaarMetrics, type BazaarMetrics } from "./metrics.js";
 
 /**
  * Bazaar Service configuration
@@ -267,6 +268,7 @@ export class BazaarService {
   private searchEngine: BazaarSearchEngine;
   private ingestionWorker: CatalogIngestionWorker;
   private providerQualityStore: ProviderQualityStore;
+  private metrics: BazaarMetrics;
   private httpServer?: ServerType;
   private livenessInterval?: NodeJS.Timeout;
   private heartbeatInterval?: NodeJS.Timeout;
@@ -295,6 +297,7 @@ export class BazaarService {
       },
     });
     this.providerQualityStore = new ProviderQualityStore(this.db);
+    this.metrics = createBazaarMetrics();
 
     // Initialize announcer if secret key provided
     if (config.stellarSecretKey) {
@@ -418,8 +421,39 @@ export class BazaarService {
       });
     });
 
+    this.app.get("/metrics", async (c) => {
+      const p2pStats = this.p2pNode.getStats();
+      this.metrics.set("veridex_p2p_messages_total", p2pStats.messagesReceived);
+      this.metrics.set("veridex_p2p_replays_total", p2pStats.replaysRejected);
+      try {
+        const result = await this.db.query<{
+          searchable: string;
+          embedding_backlog: string;
+          oldest_pending_seconds: string;
+        }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE soft_dropped = false) AS searchable,
+             COUNT(*) FILTER (WHERE soft_dropped = false AND embedding IS NULL) AS embedding_backlog,
+             COALESCE(EXTRACT(EPOCH FROM now() - MIN(created_at) FILTER (WHERE verification_status = 'pending')), 0) AS oldest_pending_seconds
+           FROM catalog_resources`,
+        );
+        const row = result.rows[0];
+        this.metrics.set("veridex_catalog_resources_total", Number(row?.searchable ?? 0));
+        this.metrics.set("veridex_embedding_backlog", Number(row?.embedding_backlog ?? 0));
+        this.metrics.set("veridex_catalog_ingestion_lag", Number(row?.oldest_pending_seconds ?? 0));
+      } catch {
+        this.metrics.set("veridex_catalog_resources_total", 0);
+        this.metrics.set("veridex_embedding_backlog", 0);
+        this.metrics.set("veridex_catalog_ingestion_lag", 0);
+      }
+      c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      return c.body(this.metrics.render());
+    });
+
     // Hybrid search: BM25 keywords, feature-hash vectors, and telemetry, fused by RRF
     this.app.get("/discovery/search", async (c) => {
+      const startedAt = performance.now();
+      this.metrics.increment("veridex_search_requests_total");
       try {
         const query = c.req.query("q") || c.req.query("query");
         if (!query) {
@@ -440,6 +474,7 @@ export class BazaarService {
           offset: clampOffset(c.req.query("offset")),
           cursor: c.req.query("cursor"),
         });
+        if (results.total === 0) this.metrics.increment("veridex_search_zero_results_total");
         return c.json(results);
       } catch (error) {
         // A bad cursor is the client's mistake, and saying so beats a 500.
@@ -451,6 +486,8 @@ export class BazaarService {
           error: "Search failed",
           message: error instanceof Error ? error.message : "Unknown error",
         }, 500);
+      } finally {
+        this.metrics.observe("veridex_search_latency", (performance.now() - startedAt) / 1000);
       }
     });
 
@@ -687,6 +724,8 @@ export class BazaarService {
           return c.json({ error: "invalid_provider_observation", message: verification.error }, 400);
         }
         const record = await this.providerQualityStore.recordObservation({ observation });
+        this.metrics.increment("veridex_provider_observations_total");
+        if (observation.providerAtFault) this.metrics.increment("veridex_provider_faults_total");
         this.enqueueProviderAggregateRecompute(observation.resource, observation.payTo);
         return c.json({ status: "accepted", id: record.id }, 202);
       } catch (error) {
@@ -879,6 +918,7 @@ export class BazaarService {
           staleAfterMs: this.config.catalogRevalidationStaleMs,
           limit: this.config.catalogRevalidationBatchSize,
         }).then((summary) => {
+          this.metrics.increment("veridex_catalog_revalidation_failures_total", summary.quarantined);
           if (summary.checked > 0) console.log("[Bazaar Service] Catalog revalidation", summary);
         }).catch((error) =>
           console.error("[Bazaar Service] Catalog revalidation failed:", error)

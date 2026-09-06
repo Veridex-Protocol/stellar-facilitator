@@ -22,6 +22,7 @@
     "demo": "./demo.sh",
     "outcomes": "node scripts/summarize-outcomes.mjs",
     "probe": "node scripts/concurrency-probe.mjs",
+    "probe:matrix": "node scripts/concurrency-matrix.mjs",
     "upto:build": "./scripts/build-upto.sh",
     "upto:deploy": "./scripts/deploy-upto.sh",
     "upto:test": "cd contracts/upto-settlement && cargo test --locked",

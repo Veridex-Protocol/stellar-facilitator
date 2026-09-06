@@ -138,23 +138,42 @@ for (const result of results) {
 
 const succeeded = results.filter((r) => r.success);
 const latencies = results.map((r) => r.ms).sort((a, b) => a - b);
+const reasonCounts = results
+  .filter((result) => !result.success)
+  .reduce((counts, result) => {
+    const reason = result.reason || "unknown";
+    counts[reason] = (counts[reason] ?? 0) + 1;
+    return counts;
+  }, {});
+const retryCount = Math.max(0, (after.ledgerSkew?.retriesIssued ?? 0) - (before.ledgerSkew?.retriesIssued ?? 0));
+const sequenceErrors = Object.entries(reasonCounts)
+  .filter(([reason]) => /bad_seq|sequence/i.test(reason))
+  .reduce((sum, [, count]) => sum + count, 0);
 
 const report = {
   concurrency: CONCURRENCY,
   signerPoolSize: signers.length,
   wallClockMs: wallMs,
+  throughputPerSecond: wallMs > 0 ? CONCURRENCY / (wallMs / 1000) : null,
   succeeded: succeeded.length,
   failed: results.length - succeeded.length,
+  successRate: results.length > 0 ? succeeded.length / results.length : 0,
   confirmedOnLedger: results.filter((r) => r.confirmed).length,
   latencyMs: {
     min: latencies[0] ?? null,
     p50: latencies[Math.floor(latencies.length / 2)] ?? null,
+    p95: latencies[Math.max(0, Math.ceil(latencies.length * 0.95) - 1)] ?? null,
     max: latencies.at(-1) ?? null,
   },
+  retryCount,
+  sequenceErrors,
+  reasonCounts,
   distinctSourceAccounts: sources.size,
   settlementsPerSourceAccount: Object.fromEntries(sources),
   schedulerBefore: before.settlementConcurrency,
   schedulerAfter: after.settlementConcurrency,
+  channelsBefore: before.channels,
+  channelsAfter: after.channels,
   results,
 };
 
@@ -173,8 +192,11 @@ for (const result of results) {
 
 process.stdout.write(`\n  wall clock          ${wallMs}ms for ${CONCURRENCY} concurrent settlements\n`);
 process.stdout.write(`  succeeded           ${report.succeeded}/${CONCURRENCY}\n`);
+process.stdout.write(`  throughput          ${report.throughputPerSecond?.toFixed(2) ?? "n/a"} settlements/s\n`);
 process.stdout.write(`  confirmed on ledger ${report.confirmedOnLedger}/${CONCURRENCY}\n`);
-process.stdout.write(`  latency             min ${report.latencyMs.min}ms  p50 ${report.latencyMs.p50}ms  max ${report.latencyMs.max}ms\n`);
+process.stdout.write(`  latency             min ${report.latencyMs.min}ms  p50 ${report.latencyMs.p50}ms  p95 ${report.latencyMs.p95}ms  max ${report.latencyMs.max}ms\n`);
+process.stdout.write(`  retries             ${report.retryCount}\n`);
+process.stdout.write(`  sequence errors     ${report.sequenceErrors}\n`);
 process.stdout.write(`  source accounts     ${report.distinctSourceAccounts} distinct\n`);
 process.stdout.write(
   `  scheduler           ${after.settlementConcurrency.totalQueued - before.settlementConcurrency.totalQueued} queued, ` +

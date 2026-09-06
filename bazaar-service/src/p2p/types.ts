@@ -291,6 +291,7 @@ export interface P2PStats {
   messagesReceived: number;
   messagesPublished: number;
   messagesSuppressed: number; // Duplicate/invalid
+  replaysRejected: number;
   uptime: number; // Seconds
 }
 
