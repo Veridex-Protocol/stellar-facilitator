@@ -213,7 +213,7 @@ services:
       BAZAAR_URL: http://bazaar:3001
       FACILITATOR_URL: http://facilitator:3002
       STELLAR_NETWORK: testnet
-      STELLAR_CLIENT_SECRET_KEY: ${STELLAR_CLIENT_SECRET_KEY:-$BUYER_SECRET_KEY}
+      MCP_MAX_SPEND_AMOUNT_STROOPS: ${MCP_MAX_SPEND_AMOUNT_STROOPS:-10000000}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
     depends_on:
       - bazaar

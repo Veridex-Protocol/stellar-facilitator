@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { FacilitatorService, postCatalogIngest } from "../server.js";
 import { makeConfig, recordingLogger } from "./helpers.js";
 
@@ -35,12 +38,13 @@ describe("post-settlement catalog handoff", () => {
   });
 
   it("returns a successful settlement when Bazaar is unavailable", async () => {
+    const outboxDirectory = await mkdtemp(join(tmpdir(), "veridex-handoff-"));
     process.env.BAZAAR_URL = "https://bazaar.example";
     process.env.BAZAAR_INTERNAL_TOKEN = "test-internal-token";
     vi.stubGlobal("fetch", ((_url: URL, init?: RequestInit) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
     })) as typeof fetch);
-    const { config } = makeConfig({ catalogHandoffTimeoutMs: 20 });
+    const { config } = makeConfig({ catalogHandoffTimeoutMs: 20, catalogOutboxDirectory: outboxDirectory });
     const service = new FacilitatorService(config, recordingLogger().logger);
     vi.spyOn((service as any).x402Facilitator, "settle").mockResolvedValue({
       success: true,
@@ -88,15 +92,27 @@ describe("post-settlement catalog handoff", () => {
       payload: { transaction: "AAAAAg==" },
     };
 
-    const startedAt = Date.now();
-    const response = await service.getApp().request("/settle", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paymentPayload, paymentRequirements: requirements }),
-    });
+    try {
+      const startedAt = Date.now();
+      const response = await service.getApp().request("/settle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentPayload, paymentRequirements: requirements }),
+      });
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ success: true, transaction: "a".repeat(64) });
-    expect(Date.now() - startedAt).toBeLessThan(300);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ success: true, transaction: "a".repeat(64) });
+      expect(Date.now() - startedAt).toBeLessThan(300);
+      const pendingResponse = await service.getApp().request("/stats");
+      expect(((await pendingResponse.json()) as any).catalogOutbox.pending).toBe(1);
+
+      vi.stubGlobal("fetch", (async () => new Response(null, { status: 202 })) as typeof fetch);
+      const restarted = new FacilitatorService(config, recordingLogger().logger);
+      await restarted.drainCatalogOutbox();
+      const drainedResponse = await restarted.getApp().request("/stats");
+      expect(((await drainedResponse.json()) as any).catalogOutbox.pending).toBe(0);
+    } finally {
+      await rm(outboxDirectory, { recursive: true, force: true });
+    }
   });
 });

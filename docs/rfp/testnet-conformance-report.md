@@ -208,3 +208,35 @@ TESTNET DESIGN PARTNER READY.
 ```
 
 This classification does not imply mainnet readiness, production readiness, independent security audit completion, federation production readiness, or npm publication.
+
+## 2026-09-06 local hardening addendum
+
+No new transaction hash or ledger claim is added by this section. The
+2026-09-05 clean-room run above remains the latest on-chain acceptance evidence.
+
+After that run, commits `e1037b8`, `767dd5f`, and `c2cf80d` added live catalog
+term validation/revalidation, expanded search evaluation, Prometheus metrics,
+three-mode provider policy, MCP untrusted-data boundaries, a local three-node
+federation proof, concurrency matrix tooling, and testnet RPC coordination.
+
+Local validation on 2026-09-06:
+
+- facilitator: 129 tests passed
+- Bazaar: 83 tests passed
+- MCP: 17 tests passed
+- TypeScript SDK: 43 tests passed
+- aggregate typecheck: passed
+- aggregate build: passed (Playground native-addon bundling warnings remain)
+- active `upto-settlement` contract: 27 tests passed
+- Go: tests and vet passed
+- Python SDK: 9 tests passed on Python 3.14.6
+- Compose: default and host-database configurations rendered successfully
+- Bash syntax: passed
+- SDK: 43-file tarball imported from a fresh external project
+- npm publication: registry returned 404; still unpublished
+- MCP production dependency audit: zero vulnerabilities after lockfile update
+
+Not rerun after hardening: destructive clean-room bootstrap, 36/36 testnet
+conformance, real 10/25/50/100 concurrency matrix, representative activity
+harness, and independent-provider RPC testnet drill. The release classification
+therefore remains `GREEN`, not `GREEN+`.

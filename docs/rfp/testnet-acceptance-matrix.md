@@ -21,16 +21,18 @@ Scope: `stellar:testnet` only. No pubnet or mainnet activity was performed.
 | Self-hosting | Docker Compose and service-local configuration | Clean bootstrap from empty `.env` and volume | Testnet proven |
 | Bazaar resources API | `/discovery/resources` with `type`, `payTo`, `network`, `extensions`, `limit`, `offset` | Conformance group 7 | Testnet proven |
 | Bazaar search | BM25 + deterministic feature-hash + telemetry ranking | Search conformance and live discovery | Testnet proven; not learned semantic search |
-| Search evaluation | Judged benchmark with nDCG, MRR, recall, and precision metrics | `search-eval.test.ts`, 6 tests pass with regression thresholds | Implemented/tested |
-| Search evaluation | nDCG, MRR, recall, and precision metrics with regression thresholds | `search-eval.test.ts`, 6 tests pass | Implemented/tested |
+| Search evaluation | 10-document, 11-query categorized golden set; lexical baseline versus feature-hash/RRF; Recall@1/5/20, nDCG@5/10, MRR, coverage, no-result, p50/p95 | `npm --prefix bazaar-service run search:eval`; committed 2026-09-06 report; 7 regression tests | Implemented/tested; small in-memory reviewer set, not production semantic quality |
 | Cursor pagination | Opaque query-bound cursor and `partialResults` | Conformance group 7 | Testnet proven |
 | Automatic cataloging | Seller Bazaar declaration -> facilitator -> Bazaar ingest | Fresh payment created catalog row and discovery result | Testnet proven |
-| Catalog integrity | Settlement proof checked against Horizon | Forged/unbacked catalog rejection in conformance | Testnet proven |
+| Catalog integrity | Settlement proof plus bounded live HTTP 402 term validation for resource/network/scheme/asset/payee/amount | Prior forged/unbacked conformance; 13 live-term and 3 periodic-state tests | Settlement proof testnet-proven; live-term hardening locally tested |
+| Periodic catalog revalidation | Stale HTTP rows are re-fetched asynchronously; failures are quarantined/soft-dropped; successful rows update `last_verified_at` | `catalog-revalidation.test.ts`; indexed stale-row query and migration `005` | Implemented/tested; clean-stack migration/revalidation run pending |
+| Discovery failure isolation | Catalog handoff is bounded after settlement; Bazaar timeout cannot change a successful settlement response | HTTP-level hung-Bazaar settlement regression | Implemented/tested |
 | Route-template and traversal validation | Bazaar metadata validation | Bazaar deterministic tests | Implemented/tested |
 | `EXTENSION-RESPONSES` | Bazaar result relayed on direct `/settle` and seller middleware response | Fresh `upto`-enabled conformance 36/36 | Testnet proven |
 | MCP discovery | Stdio `discover_resources` tool | Attached Docker MCP protocol run | Testnet proven |
 | MCP payment | Stdio `pay_resource` performs 402/sign/retry | Attached Docker MCP payment and Horizon settlement | Testnet proven |
 | MCP SSRF protection | Local/private/metadata targets blocked by default; local opt-in | MCP tests and attached local session with explicit opt-in | Implemented/tested |
+| MCP untrusted-content boundary | Seller metadata and paid bodies returned inside structured `untrusted_seller_data` objects | MCP malicious seller-text test | Implemented/tested; prompt injection not claimed solved |
 | Exact buyer SDK | `createVeridexClient` public export | Packed tarball external consumer made real payment | Publishable; npm publication pending |
 | Seller DX | Official `@x402/hono` + `@x402/stellar` path | Demo seller and seller guide | Testnet proven |
 | Discovery buyer DX | Search -> select URL -> buyer fetch | Clean-stack discovery-driven payment | Testnet proven |
@@ -40,12 +42,15 @@ Scope: `stellar:testnet` only. No pubnet or mainnet activity was performed.
 | Upstream stock `@x402/stellar` `upto` interoperability | Upstream `@x402/stellar@2.21.0` exposes exact only; Veridex supplies the custom scheme adapter | Package inspection and explicit custom-client test | Deferred upstream convergence |
 | Provider outcomes | Signed response digest/payTo/resource-bound outcome extension | Live observations and deterministic extension tests | Implemented/tested; quality service remains early |
 | Provider policy | Attribution-aware settle/skip policy in extension | Deterministic provider-quality tests | Implemented/tested; not a mature public reputation service |
-| Provider policy modes | Seller policy engine is local and does not synchronously depend on the external indexer | Provider-quality policy tests | Implemented/tested; broader live mode matrix deferred |
-| Federation | Signed GossipSub catalog deltas, replay/order/conflict rules | Two-node relay and deterministic delta tests | Prototype; three-node deployment not proven |
+| Provider policy modes | Explicit `sell`, `sell-and-warn`, `hold` over evidence state and configurable `warnMax`/`holdMax`; indexer outage preserves payment availability | Provider-quality threshold boundary tests | Implemented/tested; broader live mode matrix deferred |
+| Federation | Signed GossipSub catalog deltas, replay/order/conflict/revoke/restore and owner/delegate authority | Live in-process three-node libp2p lifecycle plus deterministic delta tests | Prototype; local three-node transport proven, multi-operator deployment/restart persistence pending |
+| RPC failover | Ordered testnet providers, health state, bounded read failover, one-provider submission, local-hash reconciliation, disagreement failure | 6 coordinator tests including actual Stellar SDK client, pre-submit failover, ambiguous timeout, and disagreement | Implemented/tested; independent live-provider drill pending; testnet-only |
+| Concurrency harness | Real facilitator/channel-pool probe and sequential `10,25,50,100` matrix with p50/p95, throughput, retries, sequence errors, channel state | Script syntax/argument validation | Harness implemented; matrix not run in this hardening session |
 | Health/readiness | `/health`, `/ready`, Bazaar DB/P2P readiness | Clean Docker boot and restart checks | Testnet proven |
 | Migrations | Automatic Bazaar migration runner | Empty database applied four migrations; restart preserved state | Testnet proven |
 | Receipts | Signed `x402job/1`, RFC8785 claims/digests | Independent conformance verification | Testnet proven |
-| Observability | Structured request outcomes, transaction IDs, settlement counters | Live logs and `/stats` | Implemented/tested; persistent metrics/alerts not included |
+| Observability | Structured outcomes, `/stats`, and Prometheus text endpoints for payment, RPC, channel, catalog, search, provider, and P2P signals | Facilitator and Bazaar metrics endpoint tests | Implemented/tested; external Prometheus retention/alerts not included |
+| Dependency licenses | Offline direct and transitive lockfile inventory | No direct GPL/AGPL/unknown runtime dependency; LGPL `sharp`/`libvips` optional Playground artifacts flagged | Core permissive path verified; Playground distribution requires legal review |
 | TLS, backups, edge caller auth | Deployment/edge concerns are not part of local Compose | Deployment documentation; no local TLS terminator or restore drill | Deferred to deployment |
 | TLS and backups | Deployment guidance exists; no local TLS terminator or restore drill is part of Compose | Documentation only | Deployment responsibility/deferred |
 | Security boundary | SSRF, auth, rate limit, body limit, replay and binding controls | Focused tests and live unauthorized probes | Implemented/tested; no external security audit claimed |
@@ -54,4 +59,4 @@ Scope: `stellar:testnet` only. No pubnet or mainnet activity was performed.
 
 ## Classification
 
-The canonical testnet paths are reproducible and suitable for controlled design-partner use. `federation` remains a prototype, `upto` remains experimental and unaudited, upstream stock `upto` interoperability is not claimed, and the TypeScript SDK must be published before public npm onboarding can be advertised.
+The canonical 2026-09-05 testnet paths remain the latest clean-room ledger evidence. Hardening added afterward is deterministic/local evidence until a fresh clean-room run is completed. `federation` remains a prototype, `upto` remains experimental and unaudited, upstream stock `upto` interoperability is not claimed, and the TypeScript SDK must be published before public npm onboarding can be advertised.

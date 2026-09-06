@@ -56,6 +56,7 @@ import {
 } from "./capability-descriptor.js";
 import { createFacilitatorMetrics, type PrometheusRegistry } from "./metrics.js";
 import { RpcCoordinator } from "./rpc-coordinator.js";
+import { CatalogOutbox, type CatalogOutboxEvent } from "./catalog-outbox.js";
 
 /** Legacy (pre-canonical) Stellar request, served only under /legacy/*. */
 const X402StellarRequestSchema = z.object({
@@ -86,6 +87,9 @@ export interface FacilitatorServiceConfig {
   settleQueueTimeoutMs: number;
   /** Maximum best-effort delay after settlement while reporting catalog status. */
   catalogHandoffTimeoutMs: number;
+  catalogOutboxDirectory: string;
+  catalogOutboxReplayIntervalMs: number;
+  catalogOutboxBatchSize: number;
   rpcRequestTimeoutMs: number;
   rateLimit: { windowMs: number; max: number };
   /** Path to the JSON job list backing `/.well-known/x402`. */
@@ -156,6 +160,9 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
     // that a caller gets a usable answer well inside a typical HTTP timeout.
     settleQueueTimeoutMs: parseInt(process.env.SETTLE_QUEUE_TIMEOUT_MS || "30000", 10),
     catalogHandoffTimeoutMs: parseInt(process.env.CATALOG_HANDOFF_TIMEOUT_MS || "2000", 10),
+    catalogOutboxDirectory: process.env.CATALOG_OUTBOX_DIRECTORY || ".veridex/catalog-outbox",
+    catalogOutboxReplayIntervalMs: parseInt(process.env.CATALOG_OUTBOX_REPLAY_INTERVAL_MS || "5000", 10),
+    catalogOutboxBatchSize: parseInt(process.env.CATALOG_OUTBOX_BATCH_SIZE || "20", 10),
     rpcRequestTimeoutMs: parseInt(process.env.RPC_REQUEST_TIMEOUT_MS || "5000", 10),
     jobsFile: process.env.X402_JOBS_FILE || undefined,
     intendToSponsorFees: process.env.SPONSOR_FEES !== "false",
@@ -208,6 +215,9 @@ export class FacilitatorService {
   private logger: Logger;
   private metrics: PrometheusRegistry;
   private rpcCoordinator?: RpcCoordinator;
+  private catalogOutbox: CatalogOutbox;
+  private catalogOutboxInterval?: NodeJS.Timeout;
+  private catalogOutboxDraining = false;
   private httpServer?: ServerType;
   private serviceReady = false;
   private capabilities: VerifiedCapabilities;
@@ -225,6 +235,7 @@ export class FacilitatorService {
     this.config = config;
     this.logger = logger;
     this.metrics = createFacilitatorMetrics();
+    this.catalogOutbox = new CatalogOutbox(config.catalogOutboxDirectory);
     this.app = new Hono();
 
     this.channelPool = createChannelPool(config.channelPool);
@@ -369,8 +380,9 @@ export class FacilitatorService {
       }, ready ? 200 : 503);
     });
 
-    this.app.get("/stats", (c) => {
+    this.app.get("/stats", async (c) => {
       const uptime = Date.now() - this.stats.startTime;
+      const catalogOutbox = await this.catalogOutbox.stats().catch(() => ({ pending: 0, oldestAgeSeconds: 0 }));
       return c.json({
         uptime,
         // These reset on restart. Published reliability figures must come from
@@ -406,16 +418,20 @@ export class FacilitatorService {
           healthy: true,
           consecutiveFailures: 0,
         }],
+        catalogOutbox,
         timestamp: Date.now(),
       });
     });
 
-    this.app.get("/metrics", (c) => {
+    this.app.get("/metrics", async (c) => {
       const scheduler = this.x402Facilitator.getSchedulerStats();
       const channels = this.channelPool.getStats();
+      const outbox = await this.catalogOutbox.stats().catch(() => ({ pending: 0, oldestAgeSeconds: 0 }));
       this.metrics.set("veridex_channel_available", Math.max(0, scheduler.poolSize - scheduler.inFlight));
       this.metrics.set("veridex_channel_in_use", scheduler.inFlight);
       this.metrics.set("veridex_channel_quarantined", channels.error);
+      this.metrics.set("veridex_catalog_outbox_pending", outbox.pending);
+      this.metrics.set("veridex_catalog_outbox_oldest_age", outbox.oldestAgeSeconds);
       c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
       return c.body(this.metrics.render());
     });
@@ -881,18 +897,7 @@ export class FacilitatorService {
     if (!discovered) return undefined;
     const info: any = discovered.discoveryInfo;
     const resourceType = info.input?.type === "mcp" ? "mcp" : "http";
-
-    const response = await postCatalogIngest(
-      new URL("/catalog/ingest", bazaarUrl),
-      {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(process.env.BAZAAR_INTERNAL_TOKEN
-          ? { Authorization: `Bearer ${process.env.BAZAAR_INTERNAL_TOKEN}` }
-          : {}),
-      },
-      body: JSON.stringify({
+    const payload = {
         resourceUrl: discovered.resourceUrl,
         validationUrl: paymentPayload.resource?.url ?? discovered.resourceUrl,
         resourceType,
@@ -924,25 +929,62 @@ export class FacilitatorService {
             expectedResultDigest: paymentPayload.payload?.resultDigest,
           },
         } : {}),
-      }),
+      };
+    const event = await this.catalogOutbox.enqueue(result.transaction, payload);
+    return this.deliverCatalogEvent(event);
+  }
+
+  private async deliverCatalogEvent(event: CatalogOutboxEvent): Promise<string | undefined> {
+    const bazaarUrl = process.env.BAZAAR_URL;
+    if (!bazaarUrl) return undefined;
+    const attempted = await this.catalogOutbox.markAttempt(event);
+    const response = await postCatalogIngest(new URL("/catalog/ingest", bazaarUrl), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.BAZAAR_INTERNAL_TOKEN
+          ? { Authorization: `Bearer ${process.env.BAZAAR_INTERNAL_TOKEN}` }
+          : {}),
       },
-      this.config.catalogHandoffTimeoutMs,
-    );
+      body: JSON.stringify(attempted.payload),
+    }, this.config.catalogHandoffTimeoutMs);
     // The catalog reports the outcome in this header on both acceptance and
     // rejection, so read it before deciding whether this was an error.
     const extensionResponses = response.headers.get("EXTENSION-RESPONSES") ?? undefined;
 
-    if (!response.ok && !extensionResponses) {
+    if (response.status >= 500 || (!response.ok && !extensionResponses)) {
       throw new Error(`Bazaar ingestion returned HTTP ${response.status}`);
     }
+    await this.catalogOutbox.acknowledge(event.id);
     if (!response.ok) {
       this.logger.info("catalog rejected the listing", {
         status: response.status,
-        transaction: result.transaction,
+        transaction: event.id,
       });
     }
 
     return extensionResponses;
+  }
+
+  async drainCatalogOutbox(): Promise<void> {
+    if (this.catalogOutboxDraining || !process.env.BAZAAR_URL) return;
+    this.catalogOutboxDraining = true;
+    try {
+      const events = await this.catalogOutbox.list(this.config.catalogOutboxBatchSize);
+      for (const event of events) {
+        try {
+          await this.deliverCatalogEvent(event);
+        } catch (error) {
+          this.logger.warn("catalog outbox event retained", {
+            transaction: event.id,
+            attempts: event.attempts + 1,
+            detail: errorDetail(error),
+          });
+        }
+      }
+    } finally {
+      this.catalogOutboxDraining = false;
+    }
   }
 
   /**
@@ -1059,6 +1101,14 @@ export class FacilitatorService {
         hostname: this.config.host,
       });
       this.serviceReady = true;
+      if (this.config.catalogOutboxReplayIntervalMs > 0) {
+        this.catalogOutboxInterval = setInterval(() => {
+          this.drainCatalogOutbox().catch((error) =>
+            this.logger.warn("catalog outbox replay failed", { detail: errorDetail(error) }),
+          );
+        }, this.config.catalogOutboxReplayIntervalMs);
+      }
+      void this.drainCatalogOutbox();
     } catch (error) {
       await this.rpcCoordinator?.stop();
       this.rpcCoordinator = undefined;
@@ -1075,6 +1125,10 @@ export class FacilitatorService {
 
   async stop(): Promise<void> {
     this.serviceReady = false;
+    if (this.catalogOutboxInterval) {
+      clearInterval(this.catalogOutboxInterval);
+      this.catalogOutboxInterval = undefined;
+    }
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) =>
         this.httpServer!.close((error?: Error) => (error ? reject(error) : resolve())),

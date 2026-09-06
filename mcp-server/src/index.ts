@@ -19,10 +19,12 @@ import {
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { x402Client } from "@x402/core/client";
-import { x402HTTPClient } from "@x402/core/http";
-import { createEd25519Signer } from "@x402/stellar";
-import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  encodePaymentSignatureHeader,
+} from "@x402/core/http";
+import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { validateSafeResourceUrl } from "./security.js";
 
 /**
@@ -38,7 +40,6 @@ export interface MCPServerConfig {
   // Stellar configuration
   stellar: {
     network: "pubnet" | "testnet";
-    clientSecretKey?: string;
     defaultMaxSpendAmount?: string;
   };
 }
@@ -56,7 +57,6 @@ export function getConfig(): MCPServerConfig {
     facilitatorUrl: process.env.FACILITATOR_URL || "http://localhost:3002",
     stellar: {
       network,
-      clientSecretKey: process.env.STELLAR_CLIENT_SECRET_KEY,
       defaultMaxSpendAmount: process.env.MCP_MAX_SPEND_AMOUNT_STROOPS || "10000000",
     },
   };
@@ -79,6 +79,21 @@ export const PayResourceSchema = z.object({
   method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
   params: z.record(z.any()).optional(),
   maxAmount: z.string().optional().describe("Maximum amount allowed in atomic token units"),
+  paymentPayload: z.object({
+    x402Version: z.number(),
+    resource: z.record(z.any()).optional(),
+    accepted: z.object({
+      scheme: z.string(),
+      network: z.string(),
+      asset: z.string(),
+      amount: z.string().regex(/^(0|[1-9][0-9]*)$/),
+      payTo: z.string(),
+      maxTimeoutSeconds: z.number(),
+      extra: z.record(z.any()),
+    }),
+    payload: z.record(z.any()),
+    extensions: z.record(z.any()).optional(),
+  }).optional().describe("Payment payload signed by the client wallet from the challenge returned by phase one"),
 });
 
 /**
@@ -140,8 +155,8 @@ export class VeridexMCPServer {
         {
           name: "pay_resource",
           description:
-            "Execute x402 Stellar payment to access a resource. " +
-            "Creates payment transaction, submits to facilitator, and returns access authorization.",
+            "Prepare or submit an x402 Stellar payment without giving this MCP server a signing key. " +
+            "First call returns a bounded challenge; the client wallet signs it and calls again with paymentPayload.",
           inputSchema: {
             type: "object",
             properties: {
@@ -161,6 +176,10 @@ export class VeridexMCPServer {
               maxAmount: {
                 type: "string",
                 description: "Maximum amount allowed in atomic token units",
+              },
+              paymentPayload: {
+                type: "object",
+                description: "Externally signed x402 payment payload returned by the client wallet",
               },
             },
             required: ["resourceUrl"],
@@ -269,17 +288,10 @@ export class VeridexMCPServer {
   async handlePayResource(args: unknown): Promise<any> {
     const params = PayResourceSchema.parse(args);
 
-    if (!this.config.stellar.clientSecretKey) {
-      throw new Error("STELLAR_CLIENT_SECRET_KEY not configured");
-    }
-
     // SSRF Validation: validate the resource URL before making any network calls
     const requestUrl = validateSafeResourceUrl(params.resourceUrl);
 
     const network = this.config.stellar.network === "pubnet" ? "stellar:pubnet" : "stellar:testnet";
-    const signer = createEd25519Signer(this.config.stellar.clientSecretKey, network);
-    const coreClient = new x402Client().register("stellar:*", new ExactStellarScheme(signer));
-    const httpClient = new x402HTTPClient(coreClient);
 
     const requestInit: RequestInit = { method: params.method };
     if (params.params) {
@@ -311,11 +323,7 @@ export class VeridexMCPServer {
       };
     }
 
-    const challengeBody = await initialResponse.json().catch(() => undefined);
-    const paymentRequired = httpClient.getPaymentRequiredResponse(
-      (name) => initialResponse.headers.get(name),
-      challengeBody
-    );
+    const paymentRequired = readPaymentRequired(initialResponse);
 
     // Enforce robust spend ceiling: filter accepts down strictly to authorized requirements
     const effectiveMaxAmount = BigInt(
@@ -324,7 +332,10 @@ export class VeridexMCPServer {
 
     const qualifiedRequirements = paymentRequired.accepts.filter(
       (requirement) =>
-        requirement.network === network && BigInt(requirement.amount) <= effectiveMaxAmount
+        requirement.network === network &&
+        requirement.scheme === "exact" &&
+        /^(0|[1-9][0-9]*)$/.test(requirement.amount) &&
+        BigInt(requirement.amount) <= effectiveMaxAmount
     );
 
     if (qualifiedRequirements.length === 0) {
@@ -333,31 +344,41 @@ export class VeridexMCPServer {
       );
     }
 
-    // Filter paymentRequired so createPaymentPayload cannot select an expensive alternative requirement
-    const cappedPaymentRequired = {
-      ...paymentRequired,
-      accepts: qualifiedRequirements,
-    };
-
-    const paymentPayload = await httpClient.createPaymentPayload(cappedPaymentRequired);
-
-    // Final assert: ensure signed payment payload is strictly within ceiling
-    if (BigInt(paymentPayload.accepted.amount) > effectiveMaxAmount) {
-      throw new Error(
-        `Constructed payment payload amount (${paymentPayload.accepted.amount}) exceeds authorized ceiling (${effectiveMaxAmount})`
-      );
+    if (!params.paymentPayload) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ok: false,
+            action: "sign_payment",
+            retryable: false,
+            signingLocation: "client_wallet",
+            paymentRequired: {
+              ...paymentRequired,
+              accepts: qualifiedRequirements,
+            },
+          }),
+        }],
+      };
     }
+
+    const paymentPayload = params.paymentPayload as PaymentPayload;
+    const accepted = qualifiedRequirements.find((requirement) => paymentTermsEqual(requirement, paymentPayload.accepted));
+    if (!accepted) throw new Error("Externally signed payment payload does not match the current bounded challenge");
+    if (BigInt(paymentPayload.accepted.amount) > effectiveMaxAmount) throw new Error("Externally signed payment exceeds the authorized spend ceiling");
 
     const paidResponse = await fetch(requestUrl, {
       ...requestInit,
       headers: {
         ...(requestInit.headers || {}),
-        ...httpClient.encodePaymentSignatureHeader(paymentPayload),
+        "PAYMENT-SIGNATURE": encodePaymentSignatureHeader(paymentPayload),
       },
     });
     const responseBody = await paidResponse.text();
     if (!paidResponse.ok) throw new Error(`Paid resource request failed (${paidResponse.status}): ${responseBody}`);
-    const result = httpClient.getPaymentSettleResponse((name) => paidResponse.headers.get(name));
+    const paymentResponse = paidResponse.headers.get("payment-response");
+    if (!paymentResponse) throw new Error("Paid resource response did not include PAYMENT-RESPONSE settlement evidence");
+    const result = decodePaymentResponseHeader(paymentResponse);
 
     return {
       content: [
@@ -391,6 +412,25 @@ export class VeridexMCPServer {
     console.error(`Facilitator: ${this.config.facilitatorUrl}`);
     console.error(`Network: ${this.config.stellar.network}`);
   }
+}
+
+function readPaymentRequired(response: Response): PaymentRequired {
+  const encoded = response.headers.get("payment-required");
+  if (!encoded) throw new Error("Resource returned HTTP 402 without PAYMENT-REQUIRED");
+  try {
+    return decodePaymentRequiredHeader(encoded);
+  } catch {
+    throw new Error("Resource returned a malformed PAYMENT-REQUIRED header");
+  }
+}
+
+function paymentTermsEqual(left: PaymentRequirements, right: PaymentRequirements): boolean {
+  return left.scheme === right.scheme &&
+    left.network === right.network &&
+    left.asset === right.asset &&
+    left.amount === right.amount &&
+    left.payTo === right.payTo &&
+    left.maxTimeoutSeconds === right.maxTimeoutSeconds;
 }
 
 // Start only when run as a program. Importing this module for tests or to
