@@ -10,6 +10,8 @@ import { WirePanel } from "@/components/WirePanel";
 import { ReceiptPanel } from "@/components/ReceiptPanel";
 import { RefusalsPanel } from "@/components/RefusalsPanel";
 import { EvidencePanel } from "@/components/EvidencePanel";
+import { DiscoveryPanel } from "@/components/DiscoveryPanel";
+import { PolicyPanel } from "@/components/PolicyPanel";
 
 const TAB_DETAILS: Record<TabId, { number: string; label: string; description: string }> = {
   flow: {
@@ -17,23 +19,33 @@ const TAB_DETAILS: Record<TabId, { number: string; label: string; description: s
     label: "Payment flow",
     description: "Execute a complete x402 payment against Stellar testnet.",
   },
-  wire: {
+  discovery: {
     number: "02",
+    label: "Bazaar discovery",
+    description: "Search the live catalog and inspect payment-bound resource identity.",
+  },
+  policy: {
+    number: "03",
+    label: "Agent policy",
+    description: "Approve a bounded payment and reject an over-budget request before signing.",
+  },
+  wire: {
+    number: "04",
     label: "Wire protocol",
     description: "Inspect the payloads and authorization entries exchanged on the wire.",
   },
   receipt: {
-    number: "03",
+    number: "05",
     label: "Receipt verification",
     description: "Inspect signed claims and run local tamper checks in real time.",
   },
   refusals: {
-    number: "04",
+    number: "06",
     label: "Attack lab",
     description: "Challenge the facilitator with intentionally hostile payloads.",
   },
   evidence: {
-    number: "05",
+    number: "07",
     label: "Test evidence",
     description: "Review the latest wire-level conformance artifact.",
   },
@@ -189,6 +201,10 @@ export default function PlaygroundHome() {
               )}
 
               {activeTab === "wire" && <WirePanel config={config} run={run} />}
+
+              {activeTab === "discovery" && <DiscoveryPanel config={config} />}
+
+              {activeTab === "policy" && <PolicyPanel config={config} wallet={wallet} />}
 
               {activeTab === "receipt" && (
                 <ReceiptPanel config={config} wallet={wallet} run={run} />

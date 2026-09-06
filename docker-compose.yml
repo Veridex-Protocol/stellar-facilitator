@@ -101,6 +101,7 @@ services:
       STELLAR_NETWORK: testnet
       FACILITATOR_PUBLIC_KEY: ${FACILITATOR_PUBLIC_KEY}
       FACILITATOR_SECRET_KEY: ${FACILITATOR_SECRET_KEY}
+      FACILITATOR_INTERNAL_TOKEN: ${FACILITATOR_INTERNAL_TOKEN:-${BAZAAR_INTERNAL_TOKEN}}
 
       # Public origin advertised in /.well-known/x402. Required: the descriptor
       # states where clients reach this service, which a bind address cannot.

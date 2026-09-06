@@ -6,6 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 const sourcePath = new URL("../error-registry.json", import.meta.url);
 const targets = [
   new URL("../sdk-typescript/src/error-registry.json", import.meta.url),
+  new URL("../facilitator-service/src/error-registry.json", import.meta.url),
   new URL("../bazaar-service/src/error-registry.json", import.meta.url),
   new URL("../mcp-server/src/error-registry.json", import.meta.url),
 ];

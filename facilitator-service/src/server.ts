@@ -57,6 +57,7 @@ import {
 import { createFacilitatorMetrics, type PrometheusRegistry } from "./metrics.js";
 import { RpcCoordinator } from "./rpc-coordinator.js";
 import { CatalogOutbox, type CatalogOutboxEvent } from "./catalog-outbox.js";
+import { publicError } from "./errors.js";
 
 /** Legacy (pre-canonical) Stellar request, served only under /legacy/*. */
 const X402StellarRequestSchema = z.object({
@@ -412,6 +413,7 @@ export class FacilitatorService {
         // accounts. A rising 'queued' or any 'totalRejected' means the pool is
         // too small for the offered load.
         settlementConcurrency: this.x402Facilitator.getSchedulerStats(),
+        quarantinedSigners: this.x402Facilitator.getQuarantinedSigners(),
         channels: this.channelPool.getStats(),
         rpcProviders: this.rpcCoordinator?.getHealth() ?? [{
           url: this.config.stellar.rpcUrl,
@@ -429,7 +431,7 @@ export class FacilitatorService {
       const outbox = await this.catalogOutbox.stats().catch(() => ({ pending: 0, oldestAgeSeconds: 0 }));
       this.metrics.set("veridex_channel_available", Math.max(0, scheduler.poolSize - scheduler.inFlight));
       this.metrics.set("veridex_channel_in_use", scheduler.inFlight);
-      this.metrics.set("veridex_channel_quarantined", channels.error);
+      this.metrics.set("veridex_channel_quarantined", scheduler.quarantined + channels.error);
       this.metrics.set("veridex_catalog_outbox_pending", outbox.pending);
       this.metrics.set("veridex_catalog_outbox_oldest_age", outbox.oldestAgeSeconds);
       c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
@@ -437,6 +439,18 @@ export class FacilitatorService {
     });
 
     this.app.get("/supported", (c) => c.json(this.buildSupported()));
+
+    this.app.post("/internal/channels/:address/recover", async (c) => {
+      if (!process.env.FACILITATOR_INTERNAL_TOKEN || c.req.header("Authorization") !== `Bearer ${process.env.FACILITATOR_INTERNAL_TOKEN}`) {
+        return c.json(publicError("unauthorized"), 401);
+      }
+      const address = c.req.param("address");
+      if (!this.x402Facilitator.recoverSigner(address)) {
+        return c.json(publicError("not_found", { reason: "The signer is not quarantined." }), 404);
+      }
+      this.logger.info("settlement signer recovered after reconciliation", { address });
+      return c.json({ status: "recovered", address }, 200);
+    });
 
     this.app.get("/.well-known/x402", (c) =>
       c.json(
@@ -465,6 +479,12 @@ export class FacilitatorService {
           isValid: false,
           invalidReason: LOCAL_REASONS.INVALID_REQUEST_BODY,
           invalidMessage: invalidRequest,
+          extra: {
+            veridexError: publicError("invalid_request", {
+              reason: invalidRequest,
+              details: { protocolCode: LOCAL_REASONS.INVALID_REQUEST_BODY },
+            }),
+          },
         };
         this.logger.outcome({
           endpoint: "/verify",
@@ -553,6 +573,12 @@ export class FacilitatorService {
           network: (body as any)?.paymentRequirements?.network ?? `stellar:${this.config.stellar.network}`,
           errorReason: LOCAL_REASONS.INVALID_REQUEST_BODY,
           errorMessage: invalidRequest,
+          extra: {
+            veridexError: publicError("invalid_request", {
+              reason: invalidRequest,
+              details: { protocolCode: LOCAL_REASONS.INVALID_REQUEST_BODY },
+            }),
+          },
         };
         this.logger.outcome({
           endpoint: "/settle",
@@ -711,10 +737,18 @@ export class FacilitatorService {
   private withVerifyReason(response: VerifyResponse): VerifyResponse {
     if (response.isValid) return response;
     const invalidReason = response.invalidReason?.trim() || LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR;
+    const invalidMessage = response.invalidMessage?.trim() || describeReason(invalidReason);
     return {
       ...response,
       invalidReason,
-      invalidMessage: response.invalidMessage?.trim() || describeReason(invalidReason),
+      invalidMessage,
+      extra: {
+        ...response.extra,
+        veridexError: publicError(classifyPublicReason(invalidReason), {
+          reason: invalidMessage,
+          details: { protocolCode: invalidReason },
+        }),
+      },
     };
   }
 
@@ -727,10 +761,18 @@ export class FacilitatorService {
   private withSettleReason(response: SettleResponse): SettleResponse {
     if (response.success) return response;
     const errorReason = response.errorReason?.trim() || LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR;
+    const errorMessage = response.errorMessage?.trim() || describeReason(errorReason);
     return {
       ...response,
       errorReason,
-      errorMessage: response.errorMessage?.trim() || describeReason(errorReason),
+      errorMessage,
+      extra: {
+        ...response.extra,
+        veridexError: publicError(classifyPublicReason(errorReason), {
+          reason: errorMessage,
+          details: { protocolCode: errorReason },
+        }),
+      },
     };
   }
 
@@ -1164,6 +1206,15 @@ export async function postCatalogIngest(
     ...init,
     signal: AbortSignal.timeout(timeoutMs),
   });
+}
+
+function classifyPublicReason(reason: string) {
+  if (reason === LOCAL_REASONS.INVALID_REQUEST_BODY) return "invalid_request" as const;
+  if (reason === LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE || reason.includes("replay_check_failed")) return "rpc_unavailable" as const;
+  if (reason === LOCAL_REASONS.SETTLEMENT_CAPACITY_EXCEEDED) return "resource_unavailable" as const;
+  if (reason === LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR || reason.startsWith("unexpected_")) return "internal_error" as const;
+  if (reason.includes("unsupported_scheme") || reason === LOCAL_REASONS.UNSUPPORTED_SCHEME_OR_NETWORK) return "unsupported_payment_scheme" as const;
+  return "payment_rejected" as const;
 }
 
 /**

@@ -1,9 +1,9 @@
 "use client";
 
 import React from "react";
-import { Zap, Search, FileCheck, ShieldAlert, BarChart3, Lock, ExternalLink } from "lucide-react";
+import { Zap, Search, FileCheck, ShieldAlert, BarChart3, Lock, ExternalLink, ListFilter, ShieldCheck } from "lucide-react";
 
-export type TabId = "flow" | "wire" | "receipt" | "refusals" | "evidence";
+export type TabId = "flow" | "discovery" | "policy" | "wire" | "receipt" | "refusals" | "evidence";
 
 interface TabItem {
   id: TabId;
@@ -23,22 +23,36 @@ const TABS: TabItem[] = [
     icon: <Zap className="h-4 w-4" />,
   },
   {
-    id: "wire",
+    id: "discovery",
     number: "02",
+    label: "Bazaar Discovery",
+    blurb: "Search and inspect payment identity",
+    icon: <ListFilter className="h-4 w-4" />,
+  },
+  {
+    id: "policy",
+    number: "03",
+    label: "Agent Policy",
+    blurb: "Approve or block before signing",
+    icon: <ShieldCheck className="h-4 w-4" />,
+  },
+  {
+    id: "wire",
+    number: "04",
     label: "Wire Protocol",
     blurb: "Decode HTTP and Soroban auth",
     icon: <Search className="h-4 w-4" />,
   },
   {
     id: "receipt",
-    number: "03",
+    number: "05",
     label: "Receipt & Verify",
     blurb: "Inspect signatures and tampering",
     icon: <FileCheck className="h-4 w-4" />,
   },
   {
     id: "refusals",
-    number: "04",
+    number: "06",
     label: "Attack Lab",
     blurb: "Probe deterministic refusals",
     icon: <ShieldAlert className="h-4 w-4" />,
@@ -46,7 +60,7 @@ const TABS: TabItem[] = [
   },
   {
     id: "evidence",
-    number: "05",
+    number: "07",
     label: "Test Evidence",
     blurb: "Read the conformance report",
     icon: <BarChart3 className="h-4 w-4" />,
@@ -69,14 +83,14 @@ export function Sidebar({ activeTab, setActiveTab, hasRun }: SidebarProps) {
             <p className="mt-1 text-xs text-zinc-500">Protocol inspection suite</p>
           </div>
           <span className="rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] text-zinc-500">
-            5 modules
+            7 modules
           </span>
         </div>
 
         <nav className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
           {TABS.map((tab) => {
             const active = activeTab === tab.id;
-            const locked = tab.id !== "flow" && tab.id !== "evidence" && !hasRun;
+            const locked = tab.id !== "flow" && tab.id !== "discovery" && tab.id !== "policy" && tab.id !== "evidence" && !hasRun;
 
             return (
               <button

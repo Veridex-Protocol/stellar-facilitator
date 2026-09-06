@@ -195,4 +195,37 @@ describe("settlement scheduler", () => {
     await Promise.all([blocker, waiter]);
     expect(scheduler.getStats().maxObservedWaitMs).toBeGreaterThan(0);
   });
+
+  it("quarantines the exact signer used by an uncertain post-submit result", async () => {
+    const scheduler = new SettleScheduler([A, B], 50);
+    const result = await scheduler.withSigner(
+      async (address) => ({ success: false, transaction: "a".repeat(64), address }),
+      undefined,
+      (settlement) => !settlement.success && Boolean(settlement.transaction),
+    );
+
+    expect(scheduler.getQuarantinedSigners()).toEqual([result.address]);
+    expect(scheduler.getStats()).toMatchObject({ poolSize: 2, available: 1, quarantined: 1, inFlight: 0 });
+  });
+
+  it("releases a signer after a definitive pre-submit failure", async () => {
+    const scheduler = new SettleScheduler([A], 50);
+    await scheduler.withSigner(
+      async () => ({ success: false, transaction: "" }),
+      undefined,
+      (settlement) => !settlement.success && Boolean(settlement.transaction),
+    );
+
+    expect(scheduler.getStats()).toMatchObject({ available: 1, quarantined: 0 });
+  });
+
+  it("requires explicit recovery before a quarantined signer can settle again", async () => {
+    const scheduler = new SettleScheduler([A], 20);
+    await scheduler.withSigner(async () => "uncertain", A, () => true);
+
+    await expect(scheduler.withSigner(async () => "never", A)).rejects.toThrow(/quarantined/);
+    expect(scheduler.recoverSigner(A)).toBe(true);
+    await expect(scheduler.withSigner(async () => "recovered", A)).resolves.toBe("recovered");
+    expect(scheduler.recoverSigner(A)).toBe(false);
+  });
 });

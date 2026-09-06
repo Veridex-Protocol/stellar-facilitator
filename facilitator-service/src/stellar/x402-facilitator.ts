@@ -209,9 +209,14 @@ export class X402Facilitator {
     requirements: PaymentRequirements,
   ): Promise<SettleResponse> {
     const scheme = requirements?.scheme || payload?.accepted?.scheme;
+    const uncertain = (result: SettleResponse) => !result.success && Boolean(result.transaction);
 
     if (scheme === "exact") {
-      return this.scheduler.withSigner(() => this.exactScheme.settle(payload, requirements));
+      return this.scheduler.withSigner(
+        () => this.exactScheme.settle(payload, requirements),
+        undefined,
+        uncertain,
+      );
     }
 
     if (scheme === "upto") {
@@ -230,6 +235,7 @@ export class X402Facilitator {
       return this.scheduler.withSigner(
         () => this.uptoScheme!.settle(payload, requirements),
         preferredSigner,
+        uncertain,
       );
     }
 
@@ -244,6 +250,14 @@ export class X402Facilitator {
   /** Settlement concurrency counters, for /stats. */
   getSchedulerStats() {
     return this.scheduler.getStats();
+  }
+
+  getQuarantinedSigners(): string[] {
+    return this.scheduler.getQuarantinedSigners();
+  }
+
+  recoverSigner(address: string): boolean {
+    return this.scheduler.recoverSigner(address);
   }
 
   /**

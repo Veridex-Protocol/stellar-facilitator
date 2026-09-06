@@ -40,6 +40,8 @@ export const settleContext = new AsyncLocalStorage<{ address: string }>();
 
 export interface SignerLease {
   address: string;
+  /** Prevents reuse until an operator/reconciler explicitly recovers it. */
+  quarantine(): void;
   /** Returns the signer to the pool. Must run exactly once, in a finally. */
   release(): void;
 }
@@ -65,7 +67,9 @@ interface Waiter {
 
 export interface SettleSchedulerStats {
   poolSize: number;
+  available: number;
   inFlight: number;
+  quarantined: number;
   queued: number;
   /** Requests that waited for a signer rather than getting one immediately. */
   totalQueued: number;
@@ -77,6 +81,7 @@ export interface SettleSchedulerStats {
 export class SettleScheduler {
   private idle: string[];
   private readonly busy = new Set<string>();
+  private readonly quarantined = new Set<string>();
   private readonly waiters: Waiter[] = [];
   private stats = { totalQueued: 0, totalRejected: 0, maxObservedWaitMs: 0 };
 
@@ -93,7 +98,7 @@ export class SettleScheduler {
 
   /** Signer addresses this scheduler manages. */
   get poolSize(): number {
-    return this.idle.length + this.busy.size;
+    return this.idle.length + this.busy.size + this.quarantined.size;
   }
 
   /**
@@ -107,7 +112,10 @@ export class SettleScheduler {
     if (this.busy.size > 0) {
       throw new Error("Cannot change the signer set while settlements are in flight");
     }
-    this.idle = [...addresses];
+    for (const address of this.quarantined) {
+      if (!addresses.includes(address)) this.quarantined.delete(address);
+    }
+    this.idle = addresses.filter((address) => !this.quarantined.has(address));
   }
 
   /**
@@ -119,6 +127,9 @@ export class SettleScheduler {
   async acquire(preferredAddress?: string): Promise<SignerLease> {
     if (this.poolSize === 0) {
       throw new Error("No settlement signers are configured");
+    }
+    if (preferredAddress && this.quarantined.has(preferredAddress)) {
+      throw new Error(`Settlement signer is quarantined pending reconciliation: ${preferredAddress}`);
     }
     if (preferredAddress && !this.idle.includes(preferredAddress) && !this.busy.has(preferredAddress)) {
       throw new Error(`Settlement signer is not configured: ${preferredAddress}`);
@@ -174,14 +185,19 @@ export class SettleScheduler {
    */
   private leaseFor(address: string): SignerLease {
     let released = false;
+    let quarantined = false;
     return {
       address,
+      quarantine: () => {
+        quarantined = true;
+        this.quarantined.add(address);
+      },
       release: () => {
         if (released) return;
         released = true;
 
         this.busy.delete(address);
-        this.idle.push(address);
+  if (!quarantined) this.idle.push(address);
         this.processQueue();
       },
     };
@@ -212,13 +228,30 @@ export class SettleScheduler {
    * @returns Whatever the operation returns
    * @throws {SignerBusyError} When no signer becomes free within the timeout
    */
-  async withSigner<T>(operation: (address: string) => Promise<T>, preferredAddress?: string): Promise<T> {
+  async withSigner<T>(
+    operation: (address: string) => Promise<T>,
+    preferredAddress?: string,
+    quarantineWhen?: (result: T) => boolean,
+  ): Promise<T> {
     const lease = await this.acquire(preferredAddress);
     try {
-      return await settleContext.run({ address: lease.address }, () => operation(lease.address));
+      const result = await settleContext.run({ address: lease.address }, () => operation(lease.address));
+      if (quarantineWhen?.(result)) lease.quarantine();
+      return result;
     } finally {
       lease.release();
     }
+  }
+
+  recoverSigner(address: string): boolean {
+    if (!this.quarantined.delete(address)) return false;
+    if (!this.idle.includes(address) && !this.busy.has(address)) this.idle.push(address);
+    this.processQueue();
+    return true;
+  }
+
+  getQuarantinedSigners(): string[] {
+    return [...this.quarantined];
   }
 
   /**
@@ -246,7 +279,9 @@ export class SettleScheduler {
   getStats(): SettleSchedulerStats {
     return {
       poolSize: this.poolSize,
+      available: this.idle.length,
       inFlight: this.busy.size,
+      quarantined: this.quarantined.size,
       queued: this.waiters.length,
       ...this.stats,
     };
