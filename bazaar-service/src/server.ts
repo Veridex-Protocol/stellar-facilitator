@@ -424,6 +424,7 @@ export class BazaarService {
     this.app.get("/metrics", async (c) => {
       const p2pStats = this.p2pNode.getStats();
       this.metrics.set("veridex_p2p_messages_total", p2pStats.messagesReceived);
+      this.metrics.set("veridex_p2p_invalid_total", Math.max(0, p2pStats.messagesSuppressed - p2pStats.replaysRejected));
       this.metrics.set("veridex_p2p_replays_total", p2pStats.replaysRejected);
       try {
         const result = await this.db.query<{
@@ -907,9 +908,9 @@ export class BazaarService {
     this.serviceReady = true;
 
     this.livenessInterval = setInterval(() => {
-      this.telemetryTracker.pruneOfflineNodes().catch((error) =>
-        console.error("[Bazaar Service] Liveness evaluation failed:", error)
-      );
+      this.telemetryTracker.pruneOfflineNodes()
+        .then((changed) => this.metrics.increment("veridex_liveness_changes_total", changed))
+        .catch((error) => console.error("[Bazaar Service] Liveness evaluation failed:", error));
     }, 30_000);
 
     if (this.config.catalogRevalidationIntervalMs > 0) {

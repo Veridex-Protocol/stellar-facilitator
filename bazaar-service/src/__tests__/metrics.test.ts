@@ -44,7 +44,9 @@ describe("Bazaar Prometheus metrics", () => {
       "veridex_provider_observations_total",
       "veridex_provider_faults_total",
       "veridex_p2p_messages_total",
+      "veridex_p2p_invalid_total",
       "veridex_p2p_replays_total",
+      "veridex_liveness_changes_total",
     ]) {
       expect(text).toContain(`# HELP ${name} `);
     }

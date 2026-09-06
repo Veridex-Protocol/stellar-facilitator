@@ -73,7 +73,7 @@ describe("Search Evaluation Metrics & Regression Gate", () => {
     });
 
     expect(results.datasetSize).toBe(10);
-    expect(results.queryCount).toBe(11);
+    expect(results.queryCount).toBe(50);
     expect(new Set(results.queryResults.map(({ category }) => category))).toEqual(new Set([
       "exact",
       "paraphrase",

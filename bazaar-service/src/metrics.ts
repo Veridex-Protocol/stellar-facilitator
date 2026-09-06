@@ -87,7 +87,9 @@ export function createBazaarMetrics(): BazaarMetrics {
   metrics.define("veridex_provider_observations_total", "Verified provider observations accepted by this Bazaar.", "counter");
   metrics.define("veridex_provider_faults_total", "Accepted provider observations attributed to provider fault.", "counter");
   metrics.define("veridex_p2p_messages_total", "P2P messages received by this Bazaar process.", "counter");
+  metrics.define("veridex_p2p_invalid_total", "P2P messages suppressed as invalid, stale, unauthorized, or unsupported.", "counter");
   metrics.define("veridex_p2p_replays_total", "P2P messages rejected specifically as replays.", "counter");
+  metrics.define("veridex_liveness_changes_total", "Resource liveness state transitions applied by the periodic evaluator.", "counter");
   return metrics;
 }
 
