@@ -12,7 +12,7 @@ import {
   calculateRecallAtK,
   calculatePrecisionAtK,
 } from "../search/eval/metrics.js";
-import { runSearchEvaluation } from "../search/eval/runner.js";
+import { rankLexicalDocuments, runSearchEvaluation } from "../search/eval/runner.js";
 
 describe("Search Evaluation Metrics & Regression Gate", () => {
   it("calculates DCG and IDCG correctly", () => {
@@ -66,16 +66,33 @@ describe("Search Evaluation Metrics & Regression Gate", () => {
     const results = await runSearchEvaluation();
 
     console.log("[Search Eval Benchmark Results]", {
-      meanNDCG5: results.meanNDCG5.toFixed(3),
-      meanNDCG10: results.meanNDCG10.toFixed(3),
-      meanMRR: results.meanMRR.toFixed(3),
-      meanRecall5: results.meanRecall5.toFixed(3),
-      meanPrecision5: results.meanPrecision5.toFixed(3),
+      datasetSize: results.datasetSize,
+      queryCount: results.queryCount,
+      lexicalBaseline: results.lexicalBaseline,
+      currentHybrid: results.currentHybrid,
     });
 
-    // CI Regression Quality Gates
-    expect(results.meanNDCG10).toBeGreaterThanOrEqual(0.80);
-    expect(results.meanMRR).toBeGreaterThanOrEqual(0.80);
-    expect(results.meanRecall5).toBeGreaterThanOrEqual(0.70);
+    expect(results.datasetSize).toBe(10);
+    expect(results.queryCount).toBe(11);
+    expect(new Set(results.queryResults.map(({ category }) => category))).toEqual(new Set([
+      "exact",
+      "paraphrase",
+      "zero_lexical_overlap",
+      "ambiguous",
+      "no_result",
+      "mcp",
+      "filtered",
+    ]));
+    expect(results.currentHybrid.ndcg10).toBeGreaterThanOrEqual(0.75);
+    expect(results.currentHybrid.mrr).toBeGreaterThanOrEqual(0.75);
+    expect(results.currentHybrid.recall5).toBeGreaterThanOrEqual(0.70);
+    expect(results.currentHybrid.noResultAccuracy).toBe(1);
+    expect(results.lexicalBaseline.noResultAccuracy).toBe(1);
+    expect(results.currentHybrid.latencyMs.p95).toBeGreaterThanOrEqual(results.currentHybrid.latencyMs.p50);
+    expect(results.lexicalBaseline.latencyMs.p95).toBeGreaterThanOrEqual(results.lexicalBaseline.latencyMs.p50);
+  });
+
+  it("returns no lexical result when a query has zero token overlap", () => {
+    expect(rankLexicalDocuments("quantum livestock genomics")).toEqual([]);
   });
 });

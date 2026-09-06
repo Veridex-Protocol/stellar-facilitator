@@ -69,6 +69,12 @@ export interface BazaarServiceConfig {
   providerQualityAuthorizedSigners?: string[];
   providerAggregateAuthorizedIssuers?: string[];
   providerAggregateRecomputeQueueLimit?: number;
+  catalogRevalidationIntervalMs: number;
+  catalogRevalidationStaleMs: number;
+  catalogRevalidationTimeoutMs: number;
+  catalogRevalidationBatchSize: number;
+  catalogRevalidationAllowedOrigins: string[];
+  catalogRevalidationTransportOriginMap: Record<string, string>;
 }
 
 /**
@@ -109,6 +115,12 @@ export function getDefaultConfig(): BazaarServiceConfig {
     providerQualityAuthorizedSigners: parseCsv(process.env.PROVIDER_QUALITY_AUTHORIZED_SIGNERS),
     providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
     providerAggregateRecomputeQueueLimit: parseInt(process.env.PROVIDER_AGGREGATE_RECOMPUTE_QUEUE_LIMIT || "256", 10),
+    catalogRevalidationIntervalMs: parseInt(process.env.CATALOG_REVALIDATION_INTERVAL_MS || "300000", 10),
+    catalogRevalidationStaleMs: parseInt(process.env.CATALOG_REVALIDATION_STALE_MS || "3600000", 10),
+    catalogRevalidationTimeoutMs: parseInt(process.env.CATALOG_REVALIDATION_TIMEOUT_MS || "5000", 10),
+    catalogRevalidationBatchSize: parseInt(process.env.CATALOG_REVALIDATION_BATCH_SIZE || "20", 10),
+    catalogRevalidationAllowedOrigins: parseCsv(process.env.CATALOG_REVALIDATION_ALLOWED_ORIGINS) ?? [],
+    catalogRevalidationTransportOriginMap: parseStringMap(process.env.CATALOG_REVALIDATION_TRANSPORT_ORIGIN_MAP),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
     sorobanRpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org",
     // Required, not optional. The previous guard read
@@ -154,6 +166,20 @@ function parseCsv(value?: string): string[] | undefined {
   if (!value) return undefined;
   const values = value.split(",").map((item) => item.trim()).filter(Boolean);
   return values.length > 0 ? values : undefined;
+}
+
+function parseStringMap(value?: string): Record<string, string> {
+  if (!value) return {};
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("catalog revalidation transport origin map must be a JSON object");
+  }
+  for (const [key, entry] of Object.entries(parsed)) {
+    if (typeof entry !== "string") {
+      throw new Error(`catalog revalidation transport mapping '${key}' must be a string`);
+    }
+  }
+  return parsed as Record<string, string>;
 }
 
 /**
@@ -244,6 +270,7 @@ export class BazaarService {
   private httpServer?: ServerType;
   private livenessInterval?: NodeJS.Timeout;
   private heartbeatInterval?: NodeJS.Timeout;
+  private catalogRevalidationInterval?: NodeJS.Timeout;
   private serviceReady = false;
   private stopping = false;
   private providerAggregateRecomputeScheduled = false;
@@ -261,6 +288,11 @@ export class BazaarService {
     this.ingestionWorker = new CatalogIngestionWorker(config.database, {
       horizonUrl: config.horizonUrl,
       sorobanRpcUrl: config.sorobanRpcUrl,
+      livePaymentTerms: {
+        timeoutMs: config.catalogRevalidationTimeoutMs,
+        allowedOrigins: config.catalogRevalidationAllowedOrigins,
+        transportOriginMap: config.catalogRevalidationTransportOriginMap,
+      },
     });
     this.providerQualityStore = new ProviderQualityStore(this.db);
 
@@ -841,6 +873,19 @@ export class BazaarService {
       );
     }, 30_000);
 
+    if (this.config.catalogRevalidationIntervalMs > 0) {
+      this.catalogRevalidationInterval = setInterval(() => {
+        this.ingestionWorker.revalidateStale({
+          staleAfterMs: this.config.catalogRevalidationStaleMs,
+          limit: this.config.catalogRevalidationBatchSize,
+        }).then((summary) => {
+          if (summary.checked > 0) console.log("[Bazaar Service] Catalog revalidation", summary);
+        }).catch((error) =>
+          console.error("[Bazaar Service] Catalog revalidation failed:", error)
+        );
+      }, this.config.catalogRevalidationIntervalMs);
+    }
+
     console.log(`[Bazaar Service] ✓ Service ready at http://${this.config.host}:${this.config.port}`);
     console.log("[Bazaar Service] Endpoints:");
     console.log("  GET  /health");
@@ -867,6 +912,10 @@ export class BazaarService {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = undefined;
+    }
+    if (this.catalogRevalidationInterval) {
+      clearInterval(this.catalogRevalidationInterval);
+      this.catalogRevalidationInterval = undefined;
     }
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) =>

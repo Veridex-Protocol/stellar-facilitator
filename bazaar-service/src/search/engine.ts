@@ -135,6 +135,8 @@ export class BazaarSearchEngine {
           FROM catalog_resources r
           LEFT JOIN resource_telemetry t ON r.id = t.resource_id
           WHERE r.embedding IS NOT NULL
+            AND to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, ''))
+                @@ plainto_tsquery('english', $1)
             AND r.soft_dropped = false
             AND COALESCE(t.liveness_status, 'HEALTHY') <> 'OFFLINE'
             ${filterClause}
@@ -167,8 +169,7 @@ export class BazaarSearchEngine {
           WHERE r.soft_dropped = false
             AND COALESCE(t.liveness_status, 'HEALTHY') <> 'OFFLINE'
             AND (
-              r.embedding IS NOT NULL
-              OR to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, '')) @@ plainto_tsquery('english', $1)
+              to_tsvector('english', r.description || ' ' || COALESCE(r.service_name, '')) @@ plainto_tsquery('english', $1)
             )
             ${filterClause}
       )

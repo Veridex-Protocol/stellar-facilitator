@@ -33,6 +33,8 @@ async function makeDelta(revision: number, overrides: Record<string, unknown> = 
       mimeType: "application/json",
       inputSpec: {},
       scheme: "exact",
+      asset: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      amount: "100000",
       settlementTx,
       ...overrides,
     },

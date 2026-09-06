@@ -82,6 +82,8 @@ export interface FacilitatorServiceConfig {
   ledgerSkew: { retries: number; delayMs: number };
   /** How long a settlement may wait for a free signer before being refused. */
   settleQueueTimeoutMs: number;
+  /** Maximum best-effort delay after settlement while reporting catalog status. */
+  catalogHandoffTimeoutMs: number;
   rateLimit: { windowMs: number; max: number };
   /** Path to the JSON job list backing `/.well-known/x402`. */
   jobsFile?: string;
@@ -146,6 +148,7 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
     // Long enough to ride out a settlement ahead in the queue, short enough
     // that a caller gets a usable answer well inside a typical HTTP timeout.
     settleQueueTimeoutMs: parseInt(process.env.SETTLE_QUEUE_TIMEOUT_MS || "30000", 10),
+    catalogHandoffTimeoutMs: parseInt(process.env.CATALOG_HANDOFF_TIMEOUT_MS || "2000", 10),
     jobsFile: process.env.X402_JOBS_FILE || undefined,
     intendToSponsorFees: process.env.SPONSOR_FEES !== "false",
     stellar: {
@@ -837,7 +840,9 @@ export class FacilitatorService {
     const info: any = discovered.discoveryInfo;
     const resourceType = info.input?.type === "mcp" ? "mcp" : "http";
 
-    const response = await fetch(new URL("/catalog/ingest", bazaarUrl), {
+    const response = await postCatalogIngest(
+      new URL("/catalog/ingest", bazaarUrl),
+      {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -847,11 +852,14 @@ export class FacilitatorService {
       },
       body: JSON.stringify({
         resourceUrl: discovered.resourceUrl,
+        validationUrl: paymentPayload.resource?.url ?? discovered.resourceUrl,
         resourceType,
         toolName: resourceType === "mcp" ? info.input.toolName : undefined,
         payTo: paymentRequirements.payTo,
         network: paymentRequirements.network,
         scheme: paymentRequirements.scheme,
+        asset: paymentPayload.accepted?.asset ?? paymentRequirements.asset,
+        amount: paymentPayload.accepted?.amount ?? paymentRequirements.amount,
         bazaarExtension: {
           serviceName: discovered.serviceName,
           description: discovered.description || info.input?.description || discovered.resourceUrl,
@@ -875,7 +883,9 @@ export class FacilitatorService {
           },
         } : {}),
       }),
-    });
+      },
+      this.config.catalogHandoffTimeoutMs,
+    );
     // The catalog reports the outcome in this header on both acceptance and
     // rejection, so read it before deciding whether this was an error.
     const extensionResponses = response.headers.get("EXTENSION-RESPONSES") ?? undefined;
@@ -1018,6 +1028,18 @@ export class FacilitatorService {
   getCapabilities(): Readonly<VerifiedCapabilities> {
     return this.capabilities;
   }
+}
+
+export async function postCatalogIngest(
+  url: URL,
+  init: RequestInit,
+  timeoutMs: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  return fetchImpl(url, {
+    ...init,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
 }
 
 /**

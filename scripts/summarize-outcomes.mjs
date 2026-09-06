@@ -104,6 +104,7 @@ for (const [name, stats] of [...endpoints].sort()) {
     reasons: stats.byReason,
     latencyMs: {
       p50: percentile(sorted, 0.5),
+      p95: percentile(sorted, 0.95),
       p90: percentile(sorted, 0.9),
       p99: percentile(sorted, 0.99),
       max: sorted.at(-1) ?? null,
@@ -138,7 +139,7 @@ for (const [name, stats] of Object.entries(report.endpoints)) {
   );
   if (stats.latencyMs.p50 !== null) {
     process.stdout.write(
-      `  latency    p50 ${stats.latencyMs.p50}ms   p90 ${stats.latencyMs.p90}ms   p99 ${stats.latencyMs.p99}ms   max ${stats.latencyMs.max}ms\n`,
+      `  latency    p50 ${stats.latencyMs.p50}ms   p95 ${stats.latencyMs.p95}ms   p99 ${stats.latencyMs.p99}ms   max ${stats.latencyMs.max}ms\n`,
     );
   }
   if (stats.settlementFailureRate !== null) {

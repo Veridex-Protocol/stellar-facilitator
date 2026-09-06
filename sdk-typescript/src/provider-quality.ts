@@ -84,9 +84,12 @@ interface AggregateCacheEntry {
 }
 
 export interface SellerPolicyConfig {
-  insufficientData: "sell" | "warn" | "hold";
-  provisional: "sell" | "warn" | "hold";
-  published: "sell" | "warn" | "hold" | "stop";
+  insufficientData: "sell" | "sell-and-warn" | "warn" | "hold";
+  provisional: "sell" | "sell-and-warn" | "warn" | "hold";
+  published: "sell" | "sell-and-warn" | "warn" | "hold" | "stop";
+  warnMax: number;
+  holdMax: number;
+  /** @deprecated Use holdMax. */
   maxFaultRateUpperBound: number;
   staleAggregate: "preserve" | "warn" | "hold";
   invalidAggregate: "preserve" | "warn" | "hold";
@@ -96,9 +99,11 @@ export interface SellerPolicyConfig {
 }
 
 export const DEFAULT_SELLER_POLICY: SellerPolicyConfig = {
-  insufficientData: "warn",
-  provisional: "warn",
+  insufficientData: "sell-and-warn",
+  provisional: "sell-and-warn",
   published: "sell",
+  warnMax: 0.10,
+  holdMax: 0.15,
   maxFaultRateUpperBound: 0.15,
   staleAggregate: "preserve",
   invalidAggregate: "preserve",
@@ -108,7 +113,7 @@ export const DEFAULT_SELLER_POLICY: SellerPolicyConfig = {
 };
 
 export interface SellerPolicyDecision {
-  action: "sell" | "warn" | "hold" | "stop";
+  action: "sell" | "sell-and-warn" | "hold";
   reason: string;
   warning?: string;
 }
@@ -275,8 +280,15 @@ export class SellerPolicyEngine {
 
   constructor(config: Partial<SellerPolicyConfig> = {}) {
     this.config = { ...DEFAULT_SELLER_POLICY, ...config };
-    if (this.config.maxFaultRateUpperBound < 0 || this.config.maxFaultRateUpperBound > 1) {
-      throw new Error("maxFaultRateUpperBound must be between 0 and 1");
+    if (config.maxFaultRateUpperBound !== undefined && config.holdMax === undefined) {
+      this.config.holdMax = config.maxFaultRateUpperBound;
+    }
+    if (
+      this.config.warnMax < 0 ||
+      this.config.holdMax > 1 ||
+      this.config.warnMax > this.config.holdMax
+    ) {
+      throw new Error("seller policy requires 0 <= warnMax <= holdMax <= 1");
     }
   }
 
@@ -284,9 +296,9 @@ export class SellerPolicyEngine {
     if (lookup.state === "insufficient_data") {
       const action = this.config.insufficientData;
       return {
-        action,
+        action: normalizePolicyAction(action),
         reason: `${lookup.state}: no provider observations are available for ${endpoint}`,
-        warning: action === "warn" ? "provider quality evidence is not sufficient for an unconditional sale" : undefined,
+        warning: isWarningAction(action) ? "provider quality evidence is not sufficient for an unconditional sale" : undefined,
       };
     }
     if (!lookup.aggregate) {
@@ -301,16 +313,18 @@ export class SellerPolicyEngine {
 
     const aggregate = lookup.aggregate;
     const action = aggregate.state === "insufficient_data"
-      ? this.config.insufficientData
+      ? normalizePolicyAction(this.config.insufficientData)
       : aggregate.state === "provisional"
-        ? this.config.provisional
-        : aggregate.faultRateUpperBound > this.config.maxFaultRateUpperBound
-          ? this.config.published === "sell" ? "stop" : this.config.published
-          : this.config.published;
+        ? normalizePolicyAction(this.config.provisional)
+        : aggregate.faultRateUpperBound > this.config.holdMax
+          ? "hold"
+          : aggregate.faultRateUpperBound >= this.config.warnMax
+            ? "sell-and-warn"
+            : "sell";
     return {
       action,
       reason: `${aggregate.state}: faultRateUpperBound=${aggregate.faultRateUpperBound.toFixed(4)}, n=${aggregate.n}`,
-      warning: action === "warn" ? "provider quality evidence is not sufficient for an unconditional sale" : undefined,
+      warning: action === "sell-and-warn" ? "provider quality evidence is not sufficient for an unconditional sale" : undefined,
     };
   }
 
@@ -330,11 +344,21 @@ export class SellerPolicyEngine {
   private decisionFor(key: "staleAggregate" | "invalidAggregate" | "unavailableIndexer", reason: string): SellerPolicyDecision {
     const action = this.config[key];
     return {
-      action: action === "preserve" ? "sell" : action,
+      action: action === "preserve" ? "sell" : normalizePolicyAction(action),
       reason,
       warning: action === "preserve" || action === "warn" ? reason : undefined,
     };
   }
+}
+
+function normalizePolicyAction(action: "sell" | "sell-and-warn" | "warn" | "hold" | "stop"): SellerPolicyDecision["action"] {
+  if (action === "warn" || action === "sell-and-warn") return "sell-and-warn";
+  if (action === "stop") return "hold";
+  return action;
+}
+
+function isWarningAction(action: "sell" | "sell-and-warn" | "warn" | "hold" | "stop"): boolean {
+  return action === "warn" || action === "sell-and-warn";
 }
 
 export function wilsonUpperBound(faultsObserved: number, n: number, confidenceZ = 1.959963984540054): number {

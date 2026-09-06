@@ -1,0 +1,42 @@
+{
+  "name": "stellar-upto-http-v2",
+  "status": "descriptive-fixture-not-submitted",
+  "network": "stellar:testnet",
+  "requirements": {
+    "scheme": "upto",
+    "network": "stellar:testnet",
+    "amount": "100000",
+    "asset": "C<sep41-token-contract>",
+    "payTo": "G<payer-recipient>",
+    "maxTimeoutSeconds": 120,
+    "extra": {
+      "contractId": "C<upto-settlement-contract>",
+      "facilitator": "G<facilitator-signer>",
+      "areFeesSponsored": true,
+      "requestDigest": "sha256:<64-hex-request-digest>"
+    }
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "payload": {
+      "transaction": "base64<facilitator-sourced-soroban-transaction-with-signed-payer-auth>"
+    }
+  },
+  "responseSettlement": {
+    "settlementOverrides": {
+      "amount": "25000"
+    },
+    "payloadEnrichment": {
+      "resultDigest": "sha256:<64-hex-result-digest>"
+    }
+  },
+  "assertions": [
+    "accepted.amount remains the payer ceiling",
+    "paymentRequirements.amount becomes the actual usage amount",
+    "payer authorization covers payTo, token, max_amount, validity, facilitator, settlement_id, request_digest",
+    "facilitator authorization covers settlement_id, actual, result_digest",
+    "actual must be between zero and max_amount",
+    "replay of payer and settlement_id is rejected",
+    "wrong payTo, requestDigest, contract, asset, network, or expiry is rejected"
+  ]
+}

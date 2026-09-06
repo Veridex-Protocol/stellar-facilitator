@@ -55,6 +55,8 @@ describe("active P2P catalog-delta transport", () => {
         mimeType: "application/json",
         inputSpec: {},
         scheme: "exact",
+        asset: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        amount: "100000",
         settlementTx: "a".repeat(64),
       },
     });

@@ -19,6 +19,12 @@ import { isIP } from "node:net";
 import { generateResourceEmbedding } from "../search/embeddings.js";
 import { verifySettlement, type SettlementProofOptions } from "./settlement-proof.js";
 import { verifyOwnerSignature } from "./owner-signature.js";
+import {
+  validateLivePaymentTerms,
+  type ExpectedPaymentTerms,
+  type LivePaymentTermsOptions,
+  type LivePaymentTermsResult,
+} from "./live-payment-terms.js";
 import type { DatabaseConfig } from "../search/types.js";
 import {
   catalogDeltaDigest,
@@ -52,11 +58,14 @@ export type BazaarExtension = z.infer<typeof BazaarExtensionSchema>;
  */
 export interface IngestionRequest {
   resourceUrl: string;
+  validationUrl?: string;
   resourceType: "http" | "mcp";
   toolName?: string;
   payTo: string;
   network: string;
   scheme: string;
+  asset?: string;
+  amount?: string;
   bazaarExtension: BazaarExtension;
   extensions?: Record<string, any>;
   /**
@@ -78,6 +87,24 @@ export interface IngestionResult {
   extensionResponse: string; // Base64-encoded for EXTENSION-RESPONSES header
 }
 
+export interface CatalogRevalidationSummary {
+  checked: number;
+  refreshed: number;
+  quarantined: number;
+  failures: Record<string, number>;
+}
+
+export interface CatalogIngestionOptions {
+  horizonUrl: string;
+  sorobanRpcUrl: string;
+  pool?: PoolType;
+  livePaymentTerms?: LivePaymentTermsOptions;
+  validateLiveTerms?: (
+    expected: ExpectedPaymentTerms,
+    options?: LivePaymentTermsOptions,
+  ) => Promise<LivePaymentTermsResult>;
+}
+
 /**
  * Auto-cataloging ingestion worker
  */
@@ -85,19 +112,23 @@ export class CatalogIngestionWorker {
   private pool: PoolType;
   private horizonUrl: string;
   private sorobanRpcUrl: string;
+  private livePaymentTerms: LivePaymentTermsOptions;
+  private validateLiveTerms: NonNullable<CatalogIngestionOptions["validateLiveTerms"]>;
 
-  constructor(config: DatabaseConfig, options: { horizonUrl: string; sorobanRpcUrl: string }) {
+  constructor(config: DatabaseConfig, options: CatalogIngestionOptions) {
     this.horizonUrl = options.horizonUrl;
     this.sorobanRpcUrl = options.sorobanRpcUrl;
-    this.pool = new Pool({
-      host: config.host,
-      port: config.port,
-      database: config.database,
-      user: config.user,
-      password: config.password,
-      ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
-      max: config.maxConnections || 20,
-    });
+    this.livePaymentTerms = options.livePaymentTerms ?? {};
+    this.validateLiveTerms = options.validateLiveTerms ?? validateLivePaymentTerms;
+    this.pool = options.pool ?? new Pool({
+        host: config.host,
+        port: config.port,
+        database: config.database,
+        user: config.user,
+        password: config.password,
+        ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
+        max: config.maxConnections || 20,
+      });
   }
 
   /**
@@ -120,7 +151,21 @@ export class CatalogIngestionWorker {
         };
       }
 
-      // 2. Confirm a real settlement backs this entry on Horizon.
+      // 2. HTTP listings must agree with the resource's live 402 challenge.
+      // This worker is called after settlement; this network check is never on
+      // the payment response's success/failure decision path.
+      const liveTerms = await this.validateRequestLiveTerms(request);
+      if (!liveTerms.valid) {
+        await client.query("ROLLBACK");
+        const reason = `${liveTerms.code}: ${liveTerms.reason}`;
+        return {
+          status: "rejected",
+          rejectedReason: reason,
+          extensionResponse: this.encodeExtensionResponse("rejected", reason),
+        };
+      }
+
+      // 3. Confirm a real settlement backs this entry on Horizon.
       const settlement = await verifySettlement(request.settlementTx, request.payTo, {
         horizonUrl: this.horizonUrl,
         sorobanRpcUrl: this.sorobanRpcUrl,
@@ -137,7 +182,7 @@ export class CatalogIngestionWorker {
         };
       }
 
-      // 3. Security invariant (VDX-02 Anti-Hijack Guard):
+      // 4. Security invariant (VDX-02 Anti-Hijack Guard):
       // An incoming settlement for payTo B must NEVER overwrite an existing catalog
       // entry previously registered to payTo A.
       const existing = await client.query(
@@ -160,24 +205,31 @@ export class CatalogIngestionWorker {
         }
       }
 
-      // 4. Generate vector embedding
+      // 5. Generate vector embedding
       const embedding = await generateResourceEmbedding(
         request.bazaarExtension.description,
         request.bazaarExtension.serviceName,
         request.bazaarExtension.tags
       );
 
-      // 5. Insert or update catalog entry with strict pay_to constraint
+      // 6. Insert or update catalog entry with strict pay_to constraint
       const result = await client.query(
         `INSERT INTO catalog_resources (
-          resource_url, resource_type, tool_name, service_name, description,
+          resource_url, validation_url, resource_type, tool_name, service_name, description,
           mime_type, pay_to, network, scheme, tags, icon_url, route_template,
-          input_spec, output_spec, extensions, embedding, settlement_tx
+          input_spec, output_spec, extensions, embedding, settlement_tx,
+          asset, amount, last_verified_at, verification_status, verification_reason,
+          soft_dropped
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+          $15, $16, $17, $18, $19, $20,
+          CASE WHEN $3 = 'http' THEN now() ELSE NULL END,
+          CASE WHEN $3 = 'http' THEN 'verified' ELSE 'pending' END,
+          NULL, false)
         ON CONFLICT ON CONSTRAINT unique_resource_tool_entry
         DO UPDATE SET
           service_name = EXCLUDED.service_name,
+          validation_url = EXCLUDED.validation_url,
           description = EXCLUDED.description,
           mime_type = EXCLUDED.mime_type,
           tags = EXCLUDED.tags,
@@ -188,12 +240,19 @@ export class CatalogIngestionWorker {
           extensions = EXCLUDED.extensions,
           embedding = EXCLUDED.embedding,
           settlement_tx = EXCLUDED.settlement_tx,
+          asset = EXCLUDED.asset,
+          amount = EXCLUDED.amount,
+          last_verified_at = CASE WHEN EXCLUDED.resource_type = 'http' THEN now() ELSE catalog_resources.last_verified_at END,
+          verification_status = CASE WHEN EXCLUDED.resource_type = 'http' THEN 'verified' ELSE catalog_resources.verification_status END,
+          verification_reason = NULL,
+          soft_dropped = false,
           last_seen = NOW(),
           updated_at = NOW()
         WHERE catalog_resources.pay_to = EXCLUDED.pay_to
         RETURNING id`,
         [
           request.resourceUrl,
+          request.validationUrl || request.resourceUrl,
           request.resourceType,
           request.toolName || null,
           request.bazaarExtension.serviceName || null,
@@ -210,6 +269,8 @@ export class CatalogIngestionWorker {
           request.extensions ? JSON.stringify(request.extensions) : "{}",
           `[${embedding.join(",")}]`,
           request.settlementTx,
+          request.asset || null,
+          request.amount || null,
         ]
       );
 
@@ -225,7 +286,7 @@ export class CatalogIngestionWorker {
 
       const resourceId = result.rows[0].id;
 
-      // 6. Update telemetry liveness
+      // 7. Update telemetry liveness
       await client.query(
         `INSERT INTO resource_telemetry (resource_id, settlement_count, last_settlement_at, liveness_status)
          VALUES ($1, 1, now(), 'HEALTHY')
@@ -269,6 +330,81 @@ export class CatalogIngestionWorker {
         rejectedReason: error instanceof Error ? error.message : "internal_error",
         extensionResponse: this.encodeExtensionResponse("rejected", "internal_error"),
       };
+    } finally {
+      client.release();
+    }
+  }
+
+  async revalidateStale(options: { staleAfterMs: number; limit?: number }): Promise<CatalogRevalidationSummary> {
+    const summary: CatalogRevalidationSummary = {
+      checked: 0,
+      refreshed: 0,
+      quarantined: 0,
+      failures: {},
+    };
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{
+        id: string;
+        validation_url: string;
+        network: string;
+        scheme: string;
+        asset: string | null;
+        pay_to: string;
+        amount: string | null;
+      }>(
+        `SELECT id, validation_url, network, scheme, asset, pay_to, amount
+         FROM catalog_resources
+         WHERE resource_type = 'http'
+           AND soft_dropped = false
+           AND (last_verified_at IS NULL OR last_verified_at < now() - ($1::bigint * interval '1 millisecond'))
+         ORDER BY last_verified_at ASC NULLS FIRST
+         LIMIT $2`,
+        [options.staleAfterMs, Math.min(100, Math.max(1, options.limit ?? 20))],
+      );
+
+      for (const row of result.rows) {
+        summary.checked++;
+        const validation = row.asset && row.amount
+          ? await this.validateLiveTerms({
+              resourceUrl: row.validation_url,
+              network: row.network,
+              scheme: row.scheme,
+              asset: row.asset,
+              payTo: row.pay_to,
+              amount: row.amount,
+            }, this.livePaymentTerms)
+          : {
+              valid: false,
+              code: "catalog_live_payment_terms_missing",
+              reason: "catalog row has no stored asset or amount to revalidate",
+              retryable: false,
+            };
+
+        if (validation.valid) {
+          await client.query(
+            `UPDATE catalog_resources SET
+               last_verified_at = now(), verification_status = 'verified',
+               verification_reason = NULL
+             WHERE id = $1`,
+            [row.id],
+          );
+          summary.refreshed++;
+          continue;
+        }
+
+        const code = validation.code ?? "catalog_live_payment_validation_failed";
+        await client.query(
+          `UPDATE catalog_resources SET
+             soft_dropped = true, verification_status = 'quarantined',
+             verification_reason = $2
+           WHERE id = $1`,
+          [row.id, `${code}: ${validation.reason ?? "live payment-term validation failed"}`],
+        );
+        summary.quarantined++;
+        summary.failures[code] = (summary.failures[code] ?? 0) + 1;
+      }
+      return summary;
     } finally {
       client.release();
     }
@@ -328,6 +464,24 @@ export class CatalogIngestionWorker {
           return { status: "rejected", reason: settlement.reason };
         }
 
+        if (state.resourceType === "http") {
+          const liveTerms = await this.validateLiveTerms({
+            resourceUrl: state.validationUrl || delta.resourceUrl,
+            network: delta.network,
+            scheme: state.scheme,
+            asset: state.asset,
+            payTo: delta.payTo,
+            amount: state.amount,
+          }, this.livePaymentTerms);
+          if (!liveTerms.valid) {
+            await client.query("ROLLBACK");
+            return {
+              status: "rejected",
+              reason: `${liveTerms.code}: ${liveTerms.reason}`,
+            };
+          }
+        }
+
         const existing = await client.query<{ id: string; pay_to: string }>(
           `SELECT id, pay_to FROM catalog_resources
            WHERE resource_url = $1 AND tool_name_key = $2 FOR UPDATE`,
@@ -341,13 +495,19 @@ export class CatalogIngestionWorker {
         const embedding = await generateResourceEmbedding(state.description, state.serviceName, state.tags);
         await client.query(
           `INSERT INTO catalog_resources (
-             resource_url, resource_type, tool_name, service_name, description,
+             resource_url, validation_url, resource_type, tool_name, service_name, description,
              mime_type, pay_to, network, scheme, tags, icon_url, route_template,
-             input_spec, output_spec, extensions, embedding, settlement_tx, soft_dropped
+             input_spec, output_spec, extensions, embedding, settlement_tx,
+             asset, amount, last_verified_at, verification_status,
+             verification_reason, soft_dropped
            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-                     $13, $14, $15, $16, $17, false)
+                     $13, $14, $15, $16, $17, $18, $19, $20,
+                     CASE WHEN $3 = 'http' THEN now() ELSE NULL END,
+                     CASE WHEN $3 = 'http' THEN 'verified' ELSE 'pending' END,
+                     NULL, false)
            ON CONFLICT ON CONSTRAINT unique_resource_tool_entry DO UPDATE SET
              service_name = EXCLUDED.service_name,
+             validation_url = EXCLUDED.validation_url,
              description = EXCLUDED.description,
              mime_type = EXCLUDED.mime_type,
              pay_to = EXCLUDED.pay_to,
@@ -361,12 +521,18 @@ export class CatalogIngestionWorker {
              extensions = EXCLUDED.extensions,
              embedding = EXCLUDED.embedding,
              settlement_tx = EXCLUDED.settlement_tx,
+             asset = EXCLUDED.asset,
+             amount = EXCLUDED.amount,
+             last_verified_at = CASE WHEN EXCLUDED.resource_type = 'http' THEN now() ELSE catalog_resources.last_verified_at END,
+             verification_status = CASE WHEN EXCLUDED.resource_type = 'http' THEN 'verified' ELSE catalog_resources.verification_status END,
+             verification_reason = NULL,
              soft_dropped = false,
              last_seen = now(),
              updated_at = now()
            WHERE catalog_resources.pay_to = EXCLUDED.pay_to`,
           [
             delta.resourceUrl,
+            state.validationUrl || delta.resourceUrl,
             state.resourceType,
             delta.toolName || null,
             state.serviceName || null,
@@ -383,6 +549,8 @@ export class CatalogIngestionWorker {
             JSON.stringify(state.extensions || {}),
             `[${embedding.join(",")}]`,
             state.settlementTx,
+            state.asset,
+            state.amount,
           ],
         );
       } else {
@@ -540,6 +708,26 @@ export class CatalogIngestionWorker {
     }
 
     return { valid: true };
+  }
+
+  private async validateRequestLiveTerms(request: IngestionRequest): Promise<LivePaymentTermsResult> {
+    if (request.resourceType === "mcp") return { valid: true };
+    if (!request.asset || !request.amount) {
+      return {
+        valid: false,
+        code: "catalog_live_payment_terms_missing",
+        reason: "HTTP catalog ingestion requires the settled asset and advertised amount",
+        retryable: false,
+      };
+    }
+    return this.validateLiveTerms({
+      resourceUrl: request.validationUrl || request.resourceUrl,
+      network: request.network,
+      scheme: request.scheme,
+      asset: request.asset,
+      payTo: request.payTo,
+      amount: request.amount,
+    }, this.livePaymentTerms);
   }
 
   /**

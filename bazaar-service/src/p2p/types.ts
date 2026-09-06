@@ -86,6 +86,7 @@ export type AnnounceMessage = z.infer<typeof AnnounceMessageSchema>;
  */
 export const CatalogDeltaStateSchema = z.object({
   resourceType: z.enum(["http", "mcp"]),
+  validationUrl: z.string().url().optional(),
   serviceName: z.string().max(32).optional(),
   description: z.string().min(1),
   tags: z.array(z.string().max(32)).max(5).optional(),
@@ -96,6 +97,8 @@ export const CatalogDeltaStateSchema = z.object({
   outputSpec: z.record(z.any()).optional(),
   extensions: z.record(z.any()).optional(),
   scheme: z.string().min(1),
+  asset: z.string().min(1),
+  amount: z.string().regex(/^(0|[1-9][0-9]*)$/),
   settlementTx: z.string().regex(/^[0-9a-f]{64}$/i),
   uptoContractId: z.string().optional(),
   settlementToken: z.string().optional(),

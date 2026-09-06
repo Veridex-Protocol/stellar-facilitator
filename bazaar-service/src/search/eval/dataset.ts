@@ -15,6 +15,13 @@ export interface BenchmarkDocument {
 export interface JudgedQuery {
   query: string;
   description: string;
+  category: "exact" | "paraphrase" | "zero_lexical_overlap" | "ambiguous" | "no_result" | "mcp" | "filtered";
+  filters?: {
+    resourceType?: "http" | "mcp";
+    toolName?: string;
+    tags?: string[];
+  };
+  expectedNoResults?: boolean;
   // Map of document ID to graded relevance: 3 = Perfect, 2 = Highly relevant, 1 = Marginally relevant, 0 = Irrelevant
   qrels: Record<string, number>;
 }
@@ -100,6 +107,7 @@ export const BENCHMARK_QUERIES: JudgedQuery[] = [
   {
     query: "weather forecast temperature",
     description: "Query for live weather and forecast information",
+    category: "exact",
     qrels: {
       "doc-weather-01": 3,
       "doc-weather-02": 2,
@@ -110,6 +118,7 @@ export const BENCHMARK_QUERIES: JudgedQuery[] = [
   {
     query: "Soroban RPC node smart contract",
     description: "Query for Soroban developer infrastructure and RPC provider",
+    category: "exact",
     qrels: {
       "doc-soroban-rpc-01": 3,
       "doc-soroban-indexer-02": 2,
@@ -120,6 +129,7 @@ export const BENCHMARK_QUERIES: JudgedQuery[] = [
   {
     query: "translate spanish to english text",
     description: "Query for neural machine translation service",
+    category: "paraphrase",
     qrels: {
       "doc-nlp-translate-01": 3,
       "doc-nlp-summarize-02": 1,
@@ -129,6 +139,7 @@ export const BENCHMARK_QUERIES: JudgedQuery[] = [
   {
     query: "Stellar USDC token swap DEX aggregator",
     description: "Query for DEX liquidity and swap routing on Stellar",
+    category: "exact",
     qrels: {
       "doc-stellar-dex-01": 3,
       "doc-crypto-rates-01": 2,
@@ -139,6 +150,7 @@ export const BENCHMARK_QUERIES: JudgedQuery[] = [
   {
     query: "AI image generator diffusion",
     description: "Query for generative diffusion image tools",
+    category: "exact",
     qrels: {
       "doc-image-gen-01": 3,
       "doc-nlp-translate-01": 0,
@@ -148,11 +160,54 @@ export const BENCHMARK_QUERIES: JudgedQuery[] = [
   {
     query: "smart contract security audit Rust Soroban",
     description: "Query for contract security review and static analysis",
+    category: "exact",
     qrels: {
       "doc-code-audit-01": 3,
       "doc-soroban-rpc-01": 1,
       "doc-soroban-indexer-02": 1,
       "doc-stellar-dex-01": 0,
     },
+  },
+  {
+    query: "linguistic conversion",
+    description: "Zero-overlap paraphrase for machine translation; expected to expose the current non-semantic retrieval limit",
+    category: "zero_lexical_overlap",
+    qrels: {
+      "doc-nlp-translate-01": 3,
+    },
+  },
+  {
+    query: "stream",
+    description: "Ambiguous query relevant to both event streaming and streaming market data",
+    category: "ambiguous",
+    qrels: {
+      "doc-soroban-indexer-02": 3,
+      "doc-crypto-rates-01": 2,
+    },
+  },
+  {
+    query: "summarize_document",
+    description: "Exact MCP tool-name lookup",
+    category: "mcp",
+    filters: { resourceType: "mcp" },
+    qrels: {
+      "doc-nlp-summarize-02": 3,
+    },
+  },
+  {
+    query: "smart contract",
+    description: "Highly specific MCP type and tool-name filter",
+    category: "filtered",
+    filters: { resourceType: "mcp", toolName: "analyze_code", tags: ["security"] },
+    qrels: {
+      "doc-code-audit-01": 3,
+    },
+  },
+  {
+    query: "quantum livestock genomics",
+    description: "Known no-result query with no relevant catalog document",
+    category: "no_result",
+    expectedNoResults: true,
+    qrels: {},
   },
 ];

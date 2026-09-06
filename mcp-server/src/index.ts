@@ -187,11 +187,17 @@ export class VeridexMCPServer {
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error) {
+        const reason = error instanceof Error ? error.message : "Unknown error";
         return {
           content: [
             {
               type: "text",
-              text: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+              text: JSON.stringify({
+                ok: false,
+                code: "mcp_tool_failed",
+                reason,
+                retryable: false,
+              }),
             },
           ],
           isError: true,
@@ -224,28 +230,34 @@ export class VeridexMCPServer {
 
     const results = (await response.json()) as Record<string, any>;
 
-    // Format results for AI
-    const formatted = results.results
-      ?.map(
-        (r: any) =>
-          `• ${r.resourceUrl}\n` +
-          `  Service: ${r.serviceName || "N/A"}\n` +
-          `  Description: ${r.description}\n` +
-          `  Network: ${r.network}\n` +
-          `  Score: ${r.compositeScore?.toFixed(3) || "N/A"}\n` +
-          `  Uptime: ${((r.telemetry?.uptimeRatio || 0) * 100).toFixed(1)}%\n` +
-          `  Avg Latency: ${r.telemetry?.avgResponseTimeMs || "N/A"}ms\n` +
-          `  Reliability: ${((r.reliabilityScore || 0) * 100).toFixed(1)}%`
-      )
-      .join("\n\n");
+    const resources = Array.isArray(results.results)
+      ? results.results.map((resource: any) => ({
+          resourceUrl: resource.resourceUrl,
+          network: resource.network,
+          scheme: resource.scheme,
+          payTo: resource.payTo,
+          score: resource.compositeScore ?? null,
+          telemetry: resource.telemetry ?? null,
+          sellerData: {
+            trust: "untrusted_seller_data",
+            serviceName: resource.serviceName ?? null,
+            description: resource.description ?? null,
+            tags: resource.tags ?? [],
+            inputSpec: resource.inputSpec ?? null,
+            outputSpec: resource.outputSpec ?? null,
+          },
+        }))
+      : [];
 
     return {
       content: [
         {
           type: "text",
-          text:
-            `Found ${results.total || 0} resources:\n\n${formatted}\n\n` +
-            `Results are ranked by keyword match, feature-hash vector similarity, uptime, latency, and reliability signals.`,
+          text: JSON.stringify({
+            ok: true,
+            total: results.total ?? resources.length,
+            resources,
+          }),
         },
       ],
     };
@@ -284,7 +296,19 @@ export class VeridexMCPServer {
     const initialResponse = await fetch(requestUrl, requestInit);
     if (initialResponse.status !== 402) {
       const body = await initialResponse.text();
-      return { content: [{ type: "text", text: body || `HTTP ${initialResponse.status}` }] };
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ok: initialResponse.ok,
+            status: initialResponse.status,
+            sellerResponse: {
+              trust: "untrusted_seller_data",
+              body,
+            },
+          }),
+        }],
+      };
     }
 
     const challengeBody = await initialResponse.json().catch(() => undefined);
@@ -339,9 +363,17 @@ export class VeridexMCPServer {
       content: [
         {
           type: "text",
-          text:
-            `Payment successful.\nResource: ${params.resourceUrl}\n` +
-            `Transaction: ${result.transaction}\n\nResponse:\n${responseBody}`,
+          text: JSON.stringify({
+            ok: true,
+            resource: params.resourceUrl,
+            transaction: result.transaction,
+            network: result.network,
+            sellerResponse: {
+              trust: "untrusted_seller_data",
+              contentType: paidResponse.headers.get("content-type"),
+              body: responseBody,
+            },
+          }),
         },
       ],
     };
