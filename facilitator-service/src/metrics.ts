@@ -93,6 +93,8 @@ export function createFacilitatorMetrics(): PrometheusRegistry {
   registry.define("veridex_channel_sequence_drift", "Detected channel sequence drift events.", "counter");
   registry.define("veridex_rpc_requests_total", "RPC-dependent verify and settle operations initiated by this process.", "counter");
   registry.define("veridex_rpc_failures_total", "RPC-dependent operations that failed because the upstream endpoint was unavailable.", "counter");
+  registry.define("veridex_rpc_failover_total", "RPC operations served by a configured non-primary provider.", "counter");
+  registry.defineHistogram("veridex_rpc_latency", "Individual coordinated RPC provider call latency in seconds.");
   registry.define("veridex_rpc_disagreements_total", "Conflicting final transaction states reported by independent RPC providers.", "counter");
   registry.define("veridex_catalog_outbox_pending", "Post-settlement catalog events retained for asynchronous delivery.", "gauge");
   registry.define("veridex_catalog_outbox_oldest_age", "Age in seconds of the oldest retained catalog event.", "gauge");

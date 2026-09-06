@@ -363,6 +363,12 @@ export class VeridexMCPServer {
     }
 
     const paymentPayload = params.paymentPayload as PaymentPayload;
+    if (paymentPayload.x402Version !== paymentRequired.x402Version) {
+      throw new Error("Externally signed payment payload uses a different x402 version than the current challenge");
+    }
+    if (paymentPayload.resource?.url && paymentPayload.resource.url !== paymentRequired.resource.url) {
+      throw new Error("Externally signed payment payload is bound to a different resource than the current challenge");
+    }
     const accepted = qualifiedRequirements.find((requirement) => paymentTermsEqual(requirement, paymentPayload.accepted));
     if (!accepted) throw new Error("Externally signed payment payload does not match the current bounded challenge");
     if (BigInt(paymentPayload.accepted.amount) > effectiveMaxAmount) throw new Error("Externally signed payment exceeds the authorized spend ceiling");

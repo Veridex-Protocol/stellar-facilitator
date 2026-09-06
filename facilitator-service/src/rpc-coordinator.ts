@@ -35,6 +35,8 @@ export interface RpcCoordinatorOptions {
   fetchImpl?: typeof fetch;
   onRequest?: () => void;
   onFailure?: () => void;
+  onFailover?: () => void;
+  onLatency?: (seconds: number) => void;
   onDisagreement?: () => void;
 }
 
@@ -62,6 +64,8 @@ export class RpcCoordinator {
       fetchImpl: options.fetchImpl ?? fetch,
       onRequest: options.onRequest ?? (() => undefined),
       onFailure: options.onFailure ?? (() => undefined),
+      onFailover: options.onFailover ?? (() => undefined),
+      onLatency: options.onLatency ?? (() => undefined),
       onDisagreement: options.onDisagreement ?? (() => undefined),
     };
   }
@@ -116,7 +120,9 @@ export class RpcCoordinator {
     let lastError: unknown;
     for (const provider of this.orderedProviders()) {
       try {
-        return await this.call(provider, request);
+        const response = await this.call(provider, request);
+        if (provider !== this.providers[0]) this.options.onFailover();
+        return response;
       } catch (error) {
         lastError = error;
       }
@@ -137,6 +143,7 @@ export class RpcCoordinator {
       }
     }
     if (!provider) return rpcError(request.id, -32001, "no healthy RPC provider is available before submission");
+    if (provider !== this.providers[0]) this.options.onFailover();
 
     try {
       return await this.call(provider, request);
@@ -210,6 +217,7 @@ export class RpcCoordinator {
 
   private async call(provider: RpcProviderHealth, request: JsonRpcRequest): Promise<JsonRpcResponse> {
     this.options.onRequest();
+    const startedAt = performance.now();
     try {
       const response = await this.options.fetchImpl(provider.url, {
         method: "POST",
@@ -229,6 +237,8 @@ export class RpcCoordinator {
       provider.lastFailureAt = Date.now();
       this.options.onFailure();
       throw error;
+    } finally {
+      this.options.onLatency((performance.now() - startedAt) / 1000);
     }
   }
 

@@ -1081,6 +1081,8 @@ export class FacilitatorService {
           networkPassphrase: this.config.stellar.networkPassphrase,
           requestTimeoutMs: this.config.rpcRequestTimeoutMs,
           onFailure: () => this.metrics.increment("veridex_rpc_failures_total"),
+          onFailover: () => this.metrics.increment("veridex_rpc_failover_total"),
+          onLatency: (seconds) => this.metrics.observe("veridex_rpc_latency", seconds),
           onDisagreement: () => this.metrics.increment("veridex_rpc_disagreements_total"),
         });
         const coordinatedRpcUrl = await this.rpcCoordinator.start();

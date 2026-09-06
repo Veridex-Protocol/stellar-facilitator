@@ -90,6 +90,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${FACILITATOR_HOST_PORT:-3002}:3002"
+    volumes:
+      - facilitator-outbox:/var/lib/veridex/catalog-outbox
     environment:
       # HTTP Server
       FACILITATOR_PORT: 3002
@@ -119,6 +121,8 @@ services:
       LEDGER_SKEW_RETRIES: ${LEDGER_SKEW_RETRIES:-2}
       LEDGER_SKEW_RETRY_DELAY_MS: ${LEDGER_SKEW_RETRY_DELAY_MS:-6000}
       CATALOG_HANDOFF_TIMEOUT_MS: ${CATALOG_HANDOFF_TIMEOUT_MS:-2000}
+      CATALOG_OUTBOX_DIRECTORY: /var/lib/veridex/catalog-outbox
+      CATALOG_OUTBOX_REPLAY_INTERVAL_MS: ${CATALOG_OUTBOX_REPLAY_INTERVAL_MS:-5000}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
 
       # Channel Account Pool
@@ -223,6 +227,7 @@ services:
 
 volumes:
   postgres-data:
+  facilitator-outbox:
 
 networks:
   default:

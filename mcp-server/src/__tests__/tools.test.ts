@@ -282,6 +282,39 @@ describe("pay_resource", () => {
     })).rejects.toThrow(/does not match the current bounded challenge/);
   });
 
+  it("rejects an externally signed payload bound to another resource", async () => {
+    const requirements = {
+      scheme: "exact",
+      network: "stellar:testnet",
+      asset: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+      amount: "100000",
+      payTo: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      maxTimeoutSeconds: 60,
+      extra: {},
+    };
+    vi.stubGlobal("fetch", async () => new Response(null, {
+      status: 402,
+      headers: {
+        "payment-required": Buffer.from(JSON.stringify({
+          x402Version: 2,
+          resource: { url: "http://seller.test/forecast" },
+          accepts: [requirements],
+        })).toString("base64"),
+      },
+    }));
+    const server = new VeridexMCPServer(CONFIG);
+
+    await expect(server.handlePayResource({
+      resourceUrl: "http://seller.test/forecast",
+      paymentPayload: {
+        x402Version: 2,
+        resource: { url: "http://seller.test/admin" },
+        accepted: requirements,
+        payload: { transaction: "signed-xdr" },
+      },
+    })).rejects.toThrow(/bound to a different resource/);
+  });
+
   it("rejects SSRF target URLs (localhost, cloud metadata, private IPs)", async () => {
     const server = new VeridexMCPServer(CONFIG);
 

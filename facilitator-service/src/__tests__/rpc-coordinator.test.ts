@@ -83,9 +83,13 @@ describe("Soroban RPC coordinator", () => {
 
   it("fails over before submission when the primary health check is unavailable", async () => {
     const submissions: string[] = [];
+    let failovers = 0;
+    const latencies: number[] = [];
     const coordinator = new RpcCoordinator({
       providers: ["https://primary.example", "https://secondary.example"],
       networkPassphrase: Networks.TESTNET,
+      onFailover: () => failovers++,
+      onLatency: (seconds) => latencies.push(seconds),
       fetchImpl: (async (input, init) => {
         const url = String(input);
         const body = JSON.parse(String(init?.body));
@@ -105,6 +109,9 @@ describe("Soroban RPC coordinator", () => {
 
     expect(result.result?.status).toBe("PENDING");
     expect(submissions).toEqual(["https://secondary.example"]);
+    expect(failovers).toBe(1);
+    expect(latencies.length).toBeGreaterThanOrEqual(3);
+    expect(latencies.every((value) => value >= 0)).toBe(true);
   });
 
   it("reconciles an ambiguous submission hash without sending the transaction twice", async () => {
