@@ -7,7 +7,7 @@
   "description": "Veridex x402 Interactive Playground - Next.js & Tailwind testnet sandbox",
   "scripts": {
     "dev": "next dev -p 3004",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start -p 3004",
     "typecheck": "tsc --noEmit",
     "lint": "next lint",
