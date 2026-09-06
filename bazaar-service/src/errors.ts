@@ -1,6 +1,6 @@
 /** Canonical outward-facing Veridex error adapter. License: Apache-2.0 */
 
-import registry from "../../error-registry.json" with { type: "json" };
+import registry from "./error-registry.json" with { type: "json" };
 
 export type RegisteredErrorCode = keyof typeof registry;
 

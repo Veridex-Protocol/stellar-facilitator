@@ -186,6 +186,10 @@ describe("pay_resource", () => {
     expect(payload).toMatchObject({
       action: "sign_payment",
       signingLocation: "client_wallet",
+      code: "mcp_signing_required",
+      reason: expect.any(String),
+      retryable: false,
+      category: "payment",
       paymentRequired: { accepts: [requirements] },
     });
   });

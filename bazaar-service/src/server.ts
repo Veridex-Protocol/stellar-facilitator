@@ -34,6 +34,7 @@ import { ProviderAggregateSchema, ProviderObservationSchema } from "./provider-q
 import { verifyProviderAggregate, verifyProviderObservation } from "./provider-quality/crypto.js";
 import { buildProviderAggregate } from "./provider-quality/aggregator.js";
 import { createBazaarMetrics, type BazaarMetrics } from "./metrics.js";
+import { publicError, type RegisteredErrorCode } from "./errors.js";
 
 /**
  * Bazaar Service configuration
@@ -249,6 +250,14 @@ function parseAnnouncedResources(value?: string): ResourceMetadata[] {
   return parsed;
 }
 
+function errorResponse(
+  code: RegisteredErrorCode,
+  reason?: string,
+  details?: Record<string, unknown>,
+) {
+  return publicError(code, { reason, details });
+}
+
 /**
  * Bazaar Discovery Service
  *
@@ -346,11 +355,7 @@ export class BazaarService {
       const baseUrl = process.env.BAZAAR_BASE_URL;
       if (!baseUrl) {
         return c.json(
-          {
-            error: "not_configured",
-            message:
-              "BAZAAR_BASE_URL is not set, so this service cannot state the origin clients reach it at.",
-          },
+          errorResponse("internal_error", "BAZAAR_BASE_URL is not set, so this service cannot state the origin clients reach it at."),
           503,
         );
       }
@@ -458,7 +463,7 @@ export class BazaarService {
       try {
         const query = c.req.query("q") || c.req.query("query");
         if (!query) {
-          return c.json({ error: "Missing query parameter 'q'" }, 400);
+          return c.json(errorResponse("invalid_request", "Missing query parameter 'q'."), 400);
         }
 
         const results = await this.searchEngine.search({
@@ -480,13 +485,10 @@ export class BazaarService {
       } catch (error) {
         // A bad cursor is the client's mistake, and saying so beats a 500.
         if (error instanceof InvalidCursorError) {
-          return c.json({ error: "invalid_cursor", message: error.message }, 400);
+          return c.json(errorResponse("invalid_request", error.message, { field: "cursor" }), 400);
         }
         console.error("[Bazaar Service] Search error:", error);
-        return c.json({
-          error: "Search failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 500);
+        return c.json(errorResponse("internal_error", "Catalog search could not be completed."), 500);
       } finally {
         this.metrics.observe("veridex_search_latency", (performance.now() - startedAt) / 1000);
       }
@@ -511,13 +513,10 @@ export class BazaarService {
         return c.json(results);
       } catch (error) {
         if (error instanceof InvalidCursorError) {
-          return c.json({ error: "invalid_cursor", message: error.message }, 400);
+          return c.json(errorResponse("invalid_request", error.message, { field: "cursor" }), 400);
         }
         console.error("[Bazaar Service] List error:", error);
-        return c.json({
-          error: "List failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 500);
+        return c.json(errorResponse("internal_error", "Catalog listing could not be completed."), 500);
       }
     });
 
@@ -525,7 +524,7 @@ export class BazaarService {
     // separate from heartbeat liveness and settlement counters.
     this.app.get("/v1/provider", async (c) => {
       const endpoint = c.req.query("endpoint");
-      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
       const payTo = c.req.query("payTo");
       try {
         const aggregate = await this.providerQualityStore.getAggregate(endpoint, payTo);
@@ -549,18 +548,18 @@ export class BazaarService {
           maxAgeSeconds: 30 * 24 * 60 * 60,
         });
         if (!verification.valid) {
-          return c.json({ error: "provider_quality_unavailable", message: verification.error }, 503);
+          return c.json(errorResponse("provider_quality_unavailable", verification.error), 503);
         }
         return c.json(aggregate);
       } catch (error) {
         console.error("[Bazaar Service] Provider aggregate read error:", error);
-        return c.json({ error: "provider_quality_unavailable" }, 503);
+        return c.json(errorResponse("provider_quality_unavailable"), 503);
       }
     });
 
     this.app.get("/v1/provider/observations", async (c) => {
       const endpoint = c.req.query("endpoint");
-      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
       try {
         const observations = await this.providerQualityStore.listObservations(
           endpoint,
@@ -570,19 +569,19 @@ export class BazaarService {
         return c.json({ endpoint, observations });
       } catch (error) {
         console.error("[Bazaar Service] Provider observation read error:", error);
-        return c.json({ error: "provider_quality_unavailable" }, 503);
+        return c.json(errorResponse("provider_quality_unavailable"), 503);
       }
     });
 
     this.app.post("/provider-quality/aggregates/recompute", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       if (!this.config.providerAggregateIssuerSecretKey) {
-        return c.json({ error: "aggregate_issuer_not_configured" }, 503);
+        return c.json(errorResponse("provider_quality_unavailable", "Provider aggregate signing is not configured."), 503);
       }
       const endpoint = c.req.query("endpoint");
-      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
       const payTo = c.req.query("payTo") || undefined;
       try {
         const observations = await this.providerQualityStore.listObservationsForAggregate(endpoint, payTo);
@@ -599,7 +598,7 @@ export class BazaarService {
         await this.providerQualityStore.saveAggregate(aggregate);
         return c.json(aggregate, 200);
       } catch (error) {
-        return c.json({ error: "aggregate_recompute_failed", message: error instanceof Error ? error.message : String(error) }, 500);
+        return c.json(errorResponse("internal_error", "Provider aggregate recomputation failed."), 500);
       }
     });
 
@@ -608,10 +607,7 @@ export class BazaarService {
       try {
         if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
           return c.json(
-            {
-              error: "unauthorized",
-              message: "/announce requires the internal bearer token to publish gossip announcements",
-            },
+            errorResponse("unauthorized", "/announce requires the internal bearer token to publish gossip announcements."),
             401,
           );
         }
@@ -628,16 +624,13 @@ export class BazaarService {
         });
       } catch (error) {
         console.error("[Bazaar Service] Announce error:", error);
-        return c.json({
-          error: "Announcement failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 400);
+        return c.json(errorResponse("invalid_request", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
     this.app.post("/catalog/delta", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const delta = CatalogDeltaSchema.parse(await c.req.json());
@@ -648,10 +641,7 @@ export class BazaarService {
         });
         return c.json({ ...result, key: catalogDeltaKey(delta) }, result.status === "rejected" ? 400 : 202);
       } catch (error) {
-        return c.json({
-          error: "invalid_catalog_delta",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_catalog_delta", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
@@ -660,11 +650,7 @@ export class BazaarService {
       try {
         if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
           return c.json(
-            {
-              error: "unauthorized",
-              message:
-                "/catalog/ingest requires the facilitator's bearer token. This endpoint writes to the public catalog.",
-            },
+            errorResponse("unauthorized", "/catalog/ingest requires the facilitator's bearer token. This endpoint writes to the public catalog."),
             401,
           );
         }
@@ -699,10 +685,7 @@ export class BazaarService {
         }, 400);
       } catch (error) {
         console.error("[Bazaar Service] Ingestion error:", error);
-        return c.json({
-          error: "Ingestion failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 500);
+        return c.json(errorResponse("catalog_ingestion_failed"), 500);
       }
     });
 
@@ -710,7 +693,7 @@ export class BazaarService {
     // facilitator before settlement and contains hashes, not raw payloads.
     this.app.post("/provider-quality/observations", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const body = await c.req.json();
@@ -722,7 +705,7 @@ export class BazaarService {
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {
-          return c.json({ error: "invalid_provider_observation", message: verification.error }, 400);
+          return c.json(errorResponse("invalid_provider_observation", verification.error), 400);
         }
         const record = await this.providerQualityStore.recordObservation({ observation });
         this.metrics.increment("veridex_provider_observations_total");
@@ -730,10 +713,7 @@ export class BazaarService {
         this.enqueueProviderAggregateRecompute(observation.resource, observation.payTo);
         return c.json({ status: "accepted", id: record.id }, 202);
       } catch (error) {
-        return c.json({
-          error: "invalid_provider_observation",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_provider_observation", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
@@ -741,7 +721,7 @@ export class BazaarService {
     // signature, timestamp, endpoint, and payee checks succeed.
     this.app.post("/provider-quality/aggregates", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const aggregate = ProviderAggregateSchema.parse(await c.req.json());
@@ -752,21 +732,18 @@ export class BazaarService {
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {
-          return c.json({ error: "invalid_provider_aggregate", message: verification.error }, 400);
+          return c.json(errorResponse("invalid_provider_aggregate", verification.error), 400);
         }
         await this.providerQualityStore.saveAggregate(aggregate);
         return c.json({ status: "accepted" }, 202);
       } catch (error) {
-        return c.json({
-          error: "invalid_provider_aggregate",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_provider_aggregate", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
     this.app.post("/provider-quality/observations/settlement", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const body = await c.req.json();
@@ -775,7 +752,7 @@ export class BazaarService {
           typeof body?.signature !== "string" ||
           !/^[0-9a-f]{64}$/i.test(body?.settlementTx || "")
         ) {
-          return c.json({ error: "invalid_settlement_correlation" }, 400);
+          return c.json(errorResponse("invalid_request", "Settlement correlation requires signer, signature, and a transaction hash."), 400);
         }
         const attached = await this.providerQualityStore.attachSettlement(
           body.signer,
@@ -784,12 +761,9 @@ export class BazaarService {
         );
         return attached
           ? c.json({ status: "attached" }, 202)
-          : c.json({ error: "provider_observation_not_found" }, 404);
+          : c.json(errorResponse("not_found", "The provider observation was not found."), 404);
       } catch (error) {
-        return c.json({
-          error: "settlement_correlation_failed",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_request", error instanceof Error ? error.message : undefined), 400);
       }
     });
   }

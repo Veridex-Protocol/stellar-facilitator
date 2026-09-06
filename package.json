@@ -21,6 +21,8 @@
     "conformance": "npm --prefix conformance start",
     "demo": "./demo.sh",
     "outcomes": "node scripts/summarize-outcomes.mjs",
+    "errors:check": "node scripts/sync-error-registry.mjs --check",
+    "errors:sync": "node scripts/sync-error-registry.mjs",
     "probe": "node scripts/concurrency-probe.mjs",
     "probe:matrix": "node scripts/concurrency-matrix.mjs",
     "upto:build": "./scripts/build-upto.sh",

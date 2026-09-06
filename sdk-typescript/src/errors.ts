@@ -1,6 +1,6 @@
 /** Canonical outward-facing Veridex error contract. License: Apache-2.0 */
 
-import registry from "../../error-registry.json" with { type: "json" };
+import registry from "./error-registry.json" with { type: "json" };
 
 export type VeridexErrorCategory = "validation" | "network" | "payment" | "provider" | "discovery";
 export type VeridexRegisteredErrorCode = keyof typeof registry;

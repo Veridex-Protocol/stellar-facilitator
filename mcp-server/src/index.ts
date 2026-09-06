@@ -26,6 +26,7 @@ import {
 } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { validateSafeResourceUrl } from "./security.js";
+import { publicError, type RegisteredErrorCode } from "./errors.js";
 
 /**
  * MCP Server configuration
@@ -207,16 +208,12 @@ export class VeridexMCPServer {
         }
       } catch (error) {
         const reason = error instanceof Error ? error.message : "Unknown error";
+        const code = classifyToolError(reason);
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                ok: false,
-                code: "mcp_tool_failed",
-                reason,
-                retryable: false,
-              }),
+              text: JSON.stringify({ ok: false, ...publicError(code, { reason }) }),
             },
           ],
           isError: true,
@@ -351,7 +348,7 @@ export class VeridexMCPServer {
           text: JSON.stringify({
             ok: false,
             action: "sign_payment",
-            retryable: false,
+            ...publicError("mcp_signing_required"),
             signingLocation: "client_wallet",
             paymentRequired: {
               ...paymentRequired,
@@ -437,6 +434,15 @@ function paymentTermsEqual(left: PaymentRequirements, right: PaymentRequirements
     left.amount === right.amount &&
     left.payTo === right.payTo &&
     left.maxTimeoutSeconds === right.maxTimeoutSeconds;
+}
+
+function classifyToolError(reason: string): RegisteredErrorCode {
+  const lower = reason.toLowerCase();
+  if (lower.includes("ssrf") || lower.includes("resource") && lower.includes("url")) return "invalid_request";
+  if (lower.includes("spend ceiling") || lower.includes("payment payload") || lower.includes("payment-response")) return "payment_rejected";
+  if (lower.includes("timeout") || lower.includes("fetch failed") || lower.includes("unavailable")) return "resource_unavailable";
+  if (lower.includes("bazaar search")) return "provider_quality_unavailable";
+  return "mcp_tool_failed";
 }
 
 // Start only when run as a program. Importing this module for tests or to
