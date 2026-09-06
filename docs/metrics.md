@@ -16,7 +16,11 @@ process-local and reset on restart. Gauges represent scrape-time state.
 | `veridex_channel_sequence_drift` | Facilitator | counter | Sequence-drift events reported by the legacy channel settler. Canonical upstream exact does not currently expose this event, so it remains zero there. |
 | `veridex_rpc_requests_total` | Facilitator | counter | RPC-dependent verify and settle operations initiated by this process. This is an operation count, not raw SDK HTTP calls. |
 | `veridex_rpc_failures_total` | Facilitator | counter | Operations classified as upstream RPC unavailable. |
+| `veridex_rpc_failover_total` | Facilitator | counter | Coordinated RPC operations served by a non-primary provider. |
+| `veridex_rpc_latency` | Facilitator | histogram | Individual coordinated provider-call latency in seconds. |
 | `veridex_rpc_disagreements_total` | Facilitator | counter | Conflicting final transaction states from independent providers when `SOROBAN_RPC_URLS` enables coordination. |
+| `veridex_catalog_outbox_pending` | Facilitator | gauge | Durable post-settlement catalog events awaiting delivery. |
+| `veridex_catalog_outbox_oldest_age` | Facilitator | gauge | Age in seconds of the oldest retained catalog event. |
 | `veridex_catalog_resources_total` | Bazaar | gauge | HTTP and MCP resources currently searchable in the local catalog. |
 | `veridex_catalog_ingestion_lag` | Bazaar | gauge | Age in seconds of the oldest row still awaiting verification. |
 | `veridex_catalog_revalidation_failures_total` | Bazaar | counter | Rows quarantined by the periodic live-term worker. |
@@ -27,7 +31,9 @@ process-local and reset on restart. Gauges represent scrape-time state.
 | `veridex_provider_observations_total` | Bazaar | counter | Verified provider observations accepted. |
 | `veridex_provider_faults_total` | Bazaar | counter | Accepted observations explicitly attributed to provider fault. |
 | `veridex_p2p_messages_total` | Bazaar | counter | P2P messages received by this process. |
+| `veridex_p2p_invalid_total` | Bazaar | counter | Messages suppressed as invalid, stale, unauthorized, or unsupported. |
 | `veridex_p2p_replays_total` | Bazaar | counter | Announcement messages rejected as duplicate or out-of-order replay. |
+| `veridex_liveness_changes_total` | Bazaar | counter | Resource liveness state transitions applied by the periodic evaluator. |
 
 Example scrape:
 

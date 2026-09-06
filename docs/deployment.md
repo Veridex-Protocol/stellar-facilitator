@@ -211,7 +211,7 @@ cd mcp-server
 BAZAAR_URL=http://localhost:3001 \
 FACILITATOR_URL=http://localhost:3002 \
 STELLAR_NETWORK=testnet \
-STELLAR_CLIENT_SECRET_KEY=S... \
+MCP_MAX_SPEND_AMOUNT_STROOPS=10000000 \
 npm start
 ```
 

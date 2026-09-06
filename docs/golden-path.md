@@ -57,7 +57,7 @@ Discovery is settlement-seeded: a seller appears after a payment-backed catalog 
 
 ## Agent / MCP
 
-Run the repository MCP server with the local stack. Its active tools are `discover_resources` and `pay_resource`; it uses the same official x402 payment flow.
+Run the repository MCP server with the local stack. Its active tools are `discover_resources` and `pay_resource`. `pay_resource` returns a bounded challenge for the client wallet and accepts the externally signed payload on a second call; no buyer key is configured in MCP.
 
 The local demo resource uses a private Docker hostname, so enable local URLs
 only for this local stdio session. Keep the default disabled for deployments

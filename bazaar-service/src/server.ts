@@ -573,6 +573,21 @@ export class BazaarService {
       }
     });
 
+    this.app.get("/v1/provider/disagreements", async (c) => {
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
+      try {
+        const disagreements = await this.providerQualityStore.listDisagreements(
+          endpoint,
+          c.req.query("payTo"),
+          clampLimit(c.req.query("limit")),
+        );
+        return c.json({ endpoint, disagreements });
+      } catch {
+        return c.json(errorResponse("provider_quality_unavailable"), 503);
+      }
+    });
+
     this.app.post("/provider-quality/aggregates/recompute", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
         return c.json(errorResponse("unauthorized"), 401);
@@ -698,6 +713,7 @@ export class BazaarService {
       try {
         const body = await c.req.json();
         const observation = ProviderObservationSchema.parse(body.observation ?? body);
+        const source = body.source === "independent" ? "independent" : "in_band";
         const verification = verifyProviderObservation(observation, {
           expectedResource: observation.resource,
           expectedPayTo: observation.payTo,
@@ -707,9 +723,10 @@ export class BazaarService {
         if (!verification.valid) {
           return c.json(errorResponse("invalid_provider_observation", verification.error), 400);
         }
-        const record = await this.providerQualityStore.recordObservation({ observation });
+        const record = await this.providerQualityStore.recordObservation({ observation, source });
         this.metrics.increment("veridex_provider_observations_total");
         if (observation.providerAtFault) this.metrics.increment("veridex_provider_faults_total");
+        if (record.disagreementRecorded) this.metrics.increment("veridex_provider_disagreements_total");
         this.enqueueProviderAggregateRecompute(observation.resource, observation.payTo);
         return c.json({ status: "accepted", id: record.id }, 202);
       } catch (error) {

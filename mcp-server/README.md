@@ -9,7 +9,7 @@ Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x4
 This MCP server enables compatible clients to:
 
 1. **Discover resources** - Search Bazaar catalog with lexical-hybrid/keyword queries
-2. **Execute payments** - Pay for resource access via x402 Stellar protocol
+2. **Orchestrate payments** - Return a bounded x402 challenge to the client wallet, then submit only the externally signed payload
 
 ## Tools
 
@@ -46,28 +46,23 @@ Found 15 resources:
 
 ### `pay_resource`
 
-Execute x402 Stellar payment to access a resource.
+Prepare or submit an x402 Stellar payment without placing a buyer key in the MCP process.
 
 **Input:**
 ```json
 {
   "resourceUrl": "https://api.weather.io/forecast",
-  "amountStroops": "100000",
-  "toolName": "get_forecast"
+  "resourceUrl": "https://api.weather.io/forecast",
+  "maxAmount": "100000"
 }
 ```
 
-**Output:**
-```
-Payment successful.
-
-Resource: https://api.weather.io/forecast
-Amount: 100000 stroops (0.0100000 XLM)
-Transaction: abc123...
-Ledger: 12345678
-
-You can now access the resource with this authorization.
-```
+The first call returns `action: "sign_payment"`, `signingLocation:
+"client_wallet"`, and only payment alternatives within `maxAmount`. The client
+wallet signs one of those exact terms and calls `pay_resource` again with the
+resulting `paymentPayload`. The MCP server re-fetches the challenge, checks
+version, resource, network, scheme, asset, amount, payee, and timeout, and only
+then forwards `PAYMENT-SIGNATURE`.
 
 ---
 
@@ -80,7 +75,7 @@ Set environment variables:
 BAZAAR_URL=http://localhost:3001
 FACILITATOR_URL=http://localhost:3002
 STELLAR_NETWORK=testnet
-STELLAR_CLIENT_SECRET_KEY=S...
+MCP_MAX_SPEND_AMOUNT_STROOPS=10000000
 ```
 
 ## Usage
@@ -108,7 +103,6 @@ server may be asked to fetch arbitrary external URLs.
         "BAZAAR_URL": "http://localhost:3001",
         "FACILITATOR_URL": "http://localhost:3002",
         "STELLAR_NETWORK": "testnet",
-        "STELLAR_CLIENT_SECRET_KEY": "S...",
         "MCP_ALLOW_LOCAL_URLS": "true"
       }
     }
@@ -124,8 +118,9 @@ The server exposes two tools after the client reconnects: `discover_resources` a
 
 1. Call `discover_resources` with `{"query":"weather API"}`.
 2. Select a resource from the ranked results.
-3. Call `pay_resource` with the resource URL and amount.
-4. Use the returned authorization to access the resource.
+3. Call `pay_resource` with the resource URL and local spending ceiling.
+4. Sign the returned bounded challenge in the client wallet.
+5. Call `pay_resource` again with the externally signed `paymentPayload`.
 
 ## Development
 
@@ -142,9 +137,10 @@ npm run typecheck
 
 ## Security
 
-- Client secret key is required for payment operations
-- All transactions are signed with Stellar signatures
-- MCP server runs locally with stdio transport (no network exposure)
+- The MCP process has no buyer private key and performs no signing
+- Externally signed payloads must match the freshly re-fetched challenge
+- Seller descriptions and paid bodies are returned inside `untrusted_seller_data`
+- SSRF protections are enabled by default; local URLs require an explicit development override
 
 ## MCP Client Integration
 
@@ -159,7 +155,6 @@ const transport = new StdioClientTransport({
     BAZAAR_URL: 'http://localhost:3001',
     FACILITATOR_URL: 'http://localhost:3002',
     STELLAR_NETWORK: 'testnet',
-    STELLAR_CLIENT_SECRET_KEY: 'S...',
   },
 });
 

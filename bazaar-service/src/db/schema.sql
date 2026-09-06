@@ -147,6 +147,8 @@ CREATE TABLE IF NOT EXISTS provider_observations (
     settlement_tx TEXT,
     signer TEXT NOT NULL,
     signature TEXT NOT NULL,
+    observation_source TEXT NOT NULL DEFAULT 'in_band'
+        CHECK (observation_source IN ('in_band', 'independent')),
     outcome JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT provider_observations_unique_signature UNIQUE (signer, signature)
@@ -156,6 +158,21 @@ CREATE INDEX IF NOT EXISTS idx_provider_observations_resource_time
     ON provider_observations (resource, pay_to, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_observations_settlement
     ON provider_observations (settlement_tx) WHERE settlement_tx IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS provider_observation_disagreements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    resource TEXT NOT NULL,
+    pay_to TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    in_band_observation_id UUID NOT NULL REFERENCES provider_observations(id),
+    independent_observation_id UUID NOT NULL REFERENCES provider_observations(id),
+    fields TEXT[] NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT provider_observation_disagreement_pair UNIQUE (in_band_observation_id, independent_observation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_disagreements_resource_time
+    ON provider_observation_disagreements (resource, pay_to, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS provider_quality_aggregates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

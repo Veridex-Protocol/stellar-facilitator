@@ -168,7 +168,7 @@ docker compose --profile mcp run --rm mcp-server
 | Tool | What it does |
 | --- | --- |
 | `discover_resources` | Searches the Bazaar and returns ranked resources with telemetry |
-| `pay_resource` | Performs the 402 challenge, the payment and the retry, then returns the result |
+| `pay_resource` | Returns a bounded 402 challenge for the client wallet, then revalidates and submits the externally signed payload |
 
 Inputs and outputs are structured, and every failure carries a machine-readable reason code, so an agent can branch on `invalid_exact_stellar_payload_simulation_failed` without parsing prose.
 
