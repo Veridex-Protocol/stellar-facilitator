@@ -65,6 +65,8 @@ Set the following environment variables (or copy from `.env.testnet.example`):
 | `STELLAR_NETWORK` | Stellar network (`testnet` or `pubnet`) | `testnet` |
 | `HORIZON_URL` | Horizon API endpoint | `https://horizon-testnet.stellar.org` |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint | `https://soroban-testnet.stellar.org` |
+| `SOROBAN_RPC_URLS` | Ordered, comma-separated independent Soroban RPC providers. Enables bounded failover when at least two are configured; testnet only in this release. | Value of `SOROBAN_RPC_URL` |
+| `RPC_REQUEST_TIMEOUT_MS` | Per-provider coordinator timeout | `5000` |
 | `FACILITATOR_SECRET_KEY` | Stellar S-secret key for the facilitator master signer | Required |
 | `CHANNEL_SECRET_KEYS` | Comma-separated list of funded channel signer secret keys | Optional |
 | `MAX_TRANSACTION_FEE_STROOPS`| Max network fee per settlement sponsored by facilitator | `50000` (0.005 XLM) |

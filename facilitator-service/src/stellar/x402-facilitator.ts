@@ -153,6 +153,12 @@ export class X402Facilitator {
     this.scheduler.setSigners([...this.exactScheme.signingAddresses]);
   }
 
+  public setRpcUrl(rpcUrl: string): void {
+    this.config.rpcUrl = rpcUrl;
+    this.buildSchemes();
+    this.scheduler.setSigners([...this.exactScheme.signingAddresses]);
+  }
+
   /** Whether this deployment currently claims fee sponsorship. */
   public get areFeesSponsored(): boolean {
     return this.config.areFeesSponsored;

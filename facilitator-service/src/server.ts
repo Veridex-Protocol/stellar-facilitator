@@ -55,6 +55,7 @@ import {
   type CapabilityJob,
 } from "./capability-descriptor.js";
 import { createFacilitatorMetrics, type PrometheusRegistry } from "./metrics.js";
+import { RpcCoordinator } from "./rpc-coordinator.js";
 
 /** Legacy (pre-canonical) Stellar request, served only under /legacy/*. */
 const X402StellarRequestSchema = z.object({
@@ -85,6 +86,7 @@ export interface FacilitatorServiceConfig {
   settleQueueTimeoutMs: number;
   /** Maximum best-effort delay after settlement while reporting catalog status. */
   catalogHandoffTimeoutMs: number;
+  rpcRequestTimeoutMs: number;
   rateLimit: { windowMs: number; max: number };
   /** Path to the JSON job list backing `/.well-known/x402`. */
   jobsFile?: string;
@@ -118,6 +120,10 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
   const rpcUrl =
     process.env.SOROBAN_RPC_URL ||
     (network === "pubnet" ? "https://mainnet.sorobanrpc.com" : "https://soroban-testnet.stellar.org");
+  const rpcUrls = (process.env.SOROBAN_RPC_URLS || rpcUrl)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   const port = parseInt(process.env.FACILITATOR_PORT || "3002", 10);
   const host = process.env.FACILITATOR_HOST || "0.0.0.0";
@@ -150,6 +156,7 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
     // that a caller gets a usable answer well inside a typical HTTP timeout.
     settleQueueTimeoutMs: parseInt(process.env.SETTLE_QUEUE_TIMEOUT_MS || "30000", 10),
     catalogHandoffTimeoutMs: parseInt(process.env.CATALOG_HANDOFF_TIMEOUT_MS || "2000", 10),
+    rpcRequestTimeoutMs: parseInt(process.env.RPC_REQUEST_TIMEOUT_MS || "5000", 10),
     jobsFile: process.env.X402_JOBS_FILE || undefined,
     intendToSponsorFees: process.env.SPONSOR_FEES !== "false",
     stellar: {
@@ -157,6 +164,7 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
       networkPassphrase,
       horizonUrl,
       rpcUrl,
+      rpcUrls,
       facilitatorPublicKey,
       facilitatorSecretKey,
     },
@@ -199,6 +207,7 @@ export class FacilitatorService {
   private x402Facilitator: X402Facilitator;
   private logger: Logger;
   private metrics: PrometheusRegistry;
+  private rpcCoordinator?: RpcCoordinator;
   private httpServer?: ServerType;
   private serviceReady = false;
   private capabilities: VerifiedCapabilities;
@@ -392,6 +401,11 @@ export class FacilitatorService {
         // too small for the offered load.
         settlementConcurrency: this.x402Facilitator.getSchedulerStats(),
         channels: this.channelPool.getStats(),
+        rpcProviders: this.rpcCoordinator?.getHealth() ?? [{
+          url: this.config.stellar.rpcUrl,
+          healthy: true,
+          consecutiveFailures: 0,
+        }],
         timestamp: Date.now(),
       });
     });
@@ -1014,18 +1028,42 @@ export class FacilitatorService {
       baseUrl: this.config.baseUrl,
     });
 
-    await this.channelPool.initialize();
-    this.x402Facilitator.refreshSigners();
+    try {
+      const rpcProviders = this.config.stellar.rpcUrls ?? [this.config.stellar.rpcUrl];
+      if (rpcProviders.length > 1) {
+        if (this.config.stellar.network !== "testnet") {
+          throw new Error("SOROBAN_RPC_URLS multi-provider mode is testnet-only until the local coordinator supports TLS");
+        }
+        this.rpcCoordinator = new RpcCoordinator({
+          providers: rpcProviders,
+          networkPassphrase: this.config.stellar.networkPassphrase,
+          requestTimeoutMs: this.config.rpcRequestTimeoutMs,
+          onFailure: () => this.metrics.increment("veridex_rpc_failures_total"),
+          onDisagreement: () => this.metrics.increment("veridex_rpc_disagreements_total"),
+        });
+        const coordinatedRpcUrl = await this.rpcCoordinator.start();
+        this.config.stellar.rpcUrl = coordinatedRpcUrl;
+        this.verifier = createVerifier(this.config.stellar);
+        this.x402Facilitator.setRpcUrl(coordinatedRpcUrl);
+      }
 
-    // Everything advertised is confirmed here. A failure aborts the boot.
-    await this.runStartupChecks();
+      await this.channelPool.initialize();
+      this.x402Facilitator.refreshSigners();
 
-    this.httpServer = serve({
-      fetch: this.app.fetch,
-      port: this.config.port,
-      hostname: this.config.host,
-    });
-    this.serviceReady = true;
+      // Everything advertised is confirmed here. A failure aborts the boot.
+      await this.runStartupChecks();
+
+      this.httpServer = serve({
+        fetch: this.app.fetch,
+        port: this.config.port,
+        hostname: this.config.host,
+      });
+      this.serviceReady = true;
+    } catch (error) {
+      await this.rpcCoordinator?.stop();
+      this.rpcCoordinator = undefined;
+      throw error;
+    }
 
     this.logger.info("facilitator ready", {
       url: `http://${this.config.host}:${this.config.port}`,
@@ -1044,6 +1082,8 @@ export class FacilitatorService {
       this.httpServer = undefined;
     }
     await this.channelPool.shutdown();
+    await this.rpcCoordinator?.stop();
+    this.rpcCoordinator = undefined;
     this.logger.info("facilitator stopped");
   }
 

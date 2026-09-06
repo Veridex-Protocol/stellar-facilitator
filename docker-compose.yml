@@ -124,6 +124,8 @@ services:
       # Channel Account Pool
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      SOROBAN_RPC_URLS: ${SOROBAN_RPC_URLS:-${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}}
+      RPC_REQUEST_TIMEOUT_MS: ${RPC_REQUEST_TIMEOUT_MS:-5000}
       CHANNEL_POOL_SIZE: ${CHANNEL_POOL_SIZE:-0}
       CHANNEL_SECRET_KEYS: ${CHANNEL_SECRET_KEYS:-}
       CHANNEL_AUTO_CREATE: ${CHANNEL_AUTO_CREATE:-false}

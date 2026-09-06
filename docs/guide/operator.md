@@ -86,6 +86,28 @@ LEDGER_SKEW_RETRY_DELAY_MS=6000     # must exceed ~5s, or every attempt sees the
 
 It never retries a failure carrying a transaction hash, because that transaction reached the network and retrying it risks settling twice.
 
+For independent-provider failover on testnet, configure an ordered list:
+
+```bash
+SOROBAN_RPC_URLS=https://rpc-primary.example,https://rpc-secondary.example
+RPC_REQUEST_TIMEOUT_MS=5000
+```
+
+Read calls fail over after a bounded transport failure. Before submission, the
+coordinator health-checks providers and chooses one healthy target. It submits a
+signed envelope to exactly one provider. If that call times out, it computes the
+same envelope hash locally and reconciles `getTransaction` across every provider;
+it never sends the envelope a second time. Conflicting final `SUCCESS`/`FAILED`
+states fail safely and increment `veridex_rpc_disagreements_total`.
+
+Provider health is visible under `rpcProviders` on `/stats`. The local coordinator
+is testnet-only in this release because the pinned Stellar scheme permits its
+loopback HTTP transport only on testnet; pubnet remains approval-gated.
+
+This resolves RPC submission ambiguity, not channel-state recovery. The upstream
+scheme scheduler still does not expose which signer submitted an ambiguous
+transaction, so automatic uncertain-channel quarantine remains a release gap.
+
 Do not attempt to fix this by widening the expiration tolerance. That check bounds how long a signed authorization stays live, so it is a security property rather than the bug.
 
 ## 5. Catalog integrity
