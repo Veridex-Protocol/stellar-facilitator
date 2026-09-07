@@ -49,6 +49,7 @@ describe("facilitator Prometheus metrics", () => {
       "veridex_channel_quarantined",
       "veridex_channel_sequence_drift",
       "veridex_rpc_failures_total",
+      "veridex_rpc_reconciliation_total",
       "veridex_rpc_disagreements_total",
     ]) {
       expect(text).toContain(`# HELP ${name} `);

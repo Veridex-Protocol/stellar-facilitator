@@ -16,6 +16,7 @@
  * with no contract behind it, or fee sponsorship from an unfunded account.
  */
 
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { serve, type ServerType } from "@hono/node-server";
 import { cors } from "hono/cors";
@@ -273,15 +274,24 @@ export class FacilitatorService {
 
   private setupMiddleware(): void {
     this.app.use("*", secureHeaders());
+    this.app.use("*", async (c, next) => {
+      const incoming = c.req.header("X-Request-Id")?.trim();
+      const requestId = incoming && /^[A-Za-z0-9._:-]{1,128}$/.test(incoming)
+        ? incoming
+        : randomUUID();
+      (c as any).set("requestId", requestId);
+      c.header("X-Request-Id", requestId);
+      await next();
+    });
     this.app.use(
       "*",
       cors({
         origin: process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) ?? "*",
         allowMethods: ["GET", "POST", "OPTIONS"],
-        allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL", "X-Job-Id"],
+        allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL", "X-Job-Id", "X-Request-Id", "X-Payment-Id"],
         // Cataloging outcomes are reported in this header; without exposing it
         // a browser-based caller cannot read its own listing result.
-        exposeHeaders: ["EXTENSION-RESPONSES", "RateLimit-Limit", "RateLimit-Remaining", "Retry-After"],
+        exposeHeaders: ["EXTENSION-RESPONSES", "RateLimit-Limit", "RateLimit-Remaining", "Retry-After", "X-Request-Id"],
       }),
     );
 
@@ -306,6 +316,7 @@ export class FacilitatorService {
         max: this.config.rateLimit.max,
         onRejected: (c) =>
           this.logger.outcome({
+            ...requestLogContext(c),
             endpoint: c.req.path,
             outcome: "rate_limited",
             status: 429,
@@ -487,6 +498,7 @@ export class FacilitatorService {
           },
         };
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/verify",
           outcome: "invalid",
           reason: response.invalidReason,
@@ -520,6 +532,7 @@ export class FacilitatorService {
         if (result.isValid) this.stats.successfulVerifications++;
 
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/verify",
           outcome: result.isValid ? "valid" : "invalid",
           reason: result.invalidReason,
@@ -544,6 +557,7 @@ export class FacilitatorService {
           this.metrics.increment("veridex_rpc_failures_total");
         }
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/verify",
           outcome: isClientFault ? "invalid" : "error",
           reason,
@@ -581,6 +595,7 @@ export class FacilitatorService {
           },
         };
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/settle",
           outcome: "failed",
           reason: response.errorReason,
@@ -617,6 +632,7 @@ export class FacilitatorService {
           this.metrics.increment("veridex_settlement_failures_total");
           this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
           this.logger.outcome({
+            ...requestLogContext(c, body, result.transaction),
             endpoint: "/settle",
             outcome: "failed",
             reason: result.errorReason,
@@ -646,6 +662,7 @@ export class FacilitatorService {
         const receipt = this.issueReceipt(c, paymentPayload, paymentRequirements, result);
 
         this.logger.outcome({
+          ...requestLogContext(c, body, result.transaction),
           endpoint: "/settle",
           outcome: "settled",
           transaction: result.transaction,
@@ -682,6 +699,7 @@ export class FacilitatorService {
           this.logger.warn("settle raised", { reason, detail: errorDetail(error) });
         }
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/settle",
           outcome: "failed",
           reason,
@@ -1131,6 +1149,7 @@ export class FacilitatorService {
           onFailure: () => this.metrics.increment("veridex_rpc_failures_total"),
           onFailover: () => this.metrics.increment("veridex_rpc_failover_total"),
           onLatency: (seconds) => this.metrics.observe("veridex_rpc_latency", seconds),
+          onReconciliation: () => this.metrics.increment("veridex_rpc_reconciliation_total"),
           onDisagreement: () => this.metrics.increment("veridex_rpc_disagreements_total"),
         });
         const coordinatedRpcUrl = await this.rpcCoordinator.start();
@@ -1231,6 +1250,25 @@ function encodeQueuedCatalogResponse(transaction: string): string {
       transaction,
     },
   })).toString("base64");
+}
+
+function requestLogContext(
+  c: any,
+  body?: unknown,
+  transactionHash?: string,
+): Pick<import("./logger.js").RequestOutcome, "requestId" | "paymentId" | "resource" | "transactionHash"> {
+  const requestId = c.get("requestId") as string | undefined;
+  const paymentId = c.req.header("X-Payment-Id")?.trim();
+  const candidate = body && typeof body === "object"
+    ? (body as { paymentPayload?: { resource?: { url?: unknown } } }).paymentPayload?.resource?.url
+    : undefined;
+  const resource = typeof candidate === "string" ? candidate.slice(0, 2048) : undefined;
+  return {
+    ...(requestId ? { requestId } : {}),
+    ...(paymentId && /^[A-Za-z0-9._:-]{1,128}$/.test(paymentId) ? { paymentId } : {}),
+    ...(resource ? { resource } : {}),
+    ...(transactionHash ? { transactionHash } : {}),
+  };
 }
 
 /**

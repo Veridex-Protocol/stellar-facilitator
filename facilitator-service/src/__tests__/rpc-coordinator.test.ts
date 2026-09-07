@@ -29,6 +29,13 @@ function rpcResult(id: unknown, result: unknown): Response {
   });
 }
 
+function rpcFailure(id: unknown, code: number, message: string): Response {
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 describe("Soroban RPC coordinator", () => {
   it("serves JSON-RPC responses through the actual Stellar SDK client", async () => {
     const coordinator = new RpcCoordinator({
@@ -114,13 +121,41 @@ describe("Soroban RPC coordinator", () => {
     expect(latencies.every((value) => value >= 0)).toBe(true);
   });
 
+  it("fails over a read after a primary JSON-RPC server error", async () => {
+    const calls: string[] = [];
+    let failures = 0;
+    let failovers = 0;
+    const coordinator = new RpcCoordinator({
+      providers: ["https://primary.example", "https://secondary.example"],
+      networkPassphrase: Networks.TESTNET,
+      onFailure: () => failures++,
+      onFailover: () => failovers++,
+      fetchImpl: (async (input, init) => {
+        calls.push(String(input));
+        const body = JSON.parse(String(init?.body));
+        return String(input).includes("primary")
+          ? rpcFailure(body.id, -32001, "provider unavailable")
+          : rpcResult(body.id, { status: "healthy", latestLedger: 123 });
+      }) as typeof fetch,
+    });
+
+    const result = await coordinator.handle({ jsonrpc: "2.0", id: 6, method: "getHealth" });
+
+    expect(result.result).toMatchObject({ status: "healthy", latestLedger: 123 });
+    expect(calls).toEqual(["https://primary.example", "https://secondary.example"]);
+    expect(failures).toBe(1);
+    expect(failovers).toBe(1);
+  });
+
   it("reconciles an ambiguous submission hash without sending the transaction twice", async () => {
     const xdr = transactionXdr();
     const expectedHash = TransactionBuilder.fromXDR(xdr, Networks.TESTNET).hash().toString("hex");
     const submissions: string[] = [];
+    let reconciliations = 0;
     const coordinator = new RpcCoordinator({
       providers: ["https://primary.example", "https://secondary.example"],
       networkPassphrase: Networks.TESTNET,
+      onReconciliation: () => reconciliations++,
       fetchImpl: (async (input, init) => {
         const url = String(input);
         const body = JSON.parse(String(init?.body));
@@ -147,6 +182,7 @@ describe("Soroban RPC coordinator", () => {
 
     expect(result).toMatchObject({ result: { status: "PENDING", hash: expectedHash } });
     expect(submissions).toEqual(["https://primary.example"]);
+    expect(reconciliations).toBe(1);
   });
 
   it("preserves the hash when every provider still reports not found", async () => {

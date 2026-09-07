@@ -911,6 +911,7 @@ export class BazaarService {
           limit: this.config.catalogRevalidationBatchSize,
         }).then((summary) => {
           this.metrics.increment("veridex_catalog_revalidation_failures_total", summary.quarantined);
+          this.metrics.increment("veridex_catalog_revalidation_retained_total", summary.retained);
           if (summary.checked > 0) console.log("[Bazaar Service] Catalog revalidation", summary);
         }).catch((error) =>
           console.error("[Bazaar Service] Catalog revalidation failed:", error)

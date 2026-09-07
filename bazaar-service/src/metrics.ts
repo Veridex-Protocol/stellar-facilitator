@@ -80,6 +80,7 @@ export function createBazaarMetrics(): BazaarMetrics {
   metrics.define("veridex_catalog_resources_total", "HTTP and MCP resources currently searchable in the local catalog.", "gauge");
   metrics.define("veridex_catalog_ingestion_lag", "Age in seconds of the oldest pending catalog verification row.", "gauge");
   metrics.define("veridex_catalog_revalidation_failures_total", "Catalog rows quarantined after live payment-term revalidation failed.", "counter");
+  metrics.define("veridex_catalog_revalidation_retained_total", "Catalog rows retained for retry after a temporary live payment-term validation failure.", "counter");
   metrics.define("veridex_embedding_backlog", "Catalog rows awaiting an embedding.", "gauge");
   metrics.define("veridex_search_requests_total", "Hybrid catalog search requests accepted for processing.", "counter");
   metrics.defineHistogram("veridex_search_latency", "Hybrid catalog search handler latency in seconds.");

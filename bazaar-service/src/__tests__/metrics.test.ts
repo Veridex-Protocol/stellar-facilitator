@@ -39,6 +39,7 @@ describe("Bazaar Prometheus metrics", () => {
     expect(text).toContain("# TYPE veridex_search_latency histogram");
     for (const name of [
       "veridex_catalog_revalidation_failures_total",
+      "veridex_catalog_revalidation_retained_total",
       "veridex_search_requests_total",
       "veridex_search_zero_results_total",
       "veridex_provider_observations_total",

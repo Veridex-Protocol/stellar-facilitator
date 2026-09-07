@@ -13,6 +13,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { randomUUID } from "node:crypto";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -43,6 +44,13 @@ export interface MCPServerConfig {
     network: "pubnet" | "testnet";
     defaultMaxSpendAmount?: string;
   };
+}
+
+export interface MCPToolStats {
+  calls: number;
+  successes: number;
+  failures: number;
+  latencyMsTotal: number;
 }
 
 /**
@@ -103,6 +111,7 @@ export const PayResourceSchema = z.object({
 export class VeridexMCPServer {
   private server: Server;
   private config: MCPServerConfig;
+  private readonly toolStats = new Map<string, MCPToolStats>();
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -143,7 +152,7 @@ export class VeridexMCPServer {
               },
               network: {
                 type: "string",
-                description: "Network filter (default: 'stellar:pubnet')",
+                description: "CAIP-2 network filter (current deployment default: 'stellar:testnet')",
               },
               limit: {
                 type: "number",
@@ -226,7 +235,8 @@ export class VeridexMCPServer {
    * Handle discover_resources tool
    */
   async handleDiscoverResources(args: unknown): Promise<any> {
-    const params = DiscoverResourcesSchema.parse(args);
+    return this.trackToolCall("discover_resources", undefined, async () => {
+      const params = DiscoverResourcesSchema.parse(args);
 
     // Query Bazaar service
     const url = new URL("/discovery/search", this.config.bazaarUrl);
@@ -265,25 +275,31 @@ export class VeridexMCPServer {
         }))
       : [];
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            ok: true,
-            total: results.total ?? resources.length,
-            resources,
-          }),
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: true,
+              total: results.total ?? resources.length,
+              resources,
+            }),
+          },
+        ],
+      };
+    });
   }
 
   /**
    * Handle pay_resource tool
    */
   async handlePayResource(args: unknown): Promise<any> {
-    const params = PayResourceSchema.parse(args);
+    const unparsed = args && typeof args === "object" ? args as Record<string, unknown> : {};
+    return this.trackToolCall(
+      "pay_resource",
+      typeof unparsed.resourceUrl === "string" ? unparsed.resourceUrl : undefined,
+      async () => {
+        const params = PayResourceSchema.parse(args);
 
     // SSRF Validation: validate the resource URL before making any network calls
     const requestUrl = validateSafeResourceUrl(params.resourceUrl);
@@ -383,24 +399,98 @@ export class VeridexMCPServer {
     if (!paymentResponse) throw new Error("Paid resource response did not include PAYMENT-RESPONSE settlement evidence");
     const result = decodePaymentResponseHeader(paymentResponse);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            ok: true,
-            resource: params.resourceUrl,
-            transaction: result.transaction,
-            network: result.network,
-            sellerResponse: {
-              trust: "untrusted_seller_data",
-              contentType: paidResponse.headers.get("content-type"),
-              body: responseBody,
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                resource: params.resourceUrl,
+                transaction: result.transaction,
+                network: result.network,
+                sellerResponse: {
+                  trust: "untrusted_seller_data",
+                  contentType: paidResponse.headers.get("content-type"),
+                  body: responseBody,
+                },
+              }),
             },
-          }),
-        },
-      ],
-    };
+          ],
+        };
+      },
+    );
+  }
+
+  getStats(): Record<string, MCPToolStats> {
+    return Object.fromEntries([...this.toolStats].map(([tool, stats]) => [tool, { ...stats }]));
+  }
+
+  getMetricsText(): string {
+    const lines = [
+      "# HELP veridex_mcp_calls_total MCP tool calls accepted by this process.",
+      "# TYPE veridex_mcp_calls_total counter",
+      "# HELP veridex_mcp_failures_total MCP tool calls that raised an error.",
+      "# TYPE veridex_mcp_failures_total counter",
+      "# HELP veridex_mcp_latency_seconds_total Cumulative MCP tool call latency in seconds.",
+      "# TYPE veridex_mcp_latency_seconds_total counter",
+    ];
+    for (const [tool, stats] of [...this.toolStats].sort(([left], [right]) => left.localeCompare(right))) {
+      lines.push(
+        `veridex_mcp_calls_total{tool="${tool}"} ${stats.calls}`,
+        `veridex_mcp_failures_total{tool="${tool}"} ${stats.failures}`,
+        `veridex_mcp_latency_seconds_total{tool="${tool}"} ${stats.latencyMsTotal / 1000}`,
+      );
+    }
+    return `${lines.join("\n")}\n`;
+  }
+
+  private async trackToolCall<T>(
+    tool: string,
+    resource: string | undefined,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const requestId = randomUUID();
+    const startedAt = performance.now();
+    const stats = this.toolStats.get(tool) ?? { calls: 0, successes: 0, failures: 0, latencyMsTotal: 0 };
+    stats.calls++;
+    this.toolStats.set(tool, stats);
+    try {
+      const result = await operation();
+      stats.successes++;
+      this.logToolOutcome({ tool, requestId, resource, outcome: "success", latencyMs: performance.now() - startedAt });
+      return result;
+    } catch (error) {
+      stats.failures++;
+      this.logToolOutcome({
+        tool,
+        requestId,
+        resource,
+        outcome: "failure",
+        reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+        latencyMs: performance.now() - startedAt,
+      });
+      throw error;
+    } finally {
+      stats.latencyMsTotal += performance.now() - startedAt;
+    }
+  }
+
+  private logToolOutcome(entry: {
+    tool: string;
+    requestId: string;
+    resource?: string;
+    outcome: "success" | "failure";
+    reason?: string;
+    latencyMs: number;
+  }): void {
+    process.stderr.write(`${JSON.stringify({
+      time: new Date().toISOString(),
+      level: entry.outcome === "success" ? "info" : "warn",
+      service: "mcp-server",
+      kind: "mcp_tool_outcome",
+      ...entry,
+      latencyMs: Math.round(entry.latencyMs),
+    })}\n`);
   }
 
   /**

@@ -37,6 +37,7 @@ export interface RpcCoordinatorOptions {
   onFailure?: () => void;
   onFailover?: () => void;
   onLatency?: (seconds: number) => void;
+  onReconciliation?: () => void;
   onDisagreement?: () => void;
 }
 
@@ -66,6 +67,7 @@ export class RpcCoordinator {
       onFailure: options.onFailure ?? (() => undefined),
       onFailover: options.onFailover ?? (() => undefined),
       onLatency: options.onLatency ?? (() => undefined),
+      onReconciliation: options.onReconciliation ?? (() => undefined),
       onDisagreement: options.onDisagreement ?? (() => undefined),
     };
   }
@@ -180,6 +182,7 @@ export class RpcCoordinator {
   }
 
   private async reconcile(hash: string, id: JsonRpcRequest["id"]): Promise<JsonRpcResponse> {
+    this.options.onReconciliation();
     const request: JsonRpcRequest = { jsonrpc: "2.0", id, method: "getTransaction", params: { hash } };
     const responses: JsonRpcResponse[] = [];
     for (const provider of this.orderedProviders()) {
@@ -227,6 +230,10 @@ export class RpcCoordinator {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json() as JsonRpcResponse;
+      const rpcFailure = body.error;
+      if (isRetryableProviderError(rpcFailure)) {
+        throw new Error(`JSON-RPC ${rpcFailure.code}: ${rpcFailure.message}`);
+      }
       provider.healthy = true;
       provider.consecutiveFailures = 0;
       provider.lastSuccessAt = Date.now();
@@ -252,6 +259,12 @@ export class RpcCoordinator {
       .hash()
       .toString("hex");
   }
+}
+
+function isRetryableProviderError(
+  error: JsonRpcResponse["error"],
+): error is NonNullable<JsonRpcResponse["error"]> {
+  return Boolean(error && error.code >= -32099 && error.code <= -32000);
 }
 
 function rpcError(id: JsonRpcRequest["id"], code: number, message: string, data?: unknown): JsonRpcResponse {

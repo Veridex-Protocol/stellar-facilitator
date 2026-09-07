@@ -90,6 +90,7 @@ export interface IngestionResult {
 export interface CatalogRevalidationSummary {
   checked: number;
   refreshed: number;
+  retained: number;
   quarantined: number;
   failures: Record<string, number>;
 }
@@ -339,6 +340,7 @@ export class CatalogIngestionWorker {
     const summary: CatalogRevalidationSummary = {
       checked: 0,
       refreshed: 0,
+      retained: 0,
       quarantined: 0,
       failures: {},
     };
@@ -394,15 +396,27 @@ export class CatalogIngestionWorker {
         }
 
         const code = validation.code ?? "catalog_live_payment_validation_failed";
+        const reason = `${code}: ${validation.reason ?? "live payment-term validation failed"}`;
+        summary.failures[code] = (summary.failures[code] ?? 0) + 1;
+        if (validation.retryable) {
+          await client.query(
+            `UPDATE catalog_resources SET
+               verification_status = 'pending', verification_reason = $2
+             WHERE id = $1`,
+            [row.id, reason],
+          );
+          summary.retained++;
+          continue;
+        }
+
         await client.query(
           `UPDATE catalog_resources SET
              soft_dropped = true, verification_status = 'quarantined',
              verification_reason = $2
            WHERE id = $1`,
-          [row.id, `${code}: ${validation.reason ?? "live payment-term validation failed"}`],
+          [row.id, reason],
         );
         summary.quarantined++;
-        summary.failures[code] = (summary.failures[code] ?? 0) + 1;
       }
       return summary;
     } finally {

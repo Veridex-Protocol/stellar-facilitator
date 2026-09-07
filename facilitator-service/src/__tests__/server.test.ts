@@ -132,14 +132,33 @@ describe("canonical facilitator HTTP surface", () => {
 
     await service.getApp().request("/verify", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Request-Id": "review-request-1",
+        "X-Payment-Id": "payment-1",
+      },
       body: "{}",
     });
 
     const outcomes = lines.filter((line) => line.kind === "request_outcome");
     expect(outcomes).toHaveLength(1);
-    expect(outcomes[0]).toMatchObject({ endpoint: "/verify", outcome: "invalid", status: 400 });
+    expect(outcomes[0]).toMatchObject({
+      endpoint: "/verify",
+      outcome: "invalid",
+      status: 400,
+      requestId: "review-request-1",
+      paymentId: "payment-1",
+    });
     expect(typeof outcomes[0].latencyMs).toBe("number");
+  });
+
+  it("generates and echoes a safe request id when the caller does not supply one", async () => {
+    const { config } = makeConfig();
+    const service = new FacilitatorService(config, recordingLogger().logger);
+
+    const response = await service.getApp().request("/health");
+
+    expect(response.headers.get("X-Request-Id")).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("rate limits before it will spend fees on an unbounded request rate", async () => {

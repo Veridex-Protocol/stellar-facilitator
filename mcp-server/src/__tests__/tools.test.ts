@@ -86,6 +86,10 @@ describe("discover_resources", () => {
     expect(url.pathname).toBe("/discovery/search");
     expect(url.searchParams.get("q")).toBe("weather forecast");
     expect(url.searchParams.get("limit")).toBe("5");
+    expect(server.getStats()).toMatchObject({
+      discover_resources: { calls: 1, successes: 1, failures: 0 },
+    });
+    expect(server.getMetricsText()).toContain('veridex_mcp_calls_total{tool="discover_resources"} 1');
   });
 
   it("applies a network filter when the agent supplies one", async () => {
@@ -154,6 +158,9 @@ describe("discover_resources", () => {
     const server = new VeridexMCPServer(CONFIG);
 
     await expect(server.handleDiscoverResources({})).rejects.toThrow();
+    expect(server.getStats()).toMatchObject({
+      discover_resources: { calls: 1, successes: 0, failures: 1 },
+    });
   });
 });
 

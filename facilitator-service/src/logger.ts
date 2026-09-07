@@ -22,8 +22,12 @@ export interface RequestOutcome {
   status: number;
   latencyMs: number;
   reason?: string;
+  requestId?: string;
+  paymentId?: string;
+  resource?: string;
   payer?: string;
   transaction?: string;
+  transactionHash?: string;
   /** Set when the ledger-skew retry fired, so recovery rate is measurable. */
   skewRetries?: number;
 }
