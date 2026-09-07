@@ -31,6 +31,7 @@ were lying, each panel gives you the means to catch it.
 | **Refusals** | Nine ways to send a dishonest payment, plus a raw editor. Everything goes to `/verify`, which settles nothing, so probing is free. |
 | **Evidence** | The repository's CI conformance report, served verbatim, with every transaction linked. |
 | **Bazaar Discovery** | Queries the live catalog and exposes payment identity separately from seller-controlled metadata. |
+| **API Gateway** | Activates the allowlisted demo gateway, signs a real testnet payment, receives the original API response, and displays Stellar/Bazaar/provider proof. |
 | **Agent Policy** | Demonstrates local atomic-unit policy before signing; it is not a deployed smart-account proof. |
 
 ## Where the keys are

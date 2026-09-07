@@ -30,6 +30,8 @@ The default Compose deployment starts:
 | Bazaar | `http://localhost:3001` | PostgreSQL catalog; process-local P2P state |
 | Facilitator | `http://localhost:3002` | Process-local signer/quarantine/metrics; durable named outbox volume |
 | Reference seller | `http://localhost:3003` | Stateless reference route |
+| Gateway | `http://localhost:3005` | Static route config; JSONL payment/provider events in named volume |
+| Playground | `http://localhost:3004` | Browser-local testnet signer and real gateway/native flows |
 
 ## Installation and bootstrap
 
@@ -38,7 +40,7 @@ The explicit sequence behind `npm run demo` is:
 ```bash
 npm run install:all
 npm run setup
-docker compose up --build -d postgres bazaar facilitator demo-server
+docker compose up --build -d postgres bazaar facilitator demo-server gateway playground
 npm run conformance
 ```
 
@@ -60,6 +62,8 @@ curl -fsS http://localhost:3001/ready
 curl -fsS http://localhost:3002/health
 curl -fsS http://localhost:3002/ready
 curl -fsS http://localhost:3003/health
+curl -fsS http://localhost:3005/health
+curl -fsS http://localhost:3005/metrics
 ```
 
 The facilitator performs boot-time checks before advertising capabilities:
@@ -165,12 +169,18 @@ key; signing remains client-side. See the [MCP guide](../mcp-server/README.md).
 ```bash
 curl -fsS http://localhost:3001/metrics
 curl -fsS http://localhost:3002/metrics
+curl -fsS http://localhost:3005/metrics
 docker compose logs --no-log-prefix facilitator | npm run outcomes
 ```
 
 Metrics are process-local unless scraped externally. The repository does not
 ship Grafana dashboards, an alert manager, durable metrics retention, or
 end-to-end request correlation. See [metrics](metrics.md).
+
+Gateway events persist under `GATEWAY_DATA_DIRECTORY`; Compose uses the
+`gateway-data` volume. `GATEWAY_MANAGEMENT_TOKEN` enables read-only `/v1`
+contracts. Do not expose those routes without edge TLS and authenticated
+project ownership. The local JSONL store is not multi-instance safe.
 
 ## Current facilitator request shape
 

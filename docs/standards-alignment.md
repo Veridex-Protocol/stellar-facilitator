@@ -11,7 +11,7 @@ not a permanent “latest” claim.
 - [x402 scheme specifications](https://github.com/x402-foundation/x402/tree/main/specs/schemes)
 - [x402 MCP package](https://github.com/x402-foundation/x402/tree/main/typescript/packages/mcp)
 - Installed `@x402/core`, `@x402/stellar`, `@x402/extensions`, `@x402/fetch`, and `@x402/hono` declarations
-- Veridex conformance, package tests, and [Architecture 3.1](architecture.md)
+- Veridex conformance, package tests, and [Architecture 3.2](architecture.md)
 
 The repository's proven package baseline is `@x402/*@2.21.0`. Foundation `main`
 has moved ahead of those installed declarations, including named payment-flow
@@ -24,6 +24,7 @@ source change is not adopted until dependency review and conformance pass.
 |---|---|---|
 | x402 v2 core | `PaymentRequired`, `PaymentRequirements`, `PaymentPayload`, `VerifyResponse`, `SettleResponse` | Implemented; exact path testnet proven |
 | HTTP transport | 402 plus base64 `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE` | Implemented/testnet proven |
+| HTTPS API gateway | Uses canonical v2 challenge, verify, settle, and HTTP header encoders; proxy/event APIs are Veridex implementation concerns | Exact gateway locally tested; no new payment format |
 | Stellar exact | Installed `@x402/stellar@2.21.0` exact client/server/facilitator exports; Foundation `main` now declares `authorization` and `upfront` flows | Installed authorization behavior is stock-client testnet proven; newer flow support is not adopted/proven here |
 | Stellar `upto` | Upstream has a scheme family, but installed Stellar package exposes no `upto` exports | Veridex custom implementation is testnet proven, experimental, unaudited, not upstream-interoperable |
 | Bazaar declaration | x402 v2 `extensions.bazaar` with `info` and JSON Schema | Declared through `@x402/extensions`; ingestion adds Veridex settlement/live-term gates |
@@ -123,7 +124,7 @@ For every x402 dependency or specification update:
 5. Run a fresh stock-client Stellar testnet conformance payment for wire,
    payment-flow, reserved-extra, or scheme changes.
    scheme changes.
-6. Update Architecture 3.1, OpenAPI, quickstart, role guides, and RFP evidence in
+6. Update Architecture 3.2, OpenAPI, quickstart, role guides, and RFP evidence in
    the same change.
 7. Preserve historical specs/ADRs as dated records; mark them superseded rather
    than silently treating them as current APIs.

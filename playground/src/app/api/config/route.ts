@@ -17,6 +17,7 @@ export async function GET() {
   const config = {
     facilitatorUrl: trimUrl(process.env.FACILITATOR_URL || "http://localhost:3002"),
     demoServerUrl: trimUrl(process.env.DEMO_SERVER_URL || "http://localhost:3003"),
+    gatewayUrl: trimUrl(process.env.GATEWAY_URL || "http://localhost:3005"),
     bazaarUrl: trimUrl(process.env.BAZAAR_URL || "http://localhost:3001"),
     network: `stellar:${network}`,
     horizonUrl: trimUrl(process.env.HORIZON_URL || "https://horizon-testnet.stellar.org"),
@@ -33,5 +34,7 @@ export async function GET() {
   return NextResponse.json({
     ...config,
     paidResourceUrl: `${config.demoServerUrl}${config.paidResourcePath}`,
+    gatewayResourceUrl: `${config.gatewayUrl}/hello`,
+    gatewayUpstreamUrl: `${config.demoServerUrl}/demo-api/hello`,
   });
 }

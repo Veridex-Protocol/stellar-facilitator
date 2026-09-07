@@ -1,10 +1,29 @@
-# Seller path: protect a Stellar testnet endpoint
+# Seller paths: gateway or native Stellar x402
+
+Choose **Gateway** when an HTTPS API already exists and minimum integration work
+matters. Choose **Native** middleware when the application needs maximum
+response/usage control. Both converge on the same facilitator, Bazaar,
+provider-quality, and proof models.
+
+## Gateway path
+
+```bash
+npm --prefix gateway-service run build
+npm --prefix gateway-service run init
+GATEWAY_CONFIG=gateway.config.json npm --prefix gateway-service start
+```
+
+The gateway settles exact payment before calling the original API. It supports
+safe `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` forwarding and automatic
+Bazaar declarations. See the [gateway guide](../gateway.md).
+
+## Native path
 
 A basic exact seller needs official x402 middleware, a Stellar receiving
 address, an asset contract, and a facilitator URL. Bazaar, federation, and
 provider quality are optional.
 
-## 1. Install
+### 1. Install
 
 ```bash
 npm install @hono/node-server hono \
@@ -15,7 +34,7 @@ npm install @hono/node-server hono \
 The pinned versions match the repository's proven testnet path. Review and test
 before changing them.
 
-## 2. Configure
+### 2. Configure
 
 For the repository quickstart, `.env` supplies:
 
@@ -30,7 +49,7 @@ server additionally signs experimental provider outcomes with
 `PROVIDER_OUTCOME_SECRET_KEY`; that is optional and separate from accepting
 payment.
 
-## 3. Protect a route
+### 3. Protect a route
 
 ```ts
 import { serve } from "@hono/node-server";
@@ -90,7 +109,7 @@ asset's atomic units. `asset` is a SEP-41 contract address, and
 `extra.areFeesSponsored` is supplied by the facilitator when sponsorship is
 actually enabled.
 
-## 4. Inspect the x402 v2 challenge
+### 4. Inspect the x402 v2 challenge
 
 ```bash
 curl -sS -D /tmp/forecast-headers -o /dev/null http://localhost:3003/forecast
@@ -105,7 +124,7 @@ optional Bazaar extension. Each accepted requirement contains `scheme`, CAIP-2
 The paid retry uses `PAYMENT-SIGNATURE`; it is not an Authorization bearer
 token. A successful response carries `PAYMENT-RESPONSE`.
 
-## 5. Become discoverable
+### 5. Become discoverable
 
 `declareDiscoveryExtension()` places the current Bazaar declaration in
 `PaymentRequired.extensions.bazaar`. The client echoes the declaration in its
@@ -135,7 +154,7 @@ from search. All six migrations now have a captured empty-volume application
 run; the periodic lifecycle is implemented/package-tested but still lacks a
 timed live stale-row drill.
 
-## 6. Dynamic routes
+### 6. Dynamic routes
 
 Current upstream Bazaar conventions use route keys such as
 `"GET /weather/:country/:city"`. Declare parameter schemas through
@@ -163,7 +182,7 @@ At runtime, `/weather/pt/lisbon` supplies path parameter values. Do not invent a
 flattened `pathParams` field beside the extension. Veridex percent-decodes route
 templates before rejecting traversal (`..`) and scheme injection (`://`).
 
-## 7. Custom `upto`
+### 7. Custom `upto`
 
 The reference server registers `UptoStellarServerScheme` and sets a settlement
 override after provider execution. That adapter is local to this repository;
@@ -174,7 +193,7 @@ Use it only for the experimental testnet path described in the
 must provide a signed result digest, actual usage must not exceed the authorized
 maximum, and zero/partial/full-cap settlements remain distinct.
 
-## 8. Troubleshooting
+### 8. Troubleshooting
 
 Branch on protocol or Veridex machine-readable errors, not message text. Common
 seller actions include fixing a mismatched `payTo`/asset/amount, funding the

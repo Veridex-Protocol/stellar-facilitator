@@ -840,10 +840,8 @@ function filterResponseHeaders(input: Headers): Headers {
   return output;
 }
 
-function publicResourceUrl(config: GatewayConfig, path: string, rawUrl: string): string {
-  const resource = new URL(path, `${config.publicBaseUrl}/`);
-  resource.search = new URL(rawUrl).search;
-  return resource.toString();
+function publicResourceUrl(config: GatewayConfig, path: string, _rawUrl: string): string {
+  return new URL(path, `${config.publicBaseUrl}/`).toString();
 }
 
 function joinPath(left: string, right: string): string {

@@ -32,6 +32,10 @@ if (!response.ok) throw new Error(`resource returned HTTP ${response.status}`);
 console.log(await response.json());
 ```
 
+The same buyer path works for a gateway resource, for example
+`http://localhost:3005/hello`. The buyer validates the live terms and does not
+need to know whether the seller uses native middleware or the gateway.
+
 The facade delegates the x402 v2 flow to the official packages:
 
 1. Read HTTP 402 and decode `PAYMENT-REQUIRED` as `PaymentRequired`.

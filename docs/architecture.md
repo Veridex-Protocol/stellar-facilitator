@@ -1,6 +1,6 @@
 # Veridex Stellar x402 Facilitator and Federated Bazaar
 
-**Architecture version:** 3.1
+**Architecture version:** 3.2
 
 **Last reviewed:** 2026-09-06
 
@@ -14,7 +14,7 @@
 
 ## 1. Executive summary
 
-Veridex provides a standards-compatible Stellar x402 payment facilitator, PostgreSQL/pgvector Bazaar discovery, an MCP client surface, and a federated discovery design for agents that do not already know a seller. Independently operated Bazaar nodes can exchange signed, freshness-bounded resource announcements while each operator retains control of its own index and ranking policy.
+Veridex provides a standards-compatible Stellar x402 payment facilitator, an HTTPS API gateway edge adapter, PostgreSQL/pgvector Bazaar discovery, an MCP client surface, and a federated discovery design for agents that do not already know a seller. Independently operated Bazaar nodes can exchange signed, freshness-bounded resource announcements while each operator retains control of its own index and ranking policy.
 
 The system deliberately separates three planes:
 
@@ -52,6 +52,7 @@ The status vocabulary is evidence-sensitive and used consistently throughout thi
 
 - Stable cross-service errors, live 402 catalog-term validation, periodic catalog revalidation, provider-quality source/disagreement persistence, metrics endpoints, and seller policy modes.
 - Durable single-host catalog outbox retention/replay and authenticated channel-signer recovery.
+- Exact-only HTTPS gateway with settle-before-forward ordering, bounded proxy controls, JSONL payment/provider events, metrics, static Playground integration, and versioned portal read contracts.
 
 ### IMPLEMENTED BUT NOT FULLY PROVEN
 
@@ -133,6 +134,9 @@ flowchart LR
     D <-.-> P["Federation prototype<br/>signed deltas + heartbeats"]
 
     A -->|"HTTP resource request"| R["Seller / resource server"]
+    A -->|"HTTP gateway request"| G["Gateway / edge adapter"]
+    G -->|"verify + settle"| F
+    G -->|"after settlement"| API["Existing HTTPS API"]
     R -->|"verify + settle"| F["x402 facilitator"]
     F --> C["Channel-account pool<br/>+ fee payer"]
     C --> X["Soroban RPC<br/>configured testnet coordinator"]
@@ -146,7 +150,7 @@ flowchart LR
     classDef payment fill:#ffddd2,stroke:#9c2f00,color:#1a1a1a;
     classDef discovery fill:#e5dcff,stroke:#6246a8,color:#1a1a1a;
     classDef chain fill:#d9f5df,stroke:#287a3b,color:#1a1a1a;
-    class F,C,R payment;
+    class F,C,R,G payment;
     class D,P,I,M,O discovery;
     class X,SAC,U chain;
 ```
@@ -157,6 +161,7 @@ flowchart LR
 | --------------- | ------------------------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------- |
 | Buyer signer    | Signing payer intent                                          | Determining a seller's availability or quality   | Wallet / smart-account policy validates the complete signed authorization tree.     |
 | Resource server | Delivering the paid resource and reporting usage              | Changing a signed asset, recipient, or cap       | Facilitator validates requirements and simulation independently.                    |
+| Gateway edge | Enforcing 402, settlement ordering, and constrained forwarding | Facilitator authority, wallet custody, or arbitrary proxying | Explicit routes, SSRF/header/body/time/rate controls, and canonical facilitator calls. |
 | Facilitator     | Correct validation, submission, fee sponsorship, and receipts | Custody or rerouting value                       | Does not appear in payer auth; transaction effect is checked before submission.     |
 | Bazaar node     | Indexing and ranking recommendations                          | Payment authorization or ownership without settlement proof | Listings remain payment-bound and advisory. |
 | Provider observatory | Producing signed evidence and aggregates | Authorizing payment or becoming a synchronous settlement dependency | Seller policy verifies aggregate binding/freshness and defines outage behavior. |
@@ -168,6 +173,7 @@ flowchart LR
 | Component            | Responsibility                                                                  | Durable state                                                         | Failure behavior                                                    |
 | -------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Facilitator service  | `/supported`, `/verify`, `/settle`, transaction rebuilding and submission | Durable catalog outbox; process-local receipt responses, channel state, and metrics | Rejects unsafe/expired requests; never guesses a settlement result. |
+| Gateway service | Existing-API route configuration, exact 402 orchestration, bounded forwarding, payment/provider events | Single-host JSONL event files; configuration file | Never forwards unpaid requests; returns settlement proof if upstream fails after payment. |
 | Channel-account pool | Leases sequence-number sources and quarantines uncertain submissions | Operator-managed channel keys; process-local lease/quarantine state | Requires authenticated explicit recovery after reconciliation. |
 | PostgreSQL Bazaar    | Catalog, search index metadata, telemetry, announcement audit trail             | PostgreSQL 16 + pgvector                                              | Search may degrade; settlement continues.                           |
 | Embedding worker     | Target production component for versioned learned representations | Not implemented as an independent durable worker | Current ingestion uses synchronous feature hashing with fallback; settlement remains independent. |
@@ -192,6 +198,8 @@ bazaar-service/
   src/telemetry/                # heartbeat and liveness state
 
 mcp-server/src/index.ts         # discover_resources and pay_resource tools
+gateway-service/                # exact HTTPS edge adapter and portal contracts
+playground/                     # real testnet gateway and native seller flows
 contracts/upto-settlement/      # active experimental testnet contract
 contracts/upto_escrow/          # obsolete development prototype, not advertised
 docs/openapi/                   # facilitator and Bazaar API contracts

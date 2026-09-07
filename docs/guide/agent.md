@@ -30,6 +30,10 @@ data. A result is a recommendation, not authority to pay. Current catalog rows
 identify scheme/network/payee; the agent reads authoritative asset/amount terms
 from the live 402 before signing.
 
+Gateway-backed and native resources are deliberately indistinguishable at the
+buyer protocol layer. Agents use the same discovery, local policy, signer, and
+`PAYMENT-SIGNATURE` flow for either seller path.
+
 ## 2. Apply policy before signing
 
 Local policy should check at least:

@@ -35,6 +35,8 @@ Scope: `stellar:testnet` only. No pubnet or mainnet activity was performed.
 | MCP untrusted-content boundary | Seller metadata and paid bodies returned inside structured `untrusted_seller_data` objects | MCP malicious seller-text test | Implemented/tested; prompt injection not claimed solved |
 | Exact buyer SDK | `createVeridexClient` public export | Packed tarball external consumer made real payment | Publishable; npm publication pending |
 | Seller DX | Official `@x402/hono` + `@x402/stellar` path | Demo seller and seller guide | Testnet proven |
+| Existing API gateway DX | Exact-only edge adapter with SSRF/header/body/time/rate controls, settle-before-forward order, Bazaar declaration, payment/provider events, CLI, Compose, and real-flow Playground module | 7 focused gateway tests, typecheck, build, container build, and Playground build | Implemented/locally tested; live gateway transaction evidence pending clean-room run |
+| Developer Portal foundation | Versioned gateway snapshot/events/earnings contracts and replaceable event-store interface; existing relayer/project identity boundary preserved | Gateway management auth and contract tests; portal codebase boundary review | Foundation implemented; portal UI, managed auth/CRUD, and multi-tenant datastore not implemented |
 | Discovery buyer DX | Search -> select URL -> buyer fetch | Clean-stack discovery-driven payment | Testnet proven |
 | `upto` contract | Boot-gated deployed testnet Soroban contract | Partial, zero, replay, unused authorization checks | Testnet proven; unaudited |
 | `upto` direct settlement path | Facilitator routes `upto`; direct conformance settlement | Fresh conformance group 8: partial, zero, replay, unused authorization all pass | Testnet proven; experimental |

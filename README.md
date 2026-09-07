@@ -1,13 +1,14 @@
 # Veridex Stellar x402
 
-Veridex is a Stellar x402 v2 facilitator plus Bazaar discovery, a keyless MCP
-agent interface, focused buyer/seller tooling, and an experimental
-provider-quality layer.
+Veridex is a Stellar x402 v2 facilitator plus an HTTPS API gateway, Bazaar
+discovery, a keyless MCP agent interface, focused buyer/seller tooling, and an
+experimental provider-quality layer.
 
 | Role | Start here |
 |---|---|
 | Buyer | Use `createVeridexClient()` from the local `@veridex/stellar` package or official x402 client packages. |
-| Seller | Protect an HTTP route with official x402 middleware and optionally declare Bazaar metadata. |
+| Existing API seller | Put `@veridex/x402-gateway` in front of an HTTPS API without changing its handlers. |
+| Native seller | Protect an HTTP route with official x402 middleware for maximum application control. |
 | Agent builder | Search through Bazaar or MCP, apply local policy, then sign with the buyer wallet. |
 | Operator | Run the facilitator, PostgreSQL Bazaar, reference seller, and optional MCP service. |
 
@@ -29,6 +30,7 @@ production-readiness claim is part of the current evidence set.
 | MCP | Testnet proven for keyless discovery and exact paid calls |
 | `@veridex/stellar` buyer SDK | Built, packed, and externally exercised; npm publication remains pending |
 | Seller integration | Working with official x402 middleware; discovery is optional |
+| HTTPS API gateway | Implemented and locally tested; live testnet proof pending this change's clean-room run |
 | Provider quality | Implemented and tested; representative independent-observer operation is not proven |
 | Federation | Local three-process/three-database restart proof; multi-operator production federation is not claimed |
 | Pubnet | Approval-gated and unvalidated |
@@ -56,6 +58,8 @@ re-reads settlement from Stellar instead of trusting a returned hash.
 | Bazaar | `http://localhost:3001` |
 | Facilitator | `http://localhost:3002` |
 | Reference seller | `http://localhost:3003` |
+| Gateway | `http://localhost:3005` |
+| Playground | `http://localhost:3004` |
 
 For individual commands, expected output, clean-state steps, and port overrides,
 use the [canonical testnet quickstart](docs/quickstart.md).
@@ -121,6 +125,20 @@ asynchronously to Bazaar.
 Accepting payment does not require Bazaar, federation, or provider quality. See
 the [seller guide](docs/guide/seller.md).
 
+### Gateway seller
+
+For an existing API, the gateway owns the 402/verify/settle edge and forwards
+the original request only after confirmed settlement:
+
+```text
+existing HTTPS API -> gateway -> 402 -> facilitator -> Stellar -> original API
+```
+
+It preserves safe request fields, blocks private/reserved upstreams, applies
+timeouts/body/concurrency/rate limits, declares the same Bazaar extension, and
+records normalized payment/provider events for the future Developer Portal.
+Start with the [gateway quickstart](docs/gateway-quickstart.md).
+
 ## Bazaar and MCP
 
 Veridex exposes:
@@ -165,10 +183,12 @@ interoperability is not claimed. See the
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
+- [Gateway](docs/gateway.md), [gateway quickstart](docs/gateway-quickstart.md),
+  and [Developer Portal boundary](docs/developer-portal-integration.md)
 - [Developer guide index](docs/guide/README.md)
 - [Buyer](docs/guide/buyer.md), [seller](docs/guide/seller.md),
   [agent](docs/guide/agent.md), and [operator](docs/guide/operator.md) guides
-- [Architecture 3.1](docs/architecture.md)
+- [Architecture 3.2](docs/architecture.md)
 - [Standards alignment and drift policy](docs/standards-alignment.md)
 - [Errors](docs/errors.md) and [payment proof](docs/payment-proof.md)
 - [Provider quality](docs/provider-quality.md) and

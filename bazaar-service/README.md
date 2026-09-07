@@ -11,6 +11,11 @@ production claim.
 Bazaar is an advisory discovery layer. Listings and ranking do not authorize
 payment; buyers must validate the live signed x402 requirements.
 
+Gateway-backed resources use this same catalog. Their Bazaar declaration is
+echoed through the canonical payment payload and admitted after facilitator
+settlement; there is no gateway-specific index. Revalidation fetches the public
+gateway URL and quarantines unexpected term changes asynchronously.
+
 ```text
   Resource Seller                  Bazaar Discovery Engine                 Client / Buyer
          │                                   │                                    │

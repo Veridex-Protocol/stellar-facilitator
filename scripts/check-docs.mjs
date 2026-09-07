@@ -74,7 +74,7 @@ const requiredSnippets = new Map([
     "@x402/mcp",
   ]],
   ["docs/architecture.md", [
-    "Architecture version:** 3.1",
+    "Architecture version:** 3.2",
     "payment plane != discovery plane != provider-quality plane",
     "No pubnet or mainnet execution",
   ]],

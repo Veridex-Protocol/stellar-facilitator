@@ -74,6 +74,10 @@ version, network, scheme, asset, amount, `payTo`, and timeout before forwarding
 
 The custom Veridex Stellar `upto` flow is not exposed by this MCP tool.
 
+Gateway-backed exact resources require no MCP-specific behavior. Once Bazaar
+indexes one, `discover_resources` can select it and `pay_resource` uses the same
+live 402 re-match and client-wallet signature path as a native seller.
+
 ## Configuration
 
 ```text

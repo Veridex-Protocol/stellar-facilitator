@@ -12,40 +12,46 @@ import { RefusalsPanel } from "@/components/RefusalsPanel";
 import { EvidencePanel } from "@/components/EvidencePanel";
 import { DiscoveryPanel } from "@/components/DiscoveryPanel";
 import { PolicyPanel } from "@/components/PolicyPanel";
+import { GatewayPanel } from "@/components/GatewayPanel";
 
 const TAB_DETAILS: Record<TabId, { number: string; label: string; description: string }> = {
-  flow: {
+  gateway: {
     number: "01",
+    label: "API gateway",
+    description: "Put Stellar x402 in front of a controlled existing HTTPS API and pay it on testnet.",
+  },
+  flow: {
+    number: "02",
     label: "Payment flow",
     description: "Execute a complete x402 payment against Stellar testnet.",
   },
   discovery: {
-    number: "02",
+    number: "03",
     label: "Bazaar discovery",
     description: "Search the live catalog and inspect payment-bound resource identity.",
   },
   policy: {
-    number: "03",
+    number: "04",
     label: "Agent policy",
     description: "Approve a bounded payment and reject an over-budget request before signing.",
   },
   wire: {
-    number: "04",
+    number: "05",
     label: "Wire protocol",
     description: "Inspect the payloads and authorization entries exchanged on the wire.",
   },
   receipt: {
-    number: "05",
+    number: "06",
     label: "Receipt verification",
     description: "Inspect signed claims and run local tamper checks in real time.",
   },
   refusals: {
-    number: "06",
+    number: "07",
     label: "Attack lab",
     description: "Challenge the facilitator with intentionally hostile payloads.",
   },
   evidence: {
-    number: "07",
+    number: "08",
     label: "Test evidence",
     description: "Review the latest wire-level conformance artifact.",
   },
@@ -56,7 +62,7 @@ export default function PlaygroundHome() {
   const [wallet, setWallet] = useState<ClientWallet | null>(null);
   const [balance, setBalance] = useState<string>("0.00");
   const [run, setRun] = useState<RunRecord | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("flow");
+  const [activeTab, setActiveTab] = useState<TabId>("gateway");
   const [loading, setLoading] = useState(true);
   const [configError, setConfigError] = useState<string | null>(null);
 
@@ -197,6 +203,15 @@ export default function PlaygroundHome() {
                   setBalance={setBalance}
                   run={run}
                   setRun={setRun}
+                />
+              )}
+
+              {activeTab === "gateway" && (
+                <GatewayPanel
+                  config={config}
+                  wallet={wallet}
+                  setWallet={setWallet}
+                  setBalance={setBalance}
                 />
               )}
 
