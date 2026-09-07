@@ -31,7 +31,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 const RESPONSE_HEADERS = ["content-type", "content-language", "cache-control", "etag", "last-modified"];
 const METHODS: GatewayMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-export function createGatewayApp(input: GatewayConfig, dependencies: GatewayDependencies = {}): Hono {
+export async function createGatewayApp(input: GatewayConfig, dependencies: GatewayDependencies = {}): Promise<Hono> {
   const config = validateGatewayConfig(input);
   const eventStore = dependencies.eventStore ?? new InMemoryGatewayEventStore();
   const fetchImplementation = dependencies.fetch ?? fetch;
@@ -40,6 +40,7 @@ export function createGatewayApp(input: GatewayConfig, dependencies: GatewayDepe
     config.network,
     new ExactStellarScheme(),
   );
+  await resourceServer.initialize();
   const app = new Hono();
   const routes = config.routes ?? [{ path: "/*" }];
   let activeRequests = 0;

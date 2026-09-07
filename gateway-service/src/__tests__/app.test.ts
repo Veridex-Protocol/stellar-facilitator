@@ -1,4 +1,5 @@
 import { Keypair } from "@stellar/stellar-sdk";
+import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
 import { Hono } from "hono";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { serve, type ServerType } from "@hono/node-server";
@@ -56,7 +57,7 @@ function gatewayConfig(): GatewayConfig {
 describe("gateway payment gate", () => {
   it("never forwards an unpaid protected request", async () => {
     const upstreamFetch = vi.fn<typeof fetch>();
-    const app = createGatewayApp(gatewayConfig(), { fetch: upstreamFetch });
+    const app = await createGatewayApp(gatewayConfig(), { fetch: upstreamFetch });
 
     const response = await app.request("https://gateway.example.com/demo");
 
@@ -73,24 +74,23 @@ describe("gateway payment gate", () => {
       return Response.json({ ok: true });
     });
     const config = gatewayConfig();
-    const app = createGatewayApp(config, { fetch: upstreamFetch, eventStore: store });
+    const app = await createGatewayApp(config, { fetch: upstreamFetch, eventStore: store });
+    const challenge = await app.request("https://gateway.example.com/demo");
+    const requiredHeader = challenge.headers.get("PAYMENT-REQUIRED");
+    if (!requiredHeader) throw new Error("gateway did not return PAYMENT-REQUIRED");
+    const paymentRequired = decodePaymentRequiredHeader(requiredHeader);
+    const accepted = paymentRequired.accepts[0];
     const paymentPayload = {
       x402Version: 2,
-      resource: { url: "https://gateway.example.com/demo" },
-      accepted: {
-        scheme: "exact",
-        network: config.network,
-        asset: config.asset,
-        amount: config.price,
-        payTo: config.payTo,
-        maxTimeoutSeconds: 120,
-      },
+      resource: paymentRequired.resource,
+      accepted,
       payload: { transaction: "opaque-test-authorization" },
+      extensions: paymentRequired.extensions,
     };
 
     const response = await app.request("https://gateway.example.com/demo", {
       headers: {
-        "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(paymentPayload)).toString("base64"),
+        "PAYMENT-SIGNATURE": encodePaymentSignatureHeader(paymentPayload),
       },
     });
 
