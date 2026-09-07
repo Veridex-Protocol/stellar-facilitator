@@ -211,22 +211,40 @@ This classification does not imply mainnet readiness, production readiness, inde
 
 ## 2026-09-06 local hardening addendum
 
-No new transaction hash or ledger claim is added by this section. The
-2026-09-05 clean-room run above remains the latest on-chain acceptance evidence.
+The post-hardening stack completed a fresh `36/36` conformance run on
+`stellar:testnet`. This was a fresh application run, but not a newly captured
+destructive empty-volume bootstrap for migrations `005/006`.
 
-After that run, commits `e1037b8`, `767dd5f`, and `c2cf80d` added live catalog
-term validation/revalidation, expanded search evaluation, Prometheus metrics,
-three-mode provider policy, MCP untrusted-data boundaries, a local three-node
-federation proof, concurrency matrix tooling, and testnet RPC coordination.
+```text
+exact:        4b36d1f406fb1560c9e61873c911fd71a26f9408f2ffbaf24239259f65cdee08
+exact ledger: 4539054
+upto partial: b4b474d151de351b84e9af1a6c39e8145d33481ff3f741300f2dec631c1a3142
+partial ledger: 4539058
+upto zero:    638b71e6dddd4dd0e214355b998ffda28e79c042f091655aa2b03d3dc421e2bf
+zero ledger:  4539060
+```
+
+The exact run used stock `@x402/core`, `@x402/fetch`, and
+`@x402/stellar@2.21.0`, with `@stellar/stellar-sdk@16.2.0`. The generated
+`conformance-report.json` records the payer, seller, asset, receipt, and all 36
+checks without private keys.
+
+Hardening through baseline `3098ba4` added live catalog term
+validation/revalidation, a durable post-settlement outbox, exact-signer
+quarantine/recovery, expanded search evaluation, Prometheus metrics, sourced
+provider observations/disagreements, keyless MCP, a canonical error registry,
+a local three-node federation proof, concurrency tooling, and testnet RPC
+coordination.
 
 Local validation on 2026-09-06:
 
-- facilitator: 129 tests passed
-- Bazaar: 83 tests passed
-- MCP: 17 tests passed
-- TypeScript SDK: 43 tests passed
+- facilitator: 135 tests passed
+- Bazaar: 89 tests passed
+- MCP: 19 tests passed
+- TypeScript SDK: 45 tests passed
+- JavaScript aggregate: 288 tests passed
 - aggregate typecheck: passed
-- aggregate build: passed (Playground native-addon bundling warnings remain)
+- aggregate build: passed; Playground uses Next `16.3.4` with explicit webpack
 - active `upto-settlement` contract: 27 tests passed
 - Go: tests and vet passed
 - Python SDK: 9 tests passed on Python 3.14.6
@@ -234,9 +252,30 @@ Local validation on 2026-09-06:
 - Bash syntax: passed
 - SDK: 43-file tarball imported from a fresh external project
 - npm publication: registry returned 404; still unpublished
-- MCP production dependency audit: zero vulnerabilities after lockfile update
+- MCP and Playground production dependency audits: zero vulnerabilities
+- error-registry and license-policy CI gates: passed
+- local monorepo consumer proof against public agent policy APIs: `$2` passes a
+  `$10` cap, `$12` blocks, and `$9` after a prior `$2` blocks as an `$11`
+  rolling-total overrun
 
-Not rerun after hardening: destructive clean-room bootstrap, 36/36 testnet
-conformance, real 10/25/50/100 concurrency matrix, representative activity
-harness, and independent-provider RPC testnet drill. The release classification
-therefore remains `GREEN`, not `GREEN+`.
+Additional testnet evidence:
+
+- Keyless MCP paid calls settled at ledgers `4539099` and `4539121`; the MCP
+  process held no payer private key.
+- An external packed-SDK consumer settled at ledger `4539556`.
+- The `10/25/50/100` load smoke prepared payloads sequentially, then timed only
+  settlement: 185 requests, 32 ledger confirmations, 90 capacity rejects, 63
+  simulation failures, zero retries, and zero sequence errors. This is saturation
+  evidence for a three-signer pool, not a production throughput claim.
+- A live testnet loopback coordinator drill recorded seven failovers and five
+  primary failures while the payment still succeeded. This proves configured
+  failover behavior, not independent operator or pubnet RPC maturity.
+- The running stack finished with zero pending catalog outbox events and zero
+  quarantined signers.
+
+Still not proven: a new destructive empty-volume bootstrap for migrations
+`005/006`, a diverse 50-100-payment activity corpus, multi-process federation
+restart/persistence, a genuinely independent-provider RPC drill, a real
+ambiguous-submission signer-quarantine drill, and a deployed smart-account
+stablecoin policy path. The release classification therefore remains `GREEN`,
+not `GREEN+`.

@@ -24,6 +24,7 @@
     "errors:check": "node scripts/sync-error-registry.mjs --check",
     "errors:sync": "node scripts/sync-error-registry.mjs",
     "licenses:check": "node scripts/check-licenses.mjs",
+    "policy:proof": "node scripts/policy-budget-proof.mjs --write docs/rfp/policy-budget-proof-2026-09-06.json",
     "probe": "node scripts/concurrency-probe.mjs",
     "probe:matrix": "node scripts/concurrency-matrix.mjs",
     "upto:build": "./scripts/build-upto.sh",

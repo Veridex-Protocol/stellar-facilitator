@@ -18,20 +18,26 @@ not an external audit and does not claim the system is secure.
 | Route traversal | Reject metadata | Decoded `..` and scheme injection rejected | Bazaar metadata validation | Bazaar catalog tests | Protected |
 | SSRF | Reject local/private/reserved targets | DNS and literal IP checks; no redirects; explicit origin allowlist only | Live validator and Playground allowlist | Live-payment-term and Playground smoke tests | Protected; DNS rebinding requires deployment review |
 | MCP SSRF | Reject local/private/metadata URLs by default | URL validator blocks common private and metadata targets | MCP URL validation | MCP tests | Protected; DNS rebinding needs hardening |
+| MCP key custody | MCP must not hold a payer private key | Two-phase challenge/submission requires an externally signed payload and re-matches live terms | No signing-key configuration in MCP | Deterministic tests and testnet settlements at ledgers `4539099`, `4539121` | Protected for current flow; broad client interop pending |
 | Malicious seller text | Treat as data | MCP wraps descriptions and paid bodies in `untrusted_seller_data` JSON objects | Deterministic structured tool output | MCP tool tests | Needs hardening; prompt injection is not solved |
 | P2P replay/out-of-order | Ignore | Announcement sequence cache rejects replay; signed deltas use revision/digest ordering | Replay cache, freshness, deterministic arbitration | P2P and catalog-delta tests | Protected in process; durable announcement replay cache needs hardening |
 | P2P equivocation/conflict | Converge deterministically | Equal revision uses canonical digest ordering | Signed full snapshots | Catalog-delta tests | Protected for convergence; operator policy remains local |
 | Unauthorized federation signer | Reject | Owner signer or configured delegate required; transport identity is not authority | Stellar signature and authorization map | Three-node P2P test | Protected |
 | Search manipulation | Bound quality influence | RRF and telemetry factors are bounded; feature-hash false positives now require lexical match | Candidate filtering and bounded modulation | Expanded search benchmark | Needs hardening against Sybil/collusion |
+| Provider evidence source confusion | Preserve source and surface disagreement | In-band/independent source is persisted and cross-source mismatch is recorded | Migration `006`, provider observation store | Store and SDK tests | Protected locally; diverse observer evidence pending |
 | Sequence collision | Serialize per signer | Scheduler leases one signer per in-flight settlement | Async-local signer lease | Scheduler/concurrency tests | Protected per process; multi-instance key partition is operational |
 | RPC unavailable before submit | Fail over once | Health-check selects a healthy provider before one submission | RPC coordinator | RPC coordinator tests | Protected in multi-provider testnet mode |
 | RPC timeout after submit | Do not resubmit; reconcile hash | Envelope submitted once; local hash queried across providers | RPC coordinator | Exactly-once ambiguous-timeout tests | Protected locally; live testnet drill pending |
 | RPC disagreement | Fail safely and record | Conflicting final states return RPC error and increment metric | Reconciliation quorum check | RPC coordinator disagreement test | Protected locally; live independent-provider drill pending |
-| Channel uncertainty | Quarantine signer | Transaction hash is preserved, but upstream scheme does not expose the leased signer after ambiguous submission | No complete control yet | Documented limitation | Needs hardening |
+| Channel uncertainty | Quarantine exact signer | Transaction hash and async-local leased signer are preserved; uncertain outcome quarantines that signer until authenticated explicit recovery | Scheduler quarantine set and recovery endpoint | Scheduler/server tests; current live gauge is zero | Protected locally; real ambiguity and multi-instance persistence drills pending |
+| Discovery database outage | Keep settlement successful and retain catalog work | Transaction-keyed atomic file-spool outbox replays asynchronously after restart | Durable local outbox and pending/age metrics | Unavailable-Bazaar retention/replay test; live pending gauge zero | Protected on one host; shared multi-instance queue pending |
+| Error-contract drift | Fail CI before package error shapes diverge | Canonical 19-code registry generates package snapshots and adapters | Registry sync/check | Error adapter tests and `npm run errors:check` | Protected locally; consumer adoption still required |
 
 ## External Audit Boundary
 
 Contract authorization, exact integration, custom `upto`, fee sponsorship,
 multi-provider deployment, DNS rebinding defenses, and cross-service abuse cases
-still require independent review. Deterministic tests demonstrate intended
-behavior; they do not substitute for an audit.
+still require independent review. The deployed smart-account policy path,
+multi-instance quarantine/outbox state, and independent RPC operators are not
+proven. Deterministic tests demonstrate intended behavior; they do not
+substitute for an audit.

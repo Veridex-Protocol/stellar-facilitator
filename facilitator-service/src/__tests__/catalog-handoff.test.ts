@@ -108,7 +108,7 @@ describe("post-settlement catalog handoff", () => {
         bazaar: { status: "queued", transaction: "a".repeat(64) },
       });
       expect(Date.now() - startedAt).toBeLessThan(300);
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await service.drainCatalogOutbox();
       const pendingResponse = await service.getApp().request("/stats");
       expect(((await pendingResponse.json()) as any).catalogOutbox.pending).toBe(1);
 

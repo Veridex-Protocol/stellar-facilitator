@@ -1,0 +1,73 @@
+{
+  "generated_at": "2026-09-06T19:30:00.000Z",
+  "package": {
+    "name": "@veridex/agentic-payments",
+    "version": "2.0.7",
+    "import_surface": [
+      "PolicyEngine",
+      "SpendingLimitRule"
+    ],
+    "resolution": "local monorepo sibling package"
+  },
+  "fixture": {
+    "asset": "USDC",
+    "network_scope": "stellar:testnet",
+    "daily_budget_usd": 10,
+    "per_transaction_limit_usd": 10,
+    "usd_to_atomic_units": "fixture-only 7-decimal conversion"
+  },
+  "cases": [
+    {
+      "name": "approve-within-budget",
+      "proposed_usd": 2,
+      "prior_rolling_24h_usd": 0,
+      "expected_verdict": "pass",
+      "actual_verdict": "pass",
+      "passed": true,
+      "reason": "Within limits ($2.00 txn, $8.00 remaining daily)",
+      "metadata": {
+        "amountUSD": 2,
+        "dailySpent": 0,
+        "remainingDaily": 8
+      }
+    },
+    {
+      "name": "block-single-payment-over-budget",
+      "proposed_usd": 12,
+      "prior_rolling_24h_usd": 0,
+      "expected_verdict": "block",
+      "actual_verdict": "block",
+      "passed": false,
+      "reason": "Transaction $12.00 exceeds per-transaction limit $10.00",
+      "metadata": {
+        "amountUSD": 12,
+        "limit": 10,
+        "horizon": "perTransaction"
+      }
+    },
+    {
+      "name": "block-cumulative-budget-overrun",
+      "proposed_usd": 9,
+      "prior_rolling_24h_usd": 2,
+      "expected_verdict": "block",
+      "actual_verdict": "block",
+      "passed": false,
+      "reason": "Daily spending $11.00 would exceed daily limit $10.00 (already spent $2.00 today)",
+      "metadata": {
+        "amountUSD": 9,
+        "dailySpent": 2,
+        "limit": 10,
+        "horizon": "daily"
+      }
+    }
+  ],
+  "assertions_passed": true,
+  "evidence_classification": "off-chain SDK policy proof",
+  "limitations": [
+    "Running this harness requires @veridex/agentic-payments to be available in the surrounding monorepo or Node resolution path.",
+    "No Stellar transaction was submitted.",
+    "No deployed smart-account __check_auth policy was exercised.",
+    "The fixture does not prove an oracle-backed stablecoin/USD conversion.",
+    "Policy state is supplied as explicit rolling transaction history."
+  ]
+}

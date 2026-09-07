@@ -218,7 +218,7 @@ export class FacilitatorService {
   private rpcCoordinator?: RpcCoordinator;
   private catalogOutbox: CatalogOutbox;
   private catalogOutboxInterval?: NodeJS.Timeout;
-  private catalogOutboxDraining = false;
+  private catalogOutboxDrain?: Promise<void>;
   private httpServer?: ServerType;
   private serviceReady = false;
   private capabilities: VerifiedCapabilities;
@@ -1010,9 +1010,10 @@ export class FacilitatorService {
   }
 
   async drainCatalogOutbox(): Promise<void> {
-    if (this.catalogOutboxDraining || !process.env.BAZAAR_URL) return;
-    this.catalogOutboxDraining = true;
-    try {
+    if (!process.env.BAZAAR_URL) return;
+    if (this.catalogOutboxDrain) return this.catalogOutboxDrain;
+
+    const drain = (async () => {
       const events = await this.catalogOutbox.list(this.config.catalogOutboxBatchSize);
       for (const event of events) {
         try {
@@ -1025,8 +1026,12 @@ export class FacilitatorService {
           });
         }
       }
+    })();
+    this.catalogOutboxDrain = drain;
+    try {
+      await drain;
     } finally {
-      this.catalogOutboxDraining = false;
+      if (this.catalogOutboxDrain === drain) this.catalogOutboxDrain = undefined;
     }
   }
 
