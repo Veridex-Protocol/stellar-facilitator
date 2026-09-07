@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Keypair } from "@stellar/stellar-sdk";
 import { BazaarService } from "../server.js";
-import { createSignedProviderAggregate } from "../provider-quality/crypto.js";
+import { createSignedProviderAggregate, createSignedProviderObservation } from "../provider-quality/crypto.js";
 
 const token = "test-internal-token-that-is-long-enough";
+const observerToken = "test-observer-token-that-is-long-enough";
 
 function makeConfig() {
   return {
@@ -30,6 +31,43 @@ describe("provider-quality HTTP surface", () => {
       headers: { "Content-Type": "application/json" },
     });
     expect(response.status).toBe(401);
+  });
+
+  it("derives in-band source from the internal credential instead of the request body", async () => {
+    const payee = Keypair.random();
+    const observation = signedObservation(payee, payee.publicKey());
+    const service = new BazaarService(makeConfig());
+    const record = vi.spyOn((service as any).providerQualityStore, "recordObservation")
+      .mockResolvedValue({ id: "observation-1", disagreementRecorded: false });
+    const response = await service.getApp().request("/provider-quality/observations", {
+      method: "POST",
+      body: JSON.stringify({ observation, source: "independent" }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+
+    expect(response.status).toBe(202);
+    expect(record).toHaveBeenCalledWith({ observation, source: "in_band" });
+  });
+
+  it("accepts independent evidence only from the observer credential and signer allowlist", async () => {
+    const payee = Keypair.random();
+    const observer = Keypair.random();
+    const observation = signedObservation(observer, payee.publicKey());
+    const service = new BazaarService({
+      ...makeConfig(),
+      providerObserverToken: observerToken,
+      providerObserverAuthorizedSigners: [observer.publicKey()],
+    });
+    const record = vi.spyOn((service as any).providerQualityStore, "recordObservation")
+      .mockResolvedValue({ id: "observation-2", disagreementRecorded: false });
+    const response = await service.getApp().request("/provider-quality/observations", {
+      method: "POST",
+      body: JSON.stringify({ observation }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${observerToken}` },
+    });
+
+    expect(response.status).toBe(202);
+    expect(record).toHaveBeenCalledWith({ observation, source: "independent" });
   });
 
   it("returns an explicit insufficient_data state before any aggregate exists", async () => {
@@ -64,3 +102,19 @@ describe("provider-quality HTTP surface", () => {
     expect(await response.json()).toMatchObject({ state: "provisional", n: 20, faultsObserved: 2 });
   });
 });
+
+function signedObservation(signer: Keypair, payTo: string) {
+  const digest = `sha256:${"a".repeat(64)}`;
+  return createSignedProviderObservation({
+    resource: "https://provider.example/fx",
+    payTo,
+    requestDigest: digest,
+    responseDigest: digest,
+    observedAt: Math.floor(Date.now() / 1000),
+    usable: true,
+    providerAtFault: false,
+    attributable: "unknown",
+    reasonCode: "ok",
+    callId: "call-1",
+  }, signer.secret());
+}

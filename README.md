@@ -30,7 +30,7 @@ production-readiness claim is part of the current evidence set.
 | `@veridex/stellar` buyer SDK | Built, packed, and externally exercised; npm publication remains pending |
 | Seller integration | Working with official x402 middleware; discovery is optional |
 | Provider quality | Implemented and tested; representative independent-observer operation is not proven |
-| Federation | Local in-process three-node prototype; production federation is not claimed |
+| Federation | Local three-process/three-database restart proof; multi-operator production federation is not claimed |
 | Pubnet | Approval-gated and unvalidated |
 | External security audit | Pending |
 

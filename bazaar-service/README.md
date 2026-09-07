@@ -1,7 +1,7 @@
 # Veridex Bazaar Service (`@veridex/bazaar-service`)
 
 Settlement-backed discovery and lexical hybrid search for x402-protected HTTP
-resources and MCP tools on Stellar. Federation is a local prototype, not a
+resources and MCP tools on Stellar. Federation is locally process-proven, not a
 production claim.
 
 ---
@@ -89,7 +89,10 @@ payment; buyers must validate the live signed x402 requirements.
 | `DATABASE_PASSWORD` | Database password | `""` |
 | `P2P_LISTEN_ADDRS` | libp2p listen multiaddresses | `/ip4/0.0.0.0/tcp/4001` |
 | `P2P_BOOTSTRAP_PEERS` | Comma-separated bootstrap multiaddresses | `""` |
-| `INTERNAL_TOKEN` | Shared secret with facilitator for `/catalog/ingest` and `/announce` | Required |
+| `BAZAAR_INTERNAL_TOKEN` | Shared secret for catalog and in-band provider observation writes | Required |
+| `PROVIDER_QUALITY_AUTHORIZED_SIGNERS` | Comma-separated in-band observation signers | Optional |
+| `PROVIDER_OBSERVER_TOKEN` | Separate bearer credential for independent observations; at least 24 characters | Disabled |
+| `PROVIDER_OBSERVER_AUTHORIZED_SIGNERS` | Comma-separated independent observer signers | Disabled |
 | `BAZAAR_PORT` | HTTP server port | `3001` |
 
 ---

@@ -1,6 +1,7 @@
 # Bazaar federation
 
-**Current status: local prototype.** Production federation is not claimed.
+**Current status: locally process-proven, not multi-operator proven.** Production
+federation is not claimed.
 
 ## Trust model
 
@@ -44,16 +45,22 @@ is not established.
 
 - signed delta verification and unauthorized signer rejection;
 - replay/order/conflict/revoke/restore tests;
-- one local in-process three-node libp2p lifecycle and convergence test;
+- one repeatable three-process/three-database libp2p lifecycle with distinct
+  peer identities, deterministic conflict convergence, restart retention,
+  revoke, and restore;
 - separation of peer transport identity from owner/delegate authority.
 
 Not proven:
 
 - independently operated nodes;
-- multi-process restart/persistence;
 - production peer scoring or Sybil resistance;
 - durable heartbeat replay state;
 - production SLOs, incident response, or public availability.
 
 Mesh failure does not block settlement or local Bazaar search. Federation is an
 optional discovery path, never settlement authority.
+
+Run the disposable local proof with `npm run federation:proof`. It reuses the
+existing successful testnet settlement in `conformance-report.json` and does
+not submit a new chain transaction. Its secret-free result is stored in
+`docs/rfp/federation-process-proof-2026-09-07.json`.

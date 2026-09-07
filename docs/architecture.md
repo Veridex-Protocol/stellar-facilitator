@@ -58,11 +58,11 @@ The status vocabulary is evidence-sensitive and used consistently throughout thi
 - Channel leasing/quarantine: exercised by unit/integration tests and a `10/25/50/100` testnet load smoke, but not by a real ambiguous-submission recovery drill or multi-instance deployment.
 - RPC failover/reconciliation: exercised by deterministic tests and a live loopback testnet drill, but not by independently operated providers or pubnet.
 - Catalog revalidation: implemented and package-tested; all migrations are clean-stack proven, but a timed live periodic revalidation/quarantine drill remains open.
-- Provider-quality aggregation and observability: active and tested, without a representative independent-observer corpus, external monitoring stack, or alert-routing proof.
+- Provider-quality aggregation and observability: authenticated source separation, per-call aggregate deduplication, and disagreement retention are tested, without a representative independent-observer corpus, external monitoring stack, or alert-routing proof.
 
 ### PROTOTYPE
 
-- Signed libp2p federation has a local in-process three-node lifecycle proof; multi-process restart persistence and multi-operator operation are not proven.
+- Signed libp2p federation has a local three-process/three-database lifecycle and restart proof; multi-operator operation is not proven.
 
 ### TARGET PRODUCTION
 
@@ -93,8 +93,8 @@ This distinction is intentional: it keeps the architecture persuasive without cl
 | Search regression | `IMPLEMENTED` | 10 documents, 50 reviewed queries, committed metrics | Lexical feature hashing, not semantic; latency is in-memory |
 | Channel leasing/quarantine | `IMPLEMENTED BUT NOT FULLY PROVEN` | Scheduler tests and testnet saturation smoke | Process-local state; real ambiguity drill pending |
 | RPC failover/reconciliation | `IMPLEMENTED BUT NOT FULLY PROVEN` | Coordinator tests and live loopback drill | Independent operators and pubnet pending |
-| Provider-quality plane | `IMPLEMENTED BUT NOT FULLY PROVEN` | Signed outcomes, source/disagreement persistence, Wilson aggregates, seller policy tests | Representative independent corpus/public service pending |
-| Federation | `PROTOTYPE` | Local in-process three-node signed lifecycle | Multi-process persistence and multi-operator proof pending |
+| Provider-quality plane | `IMPLEMENTED BUT NOT FULLY PROVEN` | Signed outcomes, credential-derived sources, per-call deduplication, disagreement persistence, Wilson aggregates, seller policy tests | Representative independent corpus/public service pending |
+| Federation | `IMPLEMENTED BUT NOT FULLY PROVEN` | Local three-process/three-database signed lifecycle, deterministic conflict, restart, revoke, and restore | Multi-operator/public operation pending |
 | Keyless MCP | `TESTNET PROVEN` | `discover_resources`, exact `pay_resource`, client-side signing, recorded ledgers | `upto` MCP execution and broad client interoperability pending |
 
 The public release checklist, deployed contract IDs/WASM hashes, testnet transaction hashes, conformance reports, and search-quality reports are release artifacts - not prose promises.
@@ -367,7 +367,7 @@ Recall@k is the fraction of judged-relevant documents present in the top `k`; nD
 
 ### 7.4 Federation without a walled garden
 
-**Status: `PROTOTYPE`.** Signed catalog deltas, owner/delegate authorization, revision/digest ordering, replay/conflict rules, and revoke/restore behavior are implemented. A local in-process three-node libp2p test demonstrates A/B/C transport and deterministic convergence. Multi-process restart/persistence and multi-operator operation are not proven.
+**Status: `IMPLEMENTED BUT NOT FULLY PROVEN`.** Signed catalog deltas, owner/delegate authorization, revision/digest ordering, replay/conflict rules, and revoke/restore behavior are implemented. A repeatable local proof runs three independent OS processes, libp2p identities, and PostgreSQL databases; it demonstrates authenticated A/B/C propagation, invalid/stale/unauthorized rejection, deterministic equal-revision convergence, database retention across a process restart, revoke, and restore. The proof runs on one workstation and does not establish independent operators, public reachability, Byzantine tolerance, or production SLOs.
 
 ```mermaid
 flowchart TB
@@ -434,7 +434,7 @@ flowchart LR
 
 A provider-attributed unusable result prevents settlement in the response-aware path. Caller-attributed or ambiguous failures follow explicit local policy. Observation delivery and aggregate lookup are not synchronous requirements for the payment protocol itself: seller policy defines behavior for stale, invalid, or unavailable aggregate services, and the default preserves sale availability with warnings where configured.
 
-Aggregates expose `insufficient_data`, `provisional`, or `published`, along with `n`, `faultsObserved`, `faultRateUpperBound`, window, issuer, and signature. `faultRateUpperBound` is a Wilson upper confidence bound, not a probability or a guarantee. Default thresholds are 20 observations for provisional and 100 for published. In-band/independent source and factual disagreement persistence are implemented by migration `006` and package tests. A representative independent-observer corpus and mature public observatory remain unproven.
+Aggregates expose `insufficient_data`, `provisional`, or `published`, along with `n`, `faultsObserved`, `faultRateUpperBound`, window, issuer, and signature. `faultRateUpperBound` is a Wilson upper confidence bound, not a probability or a guarantee. Default thresholds are 20 observations for provisional and 100 for published. In-band writes derive their source from the internal credential; independent writes require a distinct observer credential and signer allowlist. One signed `(callId, requestDigest)` occurrence contributes at most one aggregate sample, preferring authenticated independent evidence, while both raw observations and factual disagreements remain stored. Legacy observations without `callId` are not collapsed because identical request digests do not prove a shared occurrence. A representative independent-observer corpus and mature public observatory remain unproven.
 
 ## 9. `upto`: metered settlement with one payer signature
 
@@ -551,7 +551,7 @@ The intended governance chain is agent budget -> policy evaluation -> signed aut
 
 ### 11.3 Observability
 
-**Status: `IMPLEMENTED BUT NOT FULLY PROVEN`.** Facilitator and Bazaar expose Prometheus text endpoints. Current metrics cover verification/settlement counts and latency, settlement failures, sponsored fee values when available, channel state/drift, RPC request/failure/failover/latency/disagreement, catalog outbox depth/age, catalog/revalidation/embedding backlog, search requests/latency/zero results, provider observations/faults/disagreements, P2P invalid/replay counts, and liveness changes.
+**Status: `IMPLEMENTED BUT NOT FULLY PROVEN`.** Facilitator and Bazaar expose Prometheus text endpoints, and the MCP process renders per-tool call/failure/latency metrics. Current metrics cover verification/settlement counts and latency, settlement failures, sponsored fee values when available, channel state/drift, RPC request/failure/failover/latency/disagreement/reconciliation, catalog outbox depth/age, catalog/revalidation retained/embedding backlog, search requests/latency/zero results, provider observations/faults/disagreements, P2P invalid/replay counts, and liveness changes. Facilitator outcome logs include safe request, payment, resource, and transaction correlation fields; MCP tool outcomes use structured operation logs.
 
 The facilitator emits structured request outcome lines; Bazaar and some lower-level components still use free-form console logging. End-to-end request-ID correlation is `NOT IMPLEMENTED`. External Prometheus collection, retention, dashboards, alert routing, tested thresholds, and incident integration are `TARGET PRODUCTION`; the existence of `/metrics` is not evidence that those systems exist.
 
@@ -626,11 +626,11 @@ For an HTTP Stellar x402 buyer, use `createVeridexClient(...)` from the focused 
 | Bazaar | Six-migration clean bootstrap, payment-bound cataloging, browse/search, restart persistence; live-term/revalidation tests | `TESTNET PROVEN` plus implemented hardening | Timed revalidation drill, HA/restore and production SLOs |
 | Search | 10-document/50-query reviewed lexical regression artifact | `IMPLEMENTED` | PostgreSQL latency corpus, broader judgments, target anti-concentration metadata |
 | MCP | Keyless exact discovery/payment ledgers and 19 tests | `TESTNET PROVEN` for exercised path | Broader client interoperability and DNS/redirect hardening |
-| Provider quality | Signed outcomes/aggregates, source/disagreement persistence, seller policy tests | `IMPLEMENTED BUT NOT FULLY PROVEN` | Representative independent corpus and observatory operations |
+| Provider quality | Signed outcomes/aggregates, credential-derived source, per-call deduplication, disagreement persistence, seller policy tests | `IMPLEMENTED BUT NOT FULLY PROVEN` | Representative independent corpus and observatory operations |
 | Channel pool | Lease/quarantine tests and 185-request saturation smoke with zero sequence errors | `IMPLEMENTED BUT NOT FULLY PROVEN` | Real ambiguity recovery and durable multi-instance ownership |
 | RPC coordinator | Deterministic reconciliation tests and loopback failover payment | `IMPLEMENTED BUT NOT FULLY PROVEN` | Independently operated providers and pubnet proof |
-| Federation | Signed-delta tests and local in-process three-node convergence | `PROTOTYPE` | Multi-process restart/persistence, strict heartbeat migration, multi-operator proof |
-| Observability | Facilitator/Bazaar `/metrics`, structured facilitator outcomes | `IMPLEMENTED BUT NOT FULLY PROVEN` | External retention, dashboards, alerts, correlation, runbook exercises |
+| Federation | Signed-delta tests and local three-process/three-database convergence plus restart/revoke/restore artifact | `IMPLEMENTED BUT NOT FULLY PROVEN` | Strict heartbeat migration and multi-operator/public proof |
+| Observability | Facilitator/Bazaar `/metrics`, MCP tool metrics, structured and correlated facilitator/MCP outcomes | `IMPLEMENTED BUT NOT FULLY PROVEN` | External retention, dashboards, alerts, and runbook exercises |
 | Smart accounts | Custom signer hooks and off-chain budget artifact | `NOT IMPLEMENTED` for signed-path policy proof | Deployed/audited smart-account stablecoin fixture |
 
 Authoritative evidence links:
@@ -639,6 +639,8 @@ Authoritative evidence links:
 - [Testnet conformance report](rfp/testnet-conformance-report.md)
 - [Requirement traceability](rfp/requirement-traceability.md)
 - [Security hardening matrix](rfp/security-matrix-2026-09-06.md)
+- [Threat model](security/threat-model.md)
+- [Local multi-process federation proof](rfp/federation-process-proof-2026-09-07.json)
 - [Search evaluation artifact](rfp/search-evaluation-2026-09-06.json)
 - [Facilitator tests](../facilitator-service/src/__tests__/), [Bazaar tests](../bazaar-service/src/__tests__/), [MCP tests](../mcp-server/src/__tests__/), and [focused SDK tests](../sdk-typescript/src/__tests__/)
 

@@ -69,6 +69,8 @@ export interface BazaarServiceConfig {
   providerAggregatePublishedThreshold: number;
   providerAggregateProvisionalThreshold: number;
   providerQualityAuthorizedSigners?: string[];
+  providerObserverToken?: string;
+  providerObserverAuthorizedSigners?: string[];
   providerAggregateAuthorizedIssuers?: string[];
   providerAggregateRecomputeQueueLimit?: number;
   catalogRevalidationIntervalMs: number;
@@ -115,6 +117,8 @@ export function getDefaultConfig(): BazaarServiceConfig {
     providerAggregatePublishedThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PUBLISHED_THRESHOLD || "100", 10),
     providerAggregateProvisionalThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PROVISIONAL_THRESHOLD || "20", 10),
     providerQualityAuthorizedSigners: parseCsv(process.env.PROVIDER_QUALITY_AUTHORIZED_SIGNERS),
+    providerObserverToken: optionalSecret(process.env.PROVIDER_OBSERVER_TOKEN, "PROVIDER_OBSERVER_TOKEN"),
+    providerObserverAuthorizedSigners: parseCsv(process.env.PROVIDER_OBSERVER_AUTHORIZED_SIGNERS),
     providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
     providerAggregateRecomputeQueueLimit: parseInt(process.env.PROVIDER_AGGREGATE_RECOMPUTE_QUEUE_LIMIT || "256", 10),
     catalogRevalidationIntervalMs: parseInt(process.env.CATALOG_REVALIDATION_INTERVAL_MS || "300000", 10),
@@ -147,6 +151,13 @@ function requireInternalToken(): string {
         "Generate one with: node -e \"console.log(require('crypto').randomBytes(24).toString('hex'))\"",
     );
   }
+  return token;
+}
+
+function optionalSecret(value: string | undefined, name: string): string | undefined {
+  const token = value?.trim();
+  if (!token) return undefined;
+  if (token.length < 24) throw new Error(`${name} must be at least 24 characters when configured.`);
   return token;
 }
 
@@ -708,17 +719,25 @@ export class BazaarService {
     // Internal asynchronous observation ingestion. It is never called by the
     // facilitator before settlement and contains hashes, not raw payloads.
     this.app.post("/provider-quality/observations", async (c) => {
-      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
+      const authorization = c.req.header("Authorization");
+      const source = authorization === `Bearer ${this.config.internalToken}`
+        ? "in_band"
+        : this.config.providerObserverToken && authorization === `Bearer ${this.config.providerObserverToken}`
+          ? "independent"
+          : undefined;
+      if (!source) {
         return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const body = await c.req.json();
         const observation = ProviderObservationSchema.parse(body.observation ?? body);
-        const source = body.source === "independent" ? "independent" : "in_band";
         const verification = verifyProviderObservation(observation, {
           expectedResource: observation.resource,
           expectedPayTo: observation.payTo,
-          authorizedSigners: this.config.providerQualityAuthorizedSigners,
+          authorizedSigners: source === "independent"
+            ? this.config.providerObserverAuthorizedSigners ?? []
+            : this.config.providerQualityAuthorizedSigners,
+          allowSignerDifferentFromPayTo: source === "independent",
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {

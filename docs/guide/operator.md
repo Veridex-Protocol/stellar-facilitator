@@ -102,7 +102,9 @@ coordinator health-checks providers and chooses one healthy target. It submits a
 signed envelope to exactly one provider. If that call times out, it computes the
 same envelope hash locally and reconciles `getTransaction` across every provider;
 it never sends the envelope a second time. Conflicting final `SUCCESS`/`FAILED`
-states fail safely and increment `veridex_rpc_disagreements_total`.
+states fail safely and increment `veridex_rpc_disagreements_total`. Every
+cross-provider status reconciliation increments
+`veridex_rpc_reconciliation_total`.
 
 Provider health is visible under `rpcProviders` on `/stats`. The local coordinator
 is testnet-only in this release because the pinned Stellar scheme permits its
@@ -113,6 +115,12 @@ result with a transaction hash quarantines that signer until authenticated
 explicit recovery. A real ambiguous-submission recovery drill and durable
 multi-instance quarantine state remain release gaps.
 
+Facilitator outcome logs carry safe `requestId`, `paymentId`, `resource`, and
+`transactionHash` fields when those values exist. MCP tool outcomes are also
+structured, and `get_metrics` exposes per-tool call, failure, and latency
+counters for the running MCP process. External collection, retention, alerts,
+and incident-routing exercises remain deployment work.
+
 Do not attempt to fix this by widening the expiration tolerance. That check bounds how long a signed authorization stays live, so it is a security property rather than the bug.
 
 ## 5. Catalog integrity
@@ -120,6 +128,16 @@ Do not attempt to fix this by widening the expiration tolerance. That check boun
 The Bazaar accepts a listing only when it can confirm the settlement behind it on Horizon, itself, rather than taking the caller's word for it. There are four checks. The `settlementTx` field must be a 64-character hex transaction hash, it must exist on the configured network, it must have succeeded, and an effect on it must credit the entry's `payTo` address. On top of that, a unique constraint on `settlement_tx` means one settlement lists one resource.
 
 Two configuration consequences follow. `BAZAAR_INTERNAL_TOKEN` is mandatory and must be at least 24 characters, because it guards a write endpoint on a public catalog, and the process will not start without it. `HORIZON_URL` must be reachable, because verification fails closed: during a Horizon outage the catalog stops listing rather than starts trusting.
+
+Provider observation source is credential-derived. `BAZAAR_INTERNAL_TOKEN`
+always produces `in_band` evidence even if a request body claims otherwise.
+Independent observations are disabled unless both `PROVIDER_OBSERVER_TOKEN`
+and `PROVIDER_OBSERVER_AUTHORIZED_SIGNERS` are configured with a genuinely
+separate observer credential and signer identity.
+
+Temporary live-term validation failures retain a stale row for retry and
+increment `veridex_catalog_revalidation_retained_total`; terminal term or
+integrity mismatches quarantine and soft-drop it.
 
 Confirm both halves work:
 

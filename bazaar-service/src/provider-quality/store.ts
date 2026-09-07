@@ -112,11 +112,21 @@ export class ProviderQualityStore {
     nowSeconds = Math.floor(Date.now() / 1000),
   ): Promise<ProviderObservationRecord[]> {
     const result = await this.db.query<ProviderObservationRow>(
-      `SELECT * FROM provider_observations
-       WHERE resource = $1
-         AND ($2::text IS NULL OR pay_to = $2)
-         AND observed_at >= to_timestamp($3)
-         AND observed_at <= to_timestamp($4)
+      `WITH ranked AS (
+         SELECT provider_observations.*,
+                row_number() OVER (
+                  PARTITION BY resource, pay_to, request_digest,
+                    COALESCE('call:' || call_id, 'row:' || id::text)
+                  ORDER BY CASE observation_source WHEN 'independent' THEN 0 ELSE 1 END,
+                           observed_at DESC, created_at DESC
+                ) AS aggregate_rank
+         FROM provider_observations
+         WHERE resource = $1
+           AND ($2::text IS NULL OR pay_to = $2)
+           AND observed_at >= to_timestamp($3)
+           AND observed_at <= to_timestamp($4)
+       )
+       SELECT * FROM ranked WHERE aggregate_rank = 1
        ORDER BY observed_at DESC`,
       [resource, payTo ?? null, nowSeconds - windowSeconds, nowSeconds],
     );
@@ -174,13 +184,14 @@ export class ProviderQualityStore {
   }
 
   private async recordDisagreements(record: ProviderObservationRecord): Promise<boolean> {
+    if (!record.callId) return false;
     const opposite = record.source === "in_band" ? "independent" : "in_band";
     const result = await this.db.query<ProviderObservationRow>(
       `SELECT * FROM provider_observations
        WHERE resource = $1 AND pay_to = $2 AND request_digest = $3
-         AND observation_source = $4
+         AND call_id = $4 AND observation_source = $5
        ORDER BY observed_at DESC LIMIT 1`,
-      [record.resource, record.payTo, record.requestDigest, opposite],
+      [record.resource, record.payTo, record.requestDigest, record.callId, opposite],
     );
     const otherRow = result.rows[0];
     if (!otherRow) return false;

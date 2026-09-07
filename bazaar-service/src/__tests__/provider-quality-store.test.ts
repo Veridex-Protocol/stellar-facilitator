@@ -24,7 +24,7 @@ function row(source: "in_band" | "independent", overrides: Record<string, unknow
     response_status: 200,
     tool_name: null,
     route: null,
-    call_id: null,
+    call_id: "call-1",
     settlement_tx: null,
     signer: signer.publicKey(),
     signature: `${source}-signature`,
@@ -46,6 +46,7 @@ function signedObservation(overrides: Record<string, unknown> = {}) {
     attributable: "unknown",
     reasonCode: "ok",
     responseStatus: 200,
+    callId: "call-1",
     ...overrides,
   }, signer.secret());
 }
@@ -83,6 +84,25 @@ describe("provider observation evidence sources", () => {
     expect(queries.find(({ text }) => text.includes("INSERT INTO provider_observations"))?.params?.[17]).toBe("independent");
     const disagreement = queries.find(({ text }) => text.includes("INSERT INTO provider_observation_disagreements"));
     expect(disagreement?.params?.[5]).toEqual(["usable", "providerAtFault", "attributable", "reasonCode"]);
+  });
+
+  it("prefers one independent sample per signed request occurrence for aggregation", async () => {
+    const queries: string[] = [];
+    const database = {
+      query: async (text: string) => {
+        queries.push(text);
+        return { rows: [row("independent")] };
+      },
+    };
+    const store = new ProviderQualityStore(database as any);
+
+    const observations = await store.listObservationsForAggregate(resource, signer.publicKey(), 300, 1_700_000_100);
+
+    expect(observations).toHaveLength(1);
+    expect(observations[0].source).toBe("independent");
+    expect(queries[0]).toContain("PARTITION BY resource, pay_to, request_digest");
+    expect(queries[0]).toContain("COALESCE('call:' || call_id, 'row:' || id::text)");
+    expect(queries[0]).toContain("WHEN 'independent' THEN 0");
   });
 
   it("does not record a disagreement when in-band and independent facts match", async () => {
