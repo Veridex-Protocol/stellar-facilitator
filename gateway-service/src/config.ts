@@ -8,6 +8,7 @@ const contractId = /^C[A-Z2-7]{55}$/;
 
 const RouteSchema = z.object({
   path: z.string().startsWith("/").refine((value) => !value.includes(".."), "route path cannot contain '..'"),
+  routeTemplate: z.string().startsWith("/").optional(),
   methods: z.array(z.enum(GATEWAY_METHODS)).min(1).optional(),
   price: z.string().regex(integerString).optional(),
   name: z.string().min(1).max(120).optional(),
@@ -44,8 +45,13 @@ const ConfigSchema = z.object({
   maxRequestBodyBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
   maxResponseBodyBytes: z.number().int().min(1).max(50 * 1024 * 1024).optional(),
   maxConcurrentRequests: z.number().int().min(1).max(1_000).optional(),
+  rateLimit: z.object({
+    windowMs: z.number().int().min(1_000).max(60 * 60 * 1_000),
+    max: z.number().int().min(1).max(100_000),
+  }).optional(),
   allowHttpForDevelopment: z.boolean().optional(),
   allowedUpstreamOrigins: z.array(z.string().url()).max(50).optional(),
+  bazaarUrl: z.string().url().optional(),
   expiresAt: z.string().datetime().optional(),
   developerId: z.string().min(1).max(128).optional(),
 });
@@ -83,6 +89,7 @@ export function validateGatewayConfig(input: unknown): GatewayConfig {
     maxRequestBodyBytes: config.maxRequestBodyBytes ?? 1024 * 1024,
     maxResponseBodyBytes: config.maxResponseBodyBytes ?? 5 * 1024 * 1024,
     maxConcurrentRequests: config.maxConcurrentRequests ?? 100,
+    rateLimit: config.rateLimit ?? { windowMs: 60_000, max: 120 },
   };
 }
 
@@ -101,6 +108,15 @@ export function assertPublicHostname(hostname: string): void {
   const family = isIP(normalized);
   if (family === 4 && isBlockedIpv4(normalized)) throw new Error("upstream IPv4 address is private or reserved");
   if (family === 6 && isBlockedIpv6(normalized)) throw new Error("upstream IPv6 address is private or reserved");
+}
+
+export function assertPublicAddress(address: string): void {
+  if (isIP(address) === 4 && isBlockedIpv4(address)) {
+    throw new Error("upstream DNS resolved to a private or reserved IPv4 address");
+  }
+  if (isIP(address) === 6 && isBlockedIpv6(address)) {
+    throw new Error("upstream DNS resolved to a private or reserved IPv6 address");
+  }
 }
 
 function normalizeRoutePrefix(value: string): string {

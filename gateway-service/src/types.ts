@@ -10,6 +10,7 @@ export type PaymentEventStatus = "challenged" | "verified" | "settled" | "reject
 
 export interface GatewayRouteConfig {
   path: string;
+  routeTemplate?: string;
   methods?: GatewayMethod[];
   price?: string;
   name?: string;
@@ -43,8 +44,10 @@ export interface GatewayConfig {
   maxRequestBodyBytes?: number;
   maxResponseBodyBytes?: number;
   maxConcurrentRequests?: number;
+  rateLimit?: { windowMs: number; max: number };
   allowHttpForDevelopment?: boolean;
   allowedUpstreamOrigins?: string[];
+  bazaarUrl?: string;
   expiresAt?: string;
   developerId?: string;
 }
@@ -96,6 +99,8 @@ export interface GatewayEventStore {
   appendPaymentEvent(event: VeridexPaymentEvent): Promise<void>;
   appendProviderOutcome(outcome: ProviderOutcomeRecord): Promise<void>;
   findSettlement(paymentId: string): Promise<VeridexPaymentEvent | undefined>;
+  listPaymentEvents(gatewayId: string): Promise<VeridexPaymentEvent[]>;
+  listProviderOutcomes(gatewayId: string): Promise<ProviderOutcomeRecord[]>;
 }
 
 export interface GatewayFacilitatorClient {
@@ -120,4 +125,35 @@ export interface GatewayFacilitatorClient {
 export interface GatewayDependencies {
   fetch?: typeof fetch;
   eventStore?: GatewayEventStore;
+  resolveHostname?: (hostname: string) => Promise<string[]>;
+  providerOutcomeSecretKey?: string;
+  providerObserverToken?: string;
+  managementToken?: string;
+}
+
+export interface GatewayPortalSnapshotV1 {
+  schemaVersion: "veridex.portal.stellar-gateway/v1";
+  gateway: {
+    id: string;
+    developerId?: string;
+    state: GatewayLifecycle;
+    upstreamOrigin: string;
+    publicBaseUrl: string;
+    expiresAt?: string;
+  };
+  resources: Array<{
+    id: string;
+    path: string;
+    routeTemplate?: string;
+    scheme: "exact";
+    network: GatewayNetwork;
+    asset: string;
+    amount: string;
+    payTo: string;
+    bazaar: "pending" | "declared" | "disabled";
+    mcp: "declared" | "disabled";
+  }>;
+  payments: VeridexPaymentEvent[];
+  providerOutcomes: ProviderOutcomeRecord[];
+  generatedAt: string;
 }
