@@ -1,30 +1,36 @@
-# Seller path: get paid for an endpoint
+# Seller path: protect a Stellar testnet endpoint
 
-You have an API, or an MCP tool, and you want agents to pay per call. This takes about ten minutes and it needs no registration anywhere.
+A basic exact seller needs official x402 middleware, a Stellar receiving
+address, an asset contract, and a facilitator URL. Bazaar, federation, and
+provider quality are optional.
 
-What you end up with is a paid endpoint that appears in the Bazaar catalog on its first settlement, with no separate listing step to remember.
-
-## 1. Get an address that can receive payment
-
-Any Stellar account works. For testnet:
+## 1. Install
 
 ```bash
-npm run setup
-grep SELLER_ADDRESS .env
+npm install @hono/node-server hono \
+  @x402/core@2.21.0 @x402/extensions@2.21.0 \
+  @x402/hono@2.21.0 @x402/stellar@2.21.0
 ```
 
-For your own service, generate a keypair and fund it. You only need the public key on the server, because a resource server never signs payments and therefore never needs the secret.
+The pinned versions match the repository's proven testnet path. Review and test
+before changing them.
 
-## 2. Declare the price
+## 2. Configure
 
-The middleware handles the protocol. All you describe is what you sell and what it costs.
+For the repository quickstart, `.env` supplies:
 
-Install the official seller packages. A basic exact payment does not require
-`@veridex/stellar`, a Bazaar database, or a P2P node.
-
-```bash
-npm install @x402/core @x402/extensions @x402/hono @x402/stellar hono @hono/node-server
+```text
+SELLER_ADDRESS=<Stellar G-address>
+PAYMENT_ASSET=<SEP-41 contract address>
+FACILITATOR_URL=http://localhost:3002
 ```
+
+The seller needs the public receiving address, not a payer key. The reference
+server additionally signs experimental provider outcomes with
+`PROVIDER_OUTCOME_SECRET_KEY`; that is optional and separate from accepting
+payment.
+
+## 3. Protect a route
 
 ```ts
 import { serve } from "@hono/node-server";
@@ -34,174 +40,142 @@ import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { Hono } from "hono";
 
-const NETWORK = "stellar:testnet";
+const network = "stellar:testnet";
+const facilitatorUrl = process.env.FACILITATOR_URL ?? "http://localhost:3002";
+const payTo = process.env.SELLER_ADDRESS!;
+const asset = process.env.PAYMENT_ASSET!;
 
 const resourceServer = new x402ResourceServer(
-  new HTTPFacilitatorClient({ url: "http://localhost:3002" }),
-).register(NETWORK, new ExactStellarScheme());
+  new HTTPFacilitatorClient({ url: facilitatorUrl }),
+).register(network, new ExactStellarScheme());
 
 const app = new Hono();
 
-app.use(
-  paymentMiddleware(
-    {
-      "GET /forecast": {
-        accepts: [{
-          scheme: "exact",
-          network: NETWORK,
-          // A SEP-41 token contract address, and the amount in atomic units.
-          price: { asset: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-                   amount: "100000" },          // 0.01 XLM
-          payTo: process.env.SELLER_ADDRESS!,
-          maxTimeoutSeconds: 120,
-        }],
-        serviceName: "Acme forecasts",
-        description: "Hourly weather forecast for a named city.",
-        mimeType: "application/json",
-        tags: ["weather", "forecast"],
-        // This is what makes the endpoint discoverable. See step 4.
-        extensions: declareDiscoveryExtension({
-          output: { example: { city: "Lisbon", tempC: 19, at: "2026-08-23T14:00:00Z" } },
+app.use(paymentMiddleware(
+  {
+    "GET /forecast": {
+      accepts: [{
+        scheme: "exact",
+        network,
+        price: { asset, amount: "100000" },
+        payTo,
+        maxTimeoutSeconds: 120,
+      }],
+      serviceName: "Acme forecasts",
+      description: "Hourly weather forecast for a named city.",
+      mimeType: "application/json",
+      tags: ["weather", "forecast"],
+      extensions: {
+        ...declareDiscoveryExtension({
+          output: { example: { city: "Lisbon", tempC: 19 } },
         }),
       },
     },
-    resourceServer,
-    undefined,
-    undefined,
-    true,   // check the facilitator supports this scheme at boot, not at payment time
-  ),
-);
+  },
+  resourceServer,
+  undefined,
+  undefined,
+  true,
+));
 
-app.get("/forecast", (c) => c.json({ city: "Lisbon", tempC: 19, at: new Date().toISOString() }));
+app.get("/forecast", (context) =>
+  context.json({ city: "Lisbon", tempC: 19 }),
+);
 
 serve({ fetch: app.fetch, port: 3003 });
 ```
 
-That final `true` argument is worth understanding. It makes the server confirm at startup that the facilitator actually supports `exact` on `stellar:testnet`, so a misconfiguration becomes a failed boot rather than a failed payment in front of a customer.
+The final `true` syncs supported schemes at startup. The price amount is in the
+asset's atomic units. `asset` is a SEP-41 contract address, and
+`extra.areFeesSponsored` is supplied by the facilitator when sponsorship is
+actually enabled.
 
-Express and Next adapters exist as well, in `@x402/express` and `@x402/next`, and they take the same shape.
-
-## 3. Check that the 402 is well formed
-
-```bash
-curl -i http://localhost:3003/forecast
-```
-
-```
-HTTP/1.1 402 Payment Required
-payment-required: eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJQYXltZW50IHJlcXVpcmVkIiwi…
-```
-
-Decode the header to see exactly what a buyer sees. Note that this must be a GET rather than a HEAD request, because the middleware only emits the challenge on the method the route is registered for.
+## 4. Inspect the x402 v2 challenge
 
 ```bash
-curl -s -D- -o /dev/null http://localhost:3003/forecast \
-  | awk -F': ' '/^payment-required/{print $2}' | tr -d '\r' | base64 -d | jq '.accepts[0]'
+curl -sS -D /tmp/forecast-headers -o /dev/null http://localhost:3003/forecast
+awk -F': ' 'tolower($1)=="payment-required" {print $2}' /tmp/forecast-headers \
+  | tr -d '\r' | base64 -d | jq
 ```
 
-```json
-{
-  "scheme": "exact",
-  "network": "stellar:testnet",
-  "amount": "100000",
-  "asset": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-  "payTo": "GAJWHHLFUA62X5Z4XGFXRZA3CBUC7IZXFWAJ46637REXBYBCNP2BJRXY",
-  "maxTimeoutSeconds": 120,
-  "extra": { "areFeesSponsored": true }
+The decoded `PaymentRequired` contains resource metadata, `accepts`, and the
+optional Bazaar extension. Each accepted requirement contains `scheme`, CAIP-2
+`network`, `asset`, `amount`, `payTo`, `maxTimeoutSeconds`, and `extra`.
+
+The paid retry uses `PAYMENT-SIGNATURE`; it is not an Authorization bearer
+token. A successful response carries `PAYMENT-RESPONSE`.
+
+## 5. Become discoverable
+
+`declareDiscoveryExtension()` places the current Bazaar declaration in
+`PaymentRequired.extensions.bazaar`. The client echoes the declaration in its
+v2 payment payload. After successful settlement, Veridex:
+
+```text
+settlement
+-> durable transaction-keyed outbox
+-> asynchronous Bazaar ingestion
+-> live 402/payment-term validation
+-> settlement/payTo integrity validation
+-> catalog row
+```
+
+The immediate settle response reports `bazaar.status: "queued"`; it does not
+claim that indexing finished synchronously. Confirm the row later:
+
+```bash
+curl -fsS \
+  "http://localhost:3001/discovery/resources?payTo=$SELLER_ADDRESS&network=stellar:testnet" \
+  | jq '.results'
+```
+
+An existing HTTP listing is periodically revalidated. Matching live terms
+refresh it; missing, changed, or unsafe terms quarantine it by soft-dropping it
+from search. This hardening is implemented/tested, but migrations `005/006` and
+the periodic lifecycle lack a captured destructive-stack proof.
+
+## 6. Dynamic routes
+
+Current upstream Bazaar conventions use route keys such as
+`"GET /weather/:country/:city"`. Declare parameter schemas through
+`pathParamsSchema`:
+
+```ts
+"GET /weather/:country/:city": {
+  accepts: exactRequirements,
+  extensions: {
+    ...declareDiscoveryExtension({
+      pathParamsSchema: {
+        properties: {
+          country: { type: "string", description: "Country code" },
+          city: { type: "string", description: "City slug" },
+        },
+        required: ["country", "city"],
+      },
+      output: { example: { country: "pt", city: "lisbon", tempC: 19 } },
+    }),
+  },
 }
 ```
 
-The `areFeesSponsored: true` field means your buyers need only the payment asset and no XLM for fees, because the facilitator sponsors them.
+At runtime, `/weather/pt/lisbon` supplies path parameter values. Do not invent a
+flattened `pathParams` field beside the extension. Veridex percent-decodes route
+templates before rejecting traversal (`..`) and scheme injection (`://`).
 
-## 4. Discovery is automatic, and it tells you when it fails
+## 7. Custom `upto`
 
-The `declareDiscoveryExtension` call in step 2 is the entire listing process. When a payment settles, the facilitator catalogs the resource. There is no registration call and nothing to remember to do afterwards.
+The reference server registers `UptoStellarServerScheme` and sets a settlement
+override after provider execution. That adapter is local to this repository;
+stock `@x402/stellar@2.21.0` does not export a Stellar `upto` server scheme.
 
-The catalog reports the outcome back on the settle response, and the facilitator passes it to you in the `EXTENSION-RESPONSES` header as base64 JSON. On success it decodes to this:
+Use it only for the experimental testnet path described in the
+[scheme specification](../specifications/scheme_upto_stellar.md). The resource
+must provide a signed result digest, actual usage must not exceed the authorized
+maximum, and zero/partial/full-cap settlements remain distinct.
 
-```json
-{ "bazaar": { "status": "success" } }
-```
+## 8. Troubleshooting
 
-When something is wrong with your metadata, it names the problem instead:
-
-```json
-{ "bazaar": { "status": "rejected",
-              "rejectedReason": "routeTemplate contains path traversal (..)" } }
-```
-
-Log that header. It is the only signal you get about whether your listing landed.
-
-You can confirm the listing directly:
-
-```bash
-curl -s "http://localhost:3001/discovery/resources?payTo=$SELLER_ADDRESS" | jq '.results[0]'
-```
-
-### Why your first listing needs a payment
-
-A listing must name a settlement that the catalog confirms on Horizon itself, and one settlement lists exactly one resource. A resource therefore becomes discoverable when someone pays for it, and not before.
-
-This is deliberate for two reasons. It means catalog spam costs a real payment per entry, and it means every listing is auditable by a third party from the transaction hash alone. The practical consequence is that you cannot list a service nobody has bought yet, so pay for your own endpoint once to seed it.
-
-### Writing metadata that agents can use
-
-The description is what retrieval matches on, and an agent decides from it whether to spend money. A description like `"Weather API"` is nearly useless, whereas `"Hourly weather forecast for a named city, returns temperature in Celsius and conditions"` is what actually gets found and called.
-
-These constraints are enforced at ingest, and a rejection always states which one failed:
-
-| Field | Rule |
-| --- | --- |
-| `serviceName` | At most 32 characters, printable ASCII |
-| `tags` | At most 5, each at most 32 characters |
-| `iconUrl` | No IP literals, no loopback, no decimal or hex IP forms |
-| `routeTemplate` | Percent-decoded first, then rejected for `..` or `://` |
-
-## 5. Staying discoverable
-
-Liveness comes from either of two signals, whichever is more recent. A settlement confirmed on Horizon keeps you healthy for 24 hours. A P2P heartbeat, if you run a mesh node, keeps you healthy for 30 seconds.
-
-You do not need a mesh node. A resource that takes payments stays listed on settlements alone, which is the entire point of automatic cataloging. Ranking also weights uptime, latency, and settlement count, so a working endpoint that gets used ranks above one that does not.
-
-## Getting paid in USDC
-
-The examples use native XLM's Stellar Asset Contract because it needs no trustline. For USDC, or any other SEP-41 asset, the receiving account needs a trustline first or the payment will fail at settlement.
-
-```bash
-stellar tx new change-trust \
-  --source-account "$SELLER_SECRET_KEY" \
-  --line USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5 \
-  --network testnet
-```
-
-Then use the USDC SEP-41 contract address as `price.asset`. Everything else stays
-the same.
-
-## MCP tools
-
-An MCP tool is a first-class resource type rather than a special case. Declare it with the MCP form of the extension, and it is keyed on the pair of `resource.url` and `input.toolName`, so several tools on one server list separately.
-
-```ts
-extensions: declareDiscoveryExtension({
-  toolName: "get_forecast",
-  description: "Hourly weather forecast for a named city.",
-  inputSchema: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
-}),
-```
-
-## When something is wrong
-
-Every rejection carries a machine-readable reason code and a sentence explaining it. If a payment to your endpoint fails, the reason tells you why:
-
-```json
-{ "isValid": false,
-  "invalidReason": "invalid_exact_stellar_payload_event_wrong_to",
-  "invalidMessage": "The simulated transfer credits an account other than the 'payTo' address in the payment requirements." }
-```
-
-The full table lives in [`reasons.ts`](../../facilitator-service/src/reasons.ts), and a test asserts that it stays exhaustive against the installed packages.
-
-## Next
-
-The [buyer and agent path](./buyer.md) shows how to pay for what you just built.
-The [operator path](./operator.md) covers running the facilitator yourself.
+Branch on protocol or Veridex machine-readable errors, not message text. Common
+seller actions include fixing a mismatched `payTo`/asset/amount, funding the
+receiving trustline where required, refreshing expired terms, or waiting for an
+asynchronous catalog retry. See [errors](../errors.md).

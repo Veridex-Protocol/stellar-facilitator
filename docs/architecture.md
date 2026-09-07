@@ -246,10 +246,10 @@ sequenceDiagram
     Q->>S: Execute signed transfer
     S-->>Q: Confirmed transaction
     Q-->>F: Hash + final status
-    F-->>R: PAYMENT-RESPONSE receipt
+    F-->>R: SettleResponse JSON + optional x402job/1 receipt
     F-->>B: Durable queued outbox event after confirmed settlement
     B->>B: Validate, embed, upsert catalog asynchronously
-    R-->>A: Protected response
+    R-->>A: Protected response + PAYMENT-RESPONSE
 ```
 
 ### 6.2 Verification rules
@@ -468,8 +468,8 @@ sequenceDiagram
     U->>T: Pay actual to recipient and refund remainder to payer
     U->>U: Require zero residual allowance/balance; record settled ID
     U-->>F: Settlement event and final status
-    F-->>R: PAYMENT-RESPONSE receipt
-    R-->>A: HTTP 200 protected response
+    F-->>R: SettleResponse JSON + optional x402job/1 receipt
+    R-->>A: HTTP 200 protected response + PAYMENT-RESPONSE
 ```
 
 The movement is atomic. The contract temporarily receives the ceiling within one invocation, pays `actual`, refunds `max - actual`, verifies that no allowance or contract balance remains, and emits the independently checkable settlement event. It does not retain user funds between invocations and has no admin, initializer, withdrawal, or in-place upgrade path. `(payer, settlement_id)` is stored with bounded TTL so replay protection also applies to custom-account implementations whose `__check_auth` does not deduplicate.

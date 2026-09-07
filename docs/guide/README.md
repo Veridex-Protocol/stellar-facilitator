@@ -1,21 +1,25 @@
 # Stellar x402 developer guide
 
-There are three paths through this guide. Pick the one that matches what you are
-building, because you do not need the other two.
+Pick the path that matches your role. The first exact payment does not require
+knowledge of federation, provider quality, or Soroban contract internals.
 
 | I am building | Start here | You will end with |
-| --- | --- | --- |
-| An API or MCP tool I want paid for | **[Seller path](./seller.md)** | A paid endpoint that appears in the Bazaar on its first settlement |
-| A client or agent that pays for things | **[Buyer and agent path](./buyer.md)** | A client that discovers a service and automatically handles the 402 payment retry |
-| A facilitator others rely on | **[Operator path](./operator.md)** | A running facilitator and catalog, with the checks that keep them honest |
+|---|---|---|
+| A buyer | [Buyer](./buyer.md) | A client that handles x402 v2 402/sign/retry |
+| A paid HTTP resource | [Seller](./seller.md) | An exact-protected endpoint with optional discovery |
+| An autonomous workflow | [Agent](./agent.md) | Search -> local policy -> wallet signing -> proof inspection |
+| A facilitator/Bazaar deployment | [Operator](./operator.md) | A testnet stack with explicit production gaps |
 
-Every command in these guides runs against `stellar:testnet` and works from a
-clean clone. Where a page shows output, that output came from an actual run.
+All active examples default to `stellar:testnet`. Pubnet is approval-gated and
+has not been validated by this evidence set.
 
 ## Before any path
 
+Start with the [canonical testnet quickstart](../quickstart.md):
+
 ```bash
-git clone https://github.com/Veridex-Protocol/stellar.git && cd stellar
+git clone https://github.com/Veridex-Protocol/stellar-facilitator.git
+cd stellar-facilitator
 npm run demo
 ```
 
@@ -27,33 +31,34 @@ build and it needs no secrets from anyone.
 
 If that works, everything in these guides will work.
 
-For package ownership and the shortest supported flows, see [Package Selection](../package-selection.md) and [Golden Path](../golden-path.md).
+For package ownership, see [package selection](../package-selection.md).
 
 ## What x402 is, in one pass
 
-A client requests a resource. The server answers with HTTP 402 and a set of
-payment terms. The client signs an authorization and retries with it. A
-facilitator verifies the authorization and settles it on Stellar, and only then
-does the server return the resource.
+A client requests a resource. The server answers with HTTP 402 and a
+`PAYMENT-REQUIRED` header containing x402 v2 `PaymentRequired`. The client signs
+a `PaymentPayload` and retries with `PAYMENT-SIGNATURE`. The resource server uses
+the facilitator for `/verify` and `/settle`, then returns the paid body with
+`PAYMENT-RESPONSE`.
 
 ```
   Buyer                    Seller                   Facilitator            Stellar
     │                        │                           │                    │
     ├── GET /resource ──────►│                           │                    │
-    │◄── 402 + terms ────────┤                           │                    │
+    │◄── 402 + PAYMENT-REQUIRED ─────────────────────────┤                    │
     │                        │                           │                    │
-    ├── GET + payment ──────►│                           │                    │
+    ├── GET + PAYMENT-SIGNATURE ────────────────────────►│                    │
     │                        ├── POST /verify ──────────►│                    │
     │                        │◄── isValid ───────────────┤                    │
     │                        ├── POST /settle ──────────►│                    │
     │                        │                           ├── submit ─────────►│
     │                        │◄── tx hash + receipt ─────┤◄── confirmed ──────┤
-    │◄── 200 + resource ─────┤                           │                    │
+    │◄── 200 + resource + PAYMENT-RESPONSE ─────────────┤                    │
 ```
 
-The buyer is usually software rather than a person. It has no account with the
-seller, no API key, and no prior relationship of any kind. It discovers the
-endpoint, reads the terms, and pays.
+The protocol types are independent of the HTTP transport and of Stellar scheme
+logic. Veridex-specific cataloging, receipts, and provider evidence extend this
+flow but do not redefine payment authority.
 
 ## Two things specific to Stellar
 
@@ -81,14 +86,6 @@ which is why the examples throughout this guide use it. To be paid in USDC or an
 other SEP-41 asset, the receiving account needs a trustline to that asset first,
 which is covered in the [seller path](./seller.md#getting-paid-in-usdc).
 
-## Live testnet references
-
-| Thing | Where |
-| --- | --- |
-| Facilitator | `http://localhost:3002` after `npm run demo` |
-| `upto` contract | [`CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2`](https://stellar.expert/explorer/testnet/contract/CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2) |
-| A settled payment | [`40de5e21…`](https://stellar.expert/explorer/testnet/tx/40de5e21674215b1b3a93182e1eb1ba46afea1c571724fd7f3f020c6f22e5f40) |
-
 ## Reference
 
 - [`docs/architecture.md`](../architecture.md) describes the target system architecture, invariants, and trust boundaries.
@@ -96,4 +93,4 @@ which is covered in the [seller path](./seller.md#getting-paid-in-usdc).
 - [`docs/openapi/`](../openapi/) contains the facilitator and discovery API definitions ([`x402.yaml`](../openapi/x402.yaml) and [`bazaar.yaml`](../openapi/bazaar.yaml)).
 - [`docs/adr/`](../adr/) records why the system works the way it does.
 - [`testnet_docs.md`](../../testnet_docs.md) is the go-live runbook and the list of known limits.
-- The [x402 protocol repository](https://github.com/x402-foundation/x402) holds the specification itself.
+- [Standards alignment](../standards-alignment.md) records the upstream sources and review date.

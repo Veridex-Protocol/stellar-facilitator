@@ -7,13 +7,17 @@ What you end up with is a running facilitator and catalog, together with the che
 ## 1. Run it
 
 ```bash
-git clone https://github.com/Veridex-Protocol/stellar.git && cd stellar
+git clone https://github.com/Veridex-Protocol/stellar-facilitator.git
+cd stellar-facilitator
 npm run setup                    # Friendbot accounts, channel accounts, .env
 docker compose up --build -d postgres bazaar facilitator demo-server
 npm run conformance              # exact-payment checks against your own stack
 ```
 
-Nothing here depends on us. There is no hosted service, no API key, and no shipped contract id. Every dependency is permissively licensed, which we verified across all six package trees with no AGPL, GPL, SSPL or BUSL anywhere in a runtime path.
+The testnet bootstrap is self-hosted and needs no Veridex credential. The active
+testnet `upto` contract ID is configured by the bootstrap and verified at
+startup. Core runtime dependencies are permissive; optional Playground libvips
+artifacts remain explicit legal-review exceptions.
 
 ## 2. What the process refuses to do
 
@@ -104,9 +108,10 @@ Provider health is visible under `rpcProviders` on `/stats`. The local coordinat
 is testnet-only in this release because the pinned Stellar scheme permits its
 loopback HTTP transport only on testnet; pubnet remains approval-gated.
 
-This resolves RPC submission ambiguity, not channel-state recovery. The upstream
-scheme scheduler still does not expose which signer submitted an ambiguous
-transaction, so automatic uncertain-channel quarantine remains a release gap.
+The scheduler pins the exact signer through async context. An unsuccessful
+result with a transaction hash quarantines that signer until authenticated
+explicit recovery. A real ambiguous-submission recovery drill and durable
+multi-instance quarantine state remain release gaps.
 
 Do not attempt to fix this by widening the expiration tolerance. That check bounds how long a signed authorization stays live, so it is a security property rather than the bug.
 
@@ -146,7 +151,10 @@ Set `UPTO_ESCROW_CONTRACT_ID_TESTNET` to the id printed and restart. The facilit
 
 `UPTO_ESCROW_CONTRACT_ID_PUBNET` is read separately and is never inherited from the testnet variable, so a mainnet deployment cannot silently advertise a testnet contract.
 
-The contract is stateless and has no admin, so every instance of the same wasm behaves identically. Details and the current testnet artifact are recorded in [`contracts/upto-settlement/deployment.md`](../../contracts/upto-settlement/deployment.md).
+The contract has no admin or upgrade path. Its only persistent state is the
+bounded `(payer, settlement_id)` replay guard. Details and the current testnet
+artifact are recorded in
+[`contracts/upto-settlement/deployment.md`](../../contracts/upto-settlement/deployment.md).
 
 The contract is not audited, so advertise it on testnet only.
 

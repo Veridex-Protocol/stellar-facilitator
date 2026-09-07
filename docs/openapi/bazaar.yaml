@@ -3,7 +3,8 @@ info:
   title: Veridex Bazaar discovery API
   version: 0.3.0
   description: >
-    Catalog and discovery for x402 resources on Stellar. Every listing names a
+    Veridex-specific catalog and discovery API for x402 resources on Stellar.
+    Its response shape is an implementation API, not an x402 core type. Every listing names a
     settlement that this service confirms on Horizon itself before listing
     anything, so an entry is auditable by a third party from its transaction
     hash alone.
@@ -29,7 +30,8 @@ paths:
       tags: [discovery]
       summary: Search resources, ranked by relevance and live telemetry
       description: >
-        Fuses BM25 keyword match, feature-hash vector similarity, and live
+        Fuses PostgreSQL ts_rank_cd full-text rank, lexical feature-hash vector
+        similarity, and live
         telemetry into a composite score. Resources whose liveness is OFFLINE
         are excluded and DEGRADED resources are demoted, because handing an
         agent a dead endpoint is a failed task rather than a ranking
@@ -60,10 +62,13 @@ paths:
               examples:
                 invalidCursor:
                   value:
-                    error: invalid_cursor
-                    message: >-
+                    code: invalid_request
+                    reason: >-
                       cursor belongs to a different query or filter set; a cursor may only be
                       used to continue the search that produced it
+                    retryable: false
+                    category: validation
+                    details: { field: cursor }
 
   /discovery/resources:
     get:
@@ -169,6 +174,7 @@ paths:
         announcement reaches the catalog only when it names a settlement, which
         the receiving node confirms itself; otherwise it counts only as liveness
         telemetry.
+      security: [{ internalToken: [] }]
       requestBody:
         required: true
         content:
@@ -177,6 +183,64 @@ paths:
       responses:
         '200': { description: Published to the mesh }
         '400': { description: Malformed or unsigned announcement }
+        '401': { description: Missing or wrong internal bearer token }
+
+  /ready:
+    get:
+      tags: [ops]
+      summary: Database, P2P, and service readiness
+      responses:
+        '200': { description: Ready }
+        '503': { description: Not ready }
+
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus text metrics
+      responses:
+        '200':
+          description: Process-local Bazaar metrics
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /v1/provider:
+    get:
+      tags: [discovery]
+      summary: Read a signed provider aggregate or insufficient-data state
+      parameters:
+        - { in: query, name: endpoint, required: true, schema: { type: string, format: uri } }
+        - { in: query, name: payTo, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Aggregate or explicit insufficient_data state }
+        '400': { description: Missing endpoint }
+        '503': { description: Provider-quality evidence unavailable }
+
+  /v1/provider/observations:
+    get:
+      tags: [discovery]
+      summary: Read digest-only provider observations
+      parameters:
+        - { in: query, name: endpoint, required: true, schema: { type: string, format: uri } }
+        - { in: query, name: payTo, required: false, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: Observation history }
+        '400': { description: Missing endpoint }
+        '503': { description: Provider-quality evidence unavailable }
+
+  /v1/provider/disagreements:
+    get:
+      tags: [discovery]
+      summary: Read cross-source provider disagreements
+      parameters:
+        - { in: query, name: endpoint, required: true, schema: { type: string, format: uri } }
+        - { in: query, name: payTo, required: false, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: Disagreement history }
+        '400': { description: Missing endpoint }
+        '503': { description: Provider-quality evidence unavailable }
 
   /health:
     get:
@@ -239,7 +303,8 @@ components:
       description: >
         Base64 JSON reporting the cataloging outcome, present on both acceptance
         and rejection. Decodes to {"bazaar":{"status":…,"rejectedReason":…}}.
-        The facilitator forwards this to the seller on its settle response.
+        Direct ingestion uses success/rejected. The facilitator's asynchronous
+        settle handoff instead immediately returns its own queued status.
       schema: { type: string }
 
   parameters:
@@ -335,7 +400,9 @@ components:
         extensions: { type: object, additionalProperties: true }
         compositeScore: { type: number }
         vectorScore: { type: number, description: Feature-hash similarity, lexical rather than semantic }
-        bm25Score: { type: number }
+        bm25Score:
+          type: number
+          description: Backward-compatible field name for bounded ts_rank_cd score, not BM25.
         uptimeScore: { type: number }
         latencyScore: { type: number }
         reliabilityScore: { type: number }
@@ -412,10 +479,19 @@ components:
             avgResponseTimeMs: { type: number }
             uptime30d: { type: number, minimum: 0, maximum: 100 }
             successfulSettlements: { type: integer }
-        signature: { type: string, description: Ed25519 over resourceUrl, timestamp and sequence }
+        signature:
+          type: string
+          description: >
+            Ed25519 over the canonical v2 announcement. Legacy
+            resourceUrl:timestamp:sequence signatures are accepted only for
+            heartbeat compatibility and are not full metadata authority.
 
     DiscoveryError:
       type: object
+      required: [code, reason, retryable, category]
       properties:
-        error: { type: string, example: invalid_cursor }
-        message: { type: string }
+        code: { type: string, example: invalid_request }
+        reason: { type: string }
+        retryable: { type: boolean }
+        category: { type: string }
+        details: { type: object, additionalProperties: true }

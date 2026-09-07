@@ -1,6 +1,12 @@
 # Veridex x402 Facilitator with Bazaar (Discovery) Support on Stellar
 ## Comprehensive Architecture Specification, Gap Analysis & RFP Implementation Plan
 
+> **Historical proposal (superseded).** This document records the original RFP
+> plan and contains x402 v1-era terminology, target pubnet claims, old Bazaar
+> shapes, and the obsolete escrow design. It is not active API or deployment
+> documentation. Use [Architecture 3.1](../architecture.md),
+> [standards alignment](../standards-alignment.md), and the role guides instead.
+
 **Document Version:** 1.0.0  
 **Target Networks:** `stellar:testnet`, `stellar:pubnet`  
 **License:** Apache License 2.0 (OSI Approved)  

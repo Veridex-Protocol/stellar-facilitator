@@ -1,12 +1,18 @@
 # Veridex Facilitator Service (`@veridex/facilitator-service`)
 
-Production-grade x402 v2 payment facilitator for the Stellar network. Provides non-custodial verification, Soroban auth-entry validation, channel-pooled settlement, and fee sponsorship for both `exact` and `upto` payment schemes.
+Stellar x402 v2 facilitator for testnet-proven `exact` and the custom,
+experimental Veridex `upto` scheme. It provides non-custodial verification,
+Soroban auth-entry validation, channel-pooled settlement, fee sponsorship, and
+custom Veridex receipts. Production/pubnet readiness is not claimed.
 
 ---
 
 ## Architecture Overview
 
-The Facilitator Service sits as the trustless settlement gateway between HTTP 402 resource servers (sellers), buyer clients, and the Stellar blockchain:
+The Facilitator Service is a security-sensitive settlement gateway between HTTP
+402 resource servers, buyer clients, and Stellar. It is not “trustless”: callers
+rely on it to verify and submit correctly, then independently inspect ledger
+evidence.
 
 ```text
   Client (Buyer)           Resource Server (Seller)        Facilitator Service           Stellar / Soroban
@@ -29,7 +35,7 @@ The Facilitator Service sits as the trustless settlement gateway between HTTP 40
 
 1. **Multi-Scheme Routing (`exact` and `upto`)**:
    - `exact`: Standard per-request fixed payment using Soroban authorization entries and SEP-41 token contracts (USDC, XLM, EURC).
-   - `upto`: Metered smart contract escrow settlement via Soroban smart contract with ceiling authorization and actual usage charging.
+   - `upto`: Custom metered Soroban settlement with a signed ceiling, actual usage, atomic payment/refund, and replay state. The contract retains no balance after invocation; it is experimental and unaudited.
 2. **Fee Sponsorship**:
    - Covers Stellar transaction fees using FeeBump transactions so buyers need only payment assets (e.g. USDC) and zero native XLM balance.
 3. **Channel Account Pool**:
@@ -53,6 +59,8 @@ The Facilitator Service sits as the trustless settlement gateway between HTTP 40
 | `GET` | `/.well-known/x402` | Emits x402 Capability Descriptor (`x402ccd/0`) | Public |
 | `GET` | `/health` | Service and RPC connectivity health check | Public |
 | `GET` | `/stats` | Telemetry counters and channel pool concurrency metrics | Public |
+| `GET` | `/metrics` | Prometheus text metrics | Public |
+| `POST` | `/internal/channels/:address/recover` | Recover a reconciled quarantined signer | Internal bearer token |
 
 ---
 
@@ -108,3 +116,9 @@ npm run dev
 ```bash
 npm test
 ```
+
+Canonical request/response schemas are in
+[Facilitator OpenAPI](../docs/openapi/x402.yaml). x402 v2 uses
+`PaymentRequirements.amount`, `PaymentPayload.accepted`, and `SettleResponse`.
+HTTP resources carry protocol objects through `PAYMENT-REQUIRED`,
+`PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`.

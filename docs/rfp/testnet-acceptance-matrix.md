@@ -20,7 +20,7 @@ Scope: `stellar:testnet` only. No pubnet or mainnet activity was performed.
 | External caller authentication | No API-key layer is required on the canonical self-hosted endpoints | Edge authentication is deployment-specific and was not exercised in local Compose | Deployment responsibility |
 | Self-hosting | Docker Compose and service-local configuration | Clean bootstrap from empty `.env` and volume | Testnet proven |
 | Bazaar resources API | `/discovery/resources` with `type`, `payTo`, `network`, `extensions`, `limit`, `offset` | Conformance group 7 | Testnet proven |
-| Bazaar search | BM25 + deterministic feature-hash + telemetry ranking | Search conformance and live discovery | Testnet proven; not learned semantic search |
+| Bazaar search | PostgreSQL `ts_rank_cd` full-text + deterministic lexical feature-hash/RRF + telemetry | Search conformance and live discovery | Testnet proven; not learned semantic search |
 | Search evaluation | 10-document, 50-query categorized golden set; lexical baseline versus feature-hash/RRF; Recall@1/5/20, nDCG@5/10, MRR, coverage, no-result, p50/p95 | `npm --prefix bazaar-service run search:eval`; hybrid nDCG@10 `0.8633`, MRR `0.8794`, Recall@5/20 `0.8546`, coverage `0.8936` | Implemented/tested; small in-memory reviewer set, not production semantic quality or a diverse activity corpus |
 | Cursor pagination | Opaque query-bound cursor and `partialResults` | Conformance group 7 | Testnet proven |
 | Automatic cataloging | Seller Bazaar declaration -> facilitator -> Bazaar ingest | Fresh payment created catalog row and discovery result | Testnet proven |

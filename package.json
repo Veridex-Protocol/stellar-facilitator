@@ -23,6 +23,7 @@
     "outcomes": "node scripts/summarize-outcomes.mjs",
     "errors:check": "node scripts/sync-error-registry.mjs --check",
     "errors:sync": "node scripts/sync-error-registry.mjs",
+    "docs:check": "node scripts/check-docs.mjs",
     "licenses:check": "node scripts/check-licenses.mjs",
     "policy:proof": "node scripts/policy-budget-proof.mjs --write docs/rfp/policy-budget-proof-2026-09-06.json",
     "probe": "node scripts/concurrency-probe.mjs",
@@ -45,12 +46,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Veridex-Protocol/stellar.git"
+    "url": "git+https://github.com/Veridex-Protocol/stellar-facilitator.git"
   },
   "keywords": [],
   "author": "",
   "bugs": {
-    "url": "https://github.com/Veridex-Protocol/stellar/issues"
+    "url": "https://github.com/Veridex-Protocol/stellar-facilitator/issues"
   },
-  "homepage": "https://github.com/Veridex-Protocol/stellar#readme"
+  "homepage": "https://github.com/Veridex-Protocol/stellar-facilitator#readme"
 }

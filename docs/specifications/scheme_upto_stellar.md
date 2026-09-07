@@ -1,7 +1,8 @@
 # Stellar `upto` payment scheme for x402 v2
 
-**Status:** Draft for the x402 Technical Steering Committee
-**Networks:** `stellar:testnet`, `stellar:pubnet`
+**Status:** Veridex custom scheme draft; implemented and proven on testnet,
+experimental and unaudited; upstream submission/alignment remains open
+**Networks:** `stellar:testnet` active evidence; `stellar:pubnet` approval-gated target
 **Scheme identifier:** `upto`
 **Reference implementation:** [`contracts/upto-settlement`](../../contracts/upto-settlement)
 **Reference deployment:** [`CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2`](https://stellar.expert/explorer/testnet/contract/CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2) on `stellar:testnet`, wasm SHA-256 `c157c24c6d8e90267230932a6d1f88e04e0343e6e8d3df6836ad60c8c9972959`
@@ -313,8 +314,11 @@ contract address:
 ```
 
 Clients MUST read `extra.contractId` rather than assuming one. Each operator
-deploys their own instance, and because the contract is stateless with no
-privileged party, instances of the same wasm are behaviourally identical.
+deploys their own instance. The contract has no privileged party or mutable
+configuration; its only persistent state is the bounded
+`(payer, settlement_id)` replay guard. Instances of the same audited/reproducible
+WASM are intended to behave identically, but address existence alone does not
+prove the deployed code hash.
 
 A facilitator SHOULD confirm the contract exists on-chain at the configured
 address before advertising the scheme, and SHOULD additionally verify that the
@@ -367,9 +371,9 @@ reference implementation covers each in
 ## Composition with smart account policies
 
 Because the payer's authorization is taken over explicit argument values, a
-Stellar smart account implementing `__check_auth` can apply a policy to those
-arguments directly: a per-recipient ceiling, a rolling budget, an allowlist of
-tokens, or a cap on `max_amount` per settlement.
+Stellar smart account implementing `__check_auth` can in principle apply a
+policy to those arguments directly: a per-recipient ceiling, a rolling budget,
+an allowlist of tokens, or a cap on `max_amount` per settlement.
 
 The account sees the terms it is being asked to authorize, not merely that a call
 is being made. This is the composition that makes bounded pull payments possible on Soroban, and it is a further
@@ -379,6 +383,10 @@ than recommended.
 Note that a policy which reserves `max_amount` at authorization time should
 reconcile against `actual` when the settlement event is observed, since the
 difference is refunded.
+
+This composition is not yet testnet-proven. Veridex has custom signer hooks and
+an off-chain `$10/$2/$12` policy artifact, but no deployed smart-account/
+stablecoin fixture has exercised the complete signed `__check_auth` path.
 
 ## Deployment gate
 

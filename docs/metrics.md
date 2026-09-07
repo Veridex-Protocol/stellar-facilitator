@@ -12,7 +12,7 @@ process-local and reset on restart. Gauges represent scrape-time state.
 | `veridex_sponsored_fee_total` | Facilitator | counter | Confirmed sponsored fees in stroops when the mechanism reports them. The current upstream exact response does not report a fee, so this remains zero rather than estimating. |
 | `veridex_channel_available` | Facilitator | gauge | Settlement signer leases available at scrape time. |
 | `veridex_channel_in_use` | Facilitator | gauge | Settlement signer leases currently in flight. |
-| `veridex_channel_quarantined` | Facilitator | gauge | Channel-pool accounts in an error state. The upstream scheme scheduler has no uncertainty quarantine yet. |
+| `veridex_channel_quarantined` | Facilitator | gauge | Exact leased signers excluded after an error or uncertain submission until authenticated recovery. |
 | `veridex_channel_sequence_drift` | Facilitator | counter | Sequence-drift events reported by the legacy channel settler. Canonical upstream exact does not currently expose this event, so it remains zero there. |
 | `veridex_rpc_requests_total` | Facilitator | counter | RPC-dependent verify and settle operations initiated by this process. This is an operation count, not raw SDK HTTP calls. |
 | `veridex_rpc_failures_total` | Facilitator | counter | Operations classified as upstream RPC unavailable. |
@@ -30,6 +30,7 @@ process-local and reset on restart. Gauges represent scrape-time state.
 | `veridex_search_zero_results_total` | Bazaar | counter | Searches returning zero resources. |
 | `veridex_provider_observations_total` | Bazaar | counter | Verified provider observations accepted. |
 | `veridex_provider_faults_total` | Bazaar | counter | Accepted observations explicitly attributed to provider fault. |
+| `veridex_provider_disagreements_total` | Bazaar | counter | Cross-source observation disagreements persisted by Bazaar. |
 | `veridex_p2p_messages_total` | Bazaar | counter | P2P messages received by this process. |
 | `veridex_p2p_invalid_total` | Bazaar | counter | Messages suppressed as invalid, stale, unauthorized, or unsupported. |
 | `veridex_p2p_replays_total` | Bazaar | counter | Announcement messages rejected as duplicate or out-of-order replay. |
@@ -45,3 +46,8 @@ curl -fsS http://localhost:3001/metrics
 These endpoints are operational signals, not durable analytics. Published
 historical rates should come from a Prometheus server or the structured outcome
 logs, not from `/stats` snapshots.
+
+No Prometheus server, dashboard, external retention, or alert routing is shipped
+by this repository. Facilitator request outcomes are structured; Bazaar and some
+lower-level logs remain free-form, and end-to-end request-ID correlation is not
+implemented.

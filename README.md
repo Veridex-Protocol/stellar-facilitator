@@ -1,254 +1,191 @@
-# Veridex Stellar x402 Facilitator
+# Veridex Stellar x402
 
-Apache-2.0 implementation of canonical x402 v2 `exact` and experimental
-testnet `upto` payments on Stellar, a federated Bazaar discovery service, and
-an MCP buyer.
+Veridex is a Stellar x402 v2 facilitator plus Bazaar discovery, a keyless MCP
+agent interface, focused buyer/seller tooling, and an experimental
+provider-quality layer.
 
-## Settle a payment yourself
+| Role | Start here |
+|---|---|
+| Buyer | Use `createVeridexClient()` from the local `@veridex/stellar` package or official x402 client packages. |
+| Seller | Protect an HTTP route with official x402 middleware and optionally declare Bazaar metadata. |
+| Agent builder | Search through Bazaar or MCP, apply local policy, then sign with the buyer wallet. |
+| Operator | Run the facilitator, PostgreSQL Bazaar, reference seller, and optional MCP service. |
 
-From a clean clone, no secrets, about a minute:
+Payment authority, discovery recommendation, and provider-quality evidence are
+separate. Bazaar helps find resources; it cannot change a signed recipient,
+asset, network, or amount. Provider quality is a policy signal, not payment
+authorization.
+
+## Current status
+
+Current validation scope is `stellar:testnet`. No pubnet/mainnet transaction or
+production-readiness claim is part of the current evidence set.
+
+| Capability | Status |
+|---|---|
+| Stellar `exact` | Testnet proven with stock `@x402/stellar@2.21.0` behavior |
+| Veridex Stellar `upto` | Testnet proven; custom, experimental, and unaudited |
+| Bazaar catalog/discovery | Testnet proven for settlement-backed cataloging, search, and captured restart persistence |
+| MCP | Testnet proven for keyless discovery and exact paid calls |
+| `@veridex/stellar` buyer SDK | Built, packed, and externally exercised; npm publication remains pending |
+| Seller integration | Working with official x402 middleware; discovery is optional |
+| Provider quality | Implemented and tested; representative independent-observer operation is not proven |
+| Federation | Local in-process three-node prototype; production federation is not claimed |
+| Pubnet | Approval-gated and unvalidated |
+| External security audit | Pending |
+
+See the [testnet acceptance matrix](docs/rfp/testnet-acceptance-matrix.md) and
+[conformance report](docs/rfp/testnet-conformance-report.md) for recorded
+transactions and limitations.
+
+## Testnet quickstart
+
+Requirements: Node.js 22+ and Docker.
 
 ```bash
 npm run demo
 ```
 
-That creates Friendbot-funded testnet accounts, starts the stack, and runs the
-conformance harness a stock x402 client installed from public npm paying for a
-real resource on Stellar testnet. The settled transaction is then re-read from
-Horizon, so a facilitator that returned a plausible hash without settling
-anything would fail the run. Results land in `conformance-report.json`.
+From a clean clone, this installs dependencies, creates fresh Friendbot-funded
+testnet accounts, writes `.env`, starts PostgreSQL/Bazaar/facilitator/reference
+seller, runs conformance, and writes `conformance-report.json`. The harness
+re-reads settlement from Stellar instead of trusting a returned hash.
 
-The same run happens in CI on every push and pull request, with accounts created
-during the run and no stored secrets, so a fork gets the same green run.
+| Service | Default URL |
+|---|---|
+| Bazaar | `http://localhost:3001` |
+| Facilitator | `http://localhost:3002` |
+| Reference seller | `http://localhost:3003` |
 
-## Developer guide
+For individual commands, expected output, clean-state steps, and port overrides,
+use the [canonical testnet quickstart](docs/quickstart.md).
 
-Three role-based paths, each runnable against testnet from a clean clone:
+## x402 v2 HTTP flow
 
-- [Seller path](docs/guide/seller.md) sells an API or MCP tool and gets it listed.
-- [Buyer and agent path](docs/guide/buyer.md) discovers a service and pays for it.
-- [Operator path](docs/guide/operator.md) runs the facilitator and catalog.
+```text
+buyer -> protected resource
+resource -> HTTP 402 + PAYMENT-REQUIRED
+buyer -> PAYMENT-SIGNATURE with a signed PaymentPayload
+resource -> facilitator /verify
+resource -> execute work
+resource -> facilitator /settle
+facilitator -> Stellar settlement
+resource -> paid response + PAYMENT-RESPONSE
+```
 
-Start at [`docs/guide/`](docs/guide/README.md).
+x402 v2 separates core types, scheme logic, and transport encoding:
+
+- `PaymentRequired` contains `x402Version`, resource information, accepted
+  `PaymentRequirements`, and optional extensions.
+- `PaymentRequirements` contains `scheme`, CAIP-2 `network`, `asset`, atomic-unit
+  `amount`, `payTo`, timeout, and scheme-specific `extra`.
+- `PaymentPayload` contains the selected requirements in `accepted` plus the
+  scheme-specific signed `payload`.
+- `SettleResponse` reports success/failure, transaction, network, optional actual
+  amount, and extensions.
+- HTTP carries base64 JSON in `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and
+  `PAYMENT-RESPONSE`. `X-PAYMENT` and `maxAmountRequired` are v1 compatibility
+  terminology, not active examples here.
+
+The seller/resource server owns the HTTP 402 exchange. Veridex supplies the
+facilitator and optional discovery/evidence services; those are not additional
+sources of payment authority.
+
+## Buyer
+
+```ts
+import { createVeridexClient } from "@veridex/stellar";
+
+const client = createVeridexClient({
+  network: "stellar:testnet",
+  privateKey: process.env.BUYER_SECRET_KEY!,
+});
+
+const response = await client.fetch("http://localhost:3003/paid-resource");
+console.log(await response.json());
+```
+
+`exact` is the default. Use `scheme: "upto"` only for a route advertising the
+Veridex custom testnet scheme. The focused package is currently consumed from
+this repository or a packed tarball; do not assume registry publication. See
+the [buyer guide](docs/guide/buyer.md).
+
+## Seller
+
+The reference seller uses official `@x402/hono` and `@x402/stellar` server
+integration. It declares Bazaar metadata in `PaymentRequired.extensions.bazaar`
+through `declareDiscoveryExtension()`. After confirmed settlement, the
+facilitator queues catalog work to a durable local outbox and delivers it
+asynchronously to Bazaar.
+
+Accepting payment does not require Bazaar, federation, or provider quality. See
+the [seller guide](docs/guide/seller.md).
+
+## Bazaar and MCP
+
+Veridex exposes:
+
+- `GET /discovery/resources` for filtered catalog browsing.
+- `GET /discovery/search` for PostgreSQL full-text plus lexical
+  feature-hash/RRF search, opaque cursors, and bounded telemetry scores.
+
+Feature hashing is lexical, not learned semantic retrieval. Current response
+shapes are in the [Bazaar guide](bazaar-service/README.md) and
+[OpenAPI](docs/openapi/bazaar.yaml).
+
+The custom stdio MCP service exposes `discover_resources` and `pay_resource`.
+`pay_resource` is two-phase and exact-only: MCP returns a bounded challenge, the
+client wallet signs it, and MCP re-fetches/matches the challenge before
+submission. MCP does not hold a payer private key. See the
+[MCP guide](mcp-server/README.md).
+
+## Veridex Stellar `upto`
+
+`upto` separates the authorized maximum from the actual settled amount:
+
+```text
+0 <= actual <= maximum
+```
+
+The payer signs bound terms including payer, `payTo`, token, ceiling, validity,
+facilitator, settlement ID, and request digest. After work executes, the
+facilitator attests to `actual` and the result digest. The active Soroban
+contract atomically pulls the ceiling, pays `actual`, refunds the remainder,
+leaves no residual allowance/balance, and records replay state.
+
+Zero, partial, and full-cap usage are distinct outcomes. Zero is a terminal
+on-chain settlement that refunds the full ceiling; the ceiling is never an
+automatic charge. Over-cap settlement is rejected.
+
+This is a Veridex testnet implementation. Installed stock
+`@x402/stellar@2.21.0` exposes `exact` only, so upstream Stellar `upto`
+interoperability is not claimed. See the
+[Stellar `upto` specification](docs/specifications/scheme_upto_stellar.md).
 
 ## Documentation
 
-Full documentation is organized under [`docs/`](docs/) and throughout the workspace:
+- [Quickstart](docs/quickstart.md)
+- [Developer guide index](docs/guide/README.md)
+- [Buyer](docs/guide/buyer.md), [seller](docs/guide/seller.md),
+  [agent](docs/guide/agent.md), and [operator](docs/guide/operator.md) guides
+- [Architecture 3.1](docs/architecture.md)
+- [Standards alignment and drift policy](docs/standards-alignment.md)
+- [Errors](docs/errors.md) and [payment proof](docs/payment-proof.md)
+- [Provider quality](docs/provider-quality.md) and
+  [federation](docs/federation.md)
+- [Package selection](docs/package-selection.md)
+- [Facilitator OpenAPI](docs/openapi/x402.yaml) and
+  [Bazaar OpenAPI](docs/openapi/bazaar.yaml)
 
-### Guides & Integration Paths
-- **[Package Selection](docs/package-selection.md)**: Which official or Veridex package to use for each role.
-- **[Golden Path](docs/golden-path.md)**: The shortest supported buyer, seller, discovery, and MCP flows.
-- **[Developer Guides Index](docs/guide/README.md)**: Role-based walkthroughs for integrating and operating.
-  - **[Seller Path](docs/guide/seller.md)**: Host an API/MCP tool, return HTTP 402 challenges, and auto-list in the Bazaar.
-  - **[Buyer & Agent Path](docs/guide/buyer.md)**: Discover endpoints via Bazaar/MCP and execute Stellar payments.
-  - **[Operator Path](docs/guide/operator.md)**: Deploy a facilitator node, set up channel accounts, and run the catalog.
-
-### Architecture & Operations
-- **[System Architecture](docs/architecture.md)**: System design, payment and discovery planes, trust boundaries, and release invariants.
-- **[Package Selection](docs/package-selection.md)**: Which official or Veridex package to use for each role.
-- **[Golden Path](docs/golden-path.md)**: The shortest supported buyer, seller, discovery, and MCP flows.
-- **TypeScript high-level buyer facade and advanced Bazaar/facilitator helpers; Python discovery/raw transport helpers; TypeScript, Python, and Go seller helpers**
-| `sdk-typescript/` | `@veridex/stellar` buyer facade, Bazaar, and facilitator helpers | [README](sdk-typescript/README.md) |
-- **[Deployment Guide](docs/deployment.md)**: Production deployment guide, environment variables, PostgreSQL configuration, and Docker setup.
-- **[Testnet Go-Live Runbook](testnet_docs.md)**: Operational checklist, boot-gated validation rules, channel pool sizing, and known limits.
-- **[Bazaar Database Setup](bazaar-service/database_setup.md)**: PostgreSQL + pgvector schema initialization and migrations.
-
-### Architecture Decision Records (ADRs)
-- **[ADR Index & Reading Guide](docs/adr/README.md)**: Technical decision logs ([ADR-001](docs/adr/adr-001-discovery-federation.md) through [ADR-011](docs/adr/adr-011-upto-converge-upstream.md)):
-  - [ADR-001: Discovery Federation](docs/adr/adr-001-discovery-federation.md) - Gossip mesh & catalog trust boundaries.
-  - [ADR-002: Ranking & Embeddings](docs/adr/adr-002-ranking-and-embeddings.md) - Hybrid BM25 & feature-hash ranking.
-  - [ADR-003: Settlement Liveness](docs/adr/adr-003-settlement-liveness.md) - Horizon settlement liveness vs P2P heartbeats.
-  - [ADR-004: Catalog Integrity](docs/adr/adr-004-catalog-integrity.md) - Verified Horizon settlement binding.
-  - [ADR-005: Verified Capabilities](docs/adr/adr-005-advertise-only-what-is-verified.md) - Boot-gated network capability checks.
-  - [ADR-006: Recomputable Receipts](docs/adr/adr-006-recomputable-receipts.md) - RFC 8785 canonical JSON receipts (`x402job/1`).
-  - [ADR-007: Settlement Throughput](docs/adr/adr-007-settlement-throughput.md) - Channel account leasing scheduler.
-  - [ADR-008: Ledger-Skew Retry](docs/adr/adr-008-ledger-skew-retry.md) - Soroban RPC ledger-skew retry handling.
-  - [ADR-009: Wire Conformance](docs/adr/adr-009-discovery-wire-conformance.md) - Wire filters, opaque cursors, and response headers.
-  - [ADR-010: Conformance as Acceptance](docs/adr/adr-010-conformance-as-acceptance.md) - Conformance harness & log evidence.
-  - [ADR-011: `upto` Contract Convergence](docs/adr/adr-011-upto-converge-upstream.md) - Metered usage contract constraints.
-
-### Specifications & API References
-- **[Protocol Specification](specification.md)**: Main x402 facilitator and Bazaar protocol specification.
-- **[x402 Stellar Specification v2](docs/specifications/spec-v2.md)**: Technical spec for exact payments and discovery.
-- **[Stellar `upto` Scheme Specification](docs/specifications/scheme_upto_stellar.md)**: Metered settlement scheme specification.
-- **OpenAPI 3.0 Specifications**:
-  - [Facilitator API OpenAPI Spec](docs/openapi/x402.yaml)
-  - [Bazaar Discovery API OpenAPI Spec](docs/openapi/bazaar.yaml)
-
-### Workspace Component Documentation
-- **[SDKs Overview](sdks/README.md)** (with [`@veridex/stellar`](sdk-typescript/README.md) & Python advanced helpers [sdk-python](sdk-python/README.md))
-- **[MCP Buyer Server](mcp-server/README.md)**
-- **[Soroban Smart Contracts](contracts/README.md)**
-- **[Interactive Playground](playground/README.md)**
-
-## Implemented
-
-- Canonical facilitator endpoints: `GET /supported`, `POST /verify`, `POST /settle`
-- Stellar `exact` payments through `@x402/stellar`, with fee sponsorship
-- Every advertised capability confirmed against the network at boot - the
-  process refuses to start rather than advertise something untrue of it
-- A reason code *and* a sentence on every rejection path, with the table tested
-  exhaustive against the installed packages
-- Retry for the Soroban RPC ledger-skew defect (x402-foundation/x402#3168),
-  scoped to that one rejection and never applied to a failure carrying a
-  transaction hash
-- `x402job/1` recomputable receipts, signed over RFC 8785 canonical JSON
-- Capability descriptor (`x402ccd/0`) built from configuration, not hardcoded
-- Bounded settlement concurrency over channel accounts, so bursty agent traffic
-  never collides on a sequence number (see Throughput below)
-- PostgreSQL/pgvector catalog whose entries are bound to a settlement the
-  Bazaar confirms on Horizon itself
-- Signed GossipSub announcements, replay/freshness checks, heartbeats, liveness
-  pruning
-- Hybrid RRF ranking over BM25, feature-hash vectors, and live telemetry
-- Discovery filters the spec names - `type`, `payTo`, `network`, `extensions`,
-  `limit`, `offset` - on both `/discovery/resources` and `/discovery/search`
-- Opaque cursor pagination, bound to the query that issued it, and a
-  `partialResults` flag that reports a genuinely truncated candidate pool
-- Cataloging outcomes reported to the seller in the `EXTENSION-RESPONSES`
-  header on the settle response
-- MCP tools: `discover_resources` plus a real HTTP 402 challenge/payment/retry
-- TypeScript and Python buyer clients; TypeScript, Python, and Go seller helpers
-- Soroban `upto` settlement contract, **deployed to testnet** at
-  [`CAHV6TIA…`](https://stellar.expert/explorer/testnet/contract/CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2)
-  and boot-gated, though not yet audited; custom HTTP `upto` settlement is proven on testnet
-
-## Not built
-
-Stated here rather than blurred into the list above:
-
-- **Learned semantic retrieval.** The default vector leg of Bazaar ranking is 384-dimensional
-  feature hashing. It is a second lexical signal, not a learned embedding.
-- **Catalog binding to a URL.** Entries are bound to a confirmed payment and one
-  payment lists one resource, but the ledger does not record which URL was
-  served. Binding that needs the resource server to sign the pairing.
-- **Upstream stock `upto` interoperability.** The custom Veridex seller/client HTTP
-  path is proven on testnet, but upstream `@x402/stellar` currently exposes exact
-  only. The contract and adapter also have no independent security review.
-- **A live ledger-skew recovery.** The retry is tested deterministically; it has
-  not yet been observed rescuing a real degraded RPC window.
-
-## Repository Map
-
-| Path | Component | Documentation |
-|---|---|---|
-| `facilitator-service/` | x402 Payment Facilitator (`/verify`, `/settle`, `/supported`, `/.well-known/x402`) | [README](facilitator-service/README.md) |
-| `bazaar-service/` | Federated Catalog & Hybrid Search Engine | [README](bazaar-service/README.md) |
-| `mcp-server/` | Model Context Protocol Discovery & Payment Server | [README](mcp-server/README.md) |
-| `playground/` | Next.js sandbox: pay on testnet, then verify the payment yourself | [README](playground/README.md) |
-| `sdk-typescript/` | `@veridex/stellar` buyer facade, Bazaar, and facilitator helpers | [README](sdk-typescript/README.md) |
-| `sdk-python/` | Python Client & Seller Helpers | [README](sdk-python/README.md) |
-| `sdks/` | Multi-language seller helpers (TypeScript, Python, Go) | [README](sdks/README.md) |
-| `contracts/upto-settlement/`| Soroban `upto` Smart Contract | [README](contracts/upto-settlement/README.md) |
-| `demo-server/` | Reference x402 Protected Resource Server | [README](demo-server/README.md) |
-| `conformance/` | Conformance Test Harness | [README](conformance/README.md) |
-| `scripts/` | Testnet Bootstrap, Concurrency Probes & Sync Scripts | [Overview](scripts/) |
-| `docs/` | Architecture, ADRs, Specifications & Role Guides | [Guides](docs/guide/) |
-
-## Requirements
-
-- Node.js 22+
-- Docker, for the one-command demo
-- PostgreSQL 16 with pgvector (included in Compose)
-- Rust stable for contract tests; Stellar CLI to build/deploy the WASM
-
-## Running it directly
+## Validate
 
 ```bash
-cp .env.testnet.example .env     # or: npm run setup
-npm run install:all
-docker compose up --build postgres bazaar facilitator demo-server
-```
-
-- Facilitator: `http://localhost:3002`
-- Bazaar: `http://localhost:3001`
-- Demo resource server: `http://localhost:3003`
-- Optional MCP stdio server: `docker compose --profile mcp run --rm mcp-server`
-
-The database is internal to the Compose network and is not published to the
-host by default. For localhost-only SQL debugging, use the optional override:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
-```
-
-If a local process owns an HTTP or P2P port, set `BAZAAR_HOST_PORT`,
-`BAZAAR_P2P_HOST_PORT`, `BAZAAR_P2P_WS_HOST_PORT`, `FACILITATOR_HOST_PORT`, or
-`DEMO_SERVER_HOST_PORT` before `npm run demo`; the script passes the matching
-public URLs to the conformance client and checks every host binding before boot.
-
-`CHANNEL_POOL_SIZE=0` is the safe default and uses the configured signer. For concurrent settlement, provision persistent funded channel accounts in `CHANNEL_SECRET_KEYS`; do not enable automatic channel creation outside disposable testing.
-
-## Verify
-
-```bash
+npm run docs:check
 npm run typecheck
 npm test
-npm run conformance                     # against a running stack
+npm run build
 cargo test --locked --manifest-path contracts/upto-settlement/Cargo.toml
-python3 -m compileall -q sdk-python/veridex
-docker compose config --quiet
 ```
 
-## Discovery
-
-`GET /discovery/resources` and `GET /discovery/search` accept the filters the
-x402 discovery spec names:
-
-| Parameter             | Meaning                                                  |
-| --------------------- | -------------------------------------------------------- |
-| `type`              | `http` or `mcp`                                      |
-| `payTo`             | Stellar address receiving payment                        |
-| `network`           | CAIP-2 identifier, e.g.`stellar:testnet`               |
-| `extensions`        | Comma-separated; matches resources declaring all of them |
-| `limit`, `offset` | Page size and start;`limit` is clamped to 100          |
-| `cursor`            | Opaque continuation token; supersedes`offset`          |
-
-Paging uses `nextCursor` rather than a client-computed offset. A cursor is bound to the query and filters that issued it, so presenting one against a different query returns `400 invalid_cursor` instead of silently answering with the wrong page the same offset under different terms is a different set of rows.
-
-`partialResults` is answered, not hardcoded. It is true when a retrieval leg filled its candidate pool, meaning ranking saw a truncated set and this page is not a complete answer; `partialReason` says so in words.
-
-Cataloging outcomes come back in the `EXTENSION-RESPONSES` header base64 JSON of `{"bazaar":{"status":…,"rejectedReason":…}}` - on the Bazaar's ingest response *and* on the facilitator's `/settle` response, so a seller learns from the same call that settled the payment whether its listing landed.
-
-**A settlement counts as liveness.** Liveness used to derive from P2P heartbeats alone, which meant an automatically catalogued resource was pruned to `OFFLINE` within minutes and vanished from search unless its seller also ran a libp2p node. That defeats automatic cataloging. A settlement this service confirmed on Horizon is proof the endpoint was reachable and served a paying caller, so it restores `HEALTHY` and keeps the resource discoverable (`SETTLEMENT_LIVENESS_WINDOW_MS`, default 24h).
-
-## Throughput
-
-A Stellar account has one sequence number, so two settlements from the same account race for it: one lands, the other returns `tx_bad_seq` and is retried until it wins. Measured here before this was addressed, one settlement took **307 seconds** and the resource server's HTTP client had long since returned a 502 the buyer paid and got nothing.
-
-The fix is channel accounts plus a settlement scheduler that makes the guarantee airtight:
-
-- **Channel accounts.** Each funded account in `CHANNEL_SECRET_KEYS` advances its own sequence number. `npm run setup` provisions three.
-- **A settlement scheduler.** `@x402/stellar` round-robins across signers, which makes a collision less likely but not impossible: with N signers the N+1st concurrent request still lands on a busy account. The scheduler leases a signer before `settle()` and pins `selectSigner` to it, so no account is ever used twice at once. Overflow queues in FIFO order and, past `SETTLE_QUEUE_TIMEOUT_MS`, is refused with `settlement_capacity_exceeded` and an explicit "no funds moved".
-
-Settlement concurrency is therefore exactly the pool size, and the way to raise it is to fund more channel accounts. Measure it:
-
-```bash
-npm run probe -- --n 6
-```
-
-Latest run, 4 signers, 6 simultaneous settlements:
-
-```
-  succeeded           6/6
-  confirmed on ledger 6/6
-  latency             min 6509ms  p50 11884ms  max 11991ms
-  source accounts     3 distinct
-  scheduler           3 queued, 0 refused, longest wait 7658ms
-```
-
-`/stats` exposes the same counters under `settlementConcurrency`. A rising `queued`, or any `totalRejected`, means the pool is too small for the load.
-
-## Reliability figures
-
-`/stats` keeps counters in process memory. They reset on restart, which makes them fine for a dashboard and useless as the basis of a published claim. Anything stated publicly comes from the structured `request_outcome` log lines and recomputes with:
-
-```bash
-docker compose logs --no-log-prefix facilitator | npm run outcomes
-```
-
-## API notes
-
-`/x402/verify` and `/x402/settle` are compatibility aliases. Pre-canonical payload handling is isolated under `/legacy/verify` and `/legacy/settle`. Networks on the canonical path are `stellar:testnet` and `stellar:pubnet`; assets are SEP-41 contract addresses, not classic identifiers such as `native`.
-
-Testnet launch requirements and remaining operator-owned steps are in [testnet_docs.md](testnet_docs.md). OpenAPI definitions are in [docs/openapi/](docs/openapi/) ([`x402.yaml`](docs/openapi/x402.yaml) and [`bazaar.yaml`](docs/openapi/bazaar.yaml)). System architecture details are in [docs/architecture.md](docs/architecture.md) and deployment steps are in [docs/deployment.md](docs/deployment.md).
+The repository is Apache-2.0. Optional Playground `sharp`/`libvips` artifacts
+have explicit license-policy exceptions and still require distribution review.

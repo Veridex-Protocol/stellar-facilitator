@@ -1,12 +1,15 @@
 # Veridex Bazaar Service (`@veridex/bazaar-service`)
 
-Federated discovery engine and search catalog for x402-protected APIs and MCP tools on Stellar.
+Settlement-backed discovery and lexical hybrid search for x402-protected HTTP
+resources and MCP tools on Stellar. Federation is a local prototype, not a
+production claim.
 
 ---
 
 ## Architecture Overview
 
-The Bazaar Service provides a trustless discovery layer where client software can search, filter, and inspect paid resources without a pre-existing integration:
+Bazaar is an advisory discovery layer. Listings and ranking do not authorize
+payment; buyers must validate the live signed x402 requirements.
 
 ```text
   Resource Seller                  Bazaar Discovery Engine                 Client / Buyer
@@ -28,10 +31,11 @@ The Bazaar Service provides a trustless discovery layer where client software ca
 1. **Hybrid Search with Reciprocal Rank Fusion (RRF)**:
    - Fuses PostgreSQL full-text cover-density ranking (`ts_rank_cd`) with `pgvector` feature-hash vector cosine distance using Reciprocal Rank Fusion ($k=60$).
    - Telemetry metrics (uptime ratio, latency, reliability) modulate the score as a quality multiplier without displacing relevant search matches.
-2. **Automated Cataloging with Settlement Verification**:
-   - Zero-step automatic indexing when a payment carries the `bazaar` extension.
+2. **Asynchronous Cataloging with Settlement Verification**:
+   - A confirmed payment carrying the `bazaar` extension creates a durable facilitator outbox event.
+   - Bazaar ingestion happens asynchronously; immediate settlement status is `queued`, not synchronously cataloged.
    - Verifies the settlement transaction on Horizon before listing to prevent catalog spam.
-   - Enforces cryptographic owner signatures (`ownerSignature`) and database invariants to prevent listing hijacking.
+   - Enforces settlement/payee integrity, live 402 terms, owner/delegate authorization for updates, and database invariants to prevent hijacking.
 3. **P2P Federated GossipSub Mesh (libp2p)**:
    - Relays announcements across peer nodes with RFC 8785 canonical deterministic JSON signing (preventing relay peer tampering).
 4. **Search Quality Evaluation Harness**:
@@ -50,6 +54,11 @@ The Bazaar Service provides a trustless discovery layer where client software ca
 | `GET` | `/.well-known/x402` | Capability Descriptor (`x402ccd/0`) | Public |
 | `GET` | `/health` | Database and P2P peer connectivity health check | Public |
 | `GET` | `/stats` | Live search, telemetry, and P2P mesh statistics | Public |
+| `GET` | `/ready` | Database/P2P readiness | Public |
+| `GET` | `/metrics` | Prometheus text metrics | Public |
+| `GET` | `/v1/provider` | Current signed provider aggregate or insufficient-data state | Public |
+| `GET` | `/v1/provider/observations` | Digest-only observation history | Public |
+| `GET` | `/v1/provider/disagreements` | Cross-source disagreement history | Public |
 
 ---
 
@@ -57,10 +66,12 @@ The Bazaar Service provides a trustless discovery layer where client software ca
 
 - `q`: Search query string (e.g. `weather API`, `Soroban RPC node`, `image generation`)
 - `type`: Resource type (`http` or `mcp`)
-- `network`: Network filter (e.g. `stellar:testnet`, `stellar:pubnet`)
+- `network`: CAIP-2 network filter; active examples use `stellar:testnet`
 - `scheme`: Payment scheme (`exact`, `upto`)
 - `payTo`: Filter to resources paying a specific Stellar G-address
 - `tags`: Comma-separated list of tags
+- `extensions`: Comma-separated extension keys; all must be present
+- `minUptimeRatio`: Minimum recorded uptime ratio
 - `limit`: Results per page (1-100, default 20)
 - `offset`: Offset index (clamped non-negative)
 - `cursor`: Opaque pagination token returned in `nextCursor`
@@ -99,3 +110,10 @@ npm run dev
 ```bash
 npm test
 ```
+
+The response format is Veridex-specific (`results`, `total`, `nextCursor`,
+`partialResults`, and component scores); storage/search response shape is not
+defined by the x402 core protocol. Feature hashing is lexical rather than
+semantic. See [standards alignment](../docs/standards-alignment.md),
+[provider quality](../docs/provider-quality.md), and
+[federation](../docs/federation.md).
