@@ -21,7 +21,7 @@ import { P2PNode } from "./p2p/node.js";
 import { Announcer, createAnnouncer } from "./p2p/announcer.js";
 import { TelemetryTracker } from "./telemetry/tracker.js";
 import { BazaarSearchEngine } from "./search/engine.js";
-import { CatalogIngestionWorker } from "./catalog/ingestion.js";
+import { CatalogIngestionWorker, type CatalogRevalidationSummary } from "./catalog/ingestion.js";
 import { AnnounceMessageSchema, CatalogDeltaSchema, type CatalogDelta } from "./p2p/types.js";
 import { InvalidCursorError } from "./search/cursor.js";
 import { rateLimit } from "./rate-limit.js";
@@ -79,6 +79,39 @@ export interface BazaarServiceConfig {
   catalogRevalidationBatchSize: number;
   catalogRevalidationAllowedOrigins: string[];
   catalogRevalidationTransportOriginMap: Record<string, string>;
+}
+
+interface CatalogRevalidationWorker {
+  revalidateStale(options: { staleAfterMs: number; limit?: number }): Promise<CatalogRevalidationSummary>;
+}
+
+export function scheduleCatalogRevalidation(options: {
+  intervalMs: number;
+  staleAfterMs: number;
+  batchSize: number;
+  worker: CatalogRevalidationWorker;
+  metrics: Pick<BazaarMetrics, "increment">;
+  log?: (message: string, detail?: unknown) => void;
+  logError?: (message: string, error: unknown) => void;
+}): NodeJS.Timeout | undefined {
+  if (options.intervalMs <= 0) return undefined;
+  let running = false;
+  return setInterval(() => {
+    if (running) return;
+    running = true;
+    options.worker.revalidateStale({
+      staleAfterMs: options.staleAfterMs,
+      limit: options.batchSize,
+    }).then((summary) => {
+      options.metrics.increment("veridex_catalog_revalidation_failures_total", summary.quarantined);
+      options.metrics.increment("veridex_catalog_revalidation_retained_total", summary.retained);
+      if (summary.checked > 0) options.log?.("[Bazaar Service] Catalog revalidation", summary);
+    }).catch((error) => {
+      options.logError?.("[Bazaar Service] Catalog revalidation failed:", error);
+    }).finally(() => {
+      running = false;
+    });
+  }, options.intervalMs);
 }
 
 /**
@@ -924,20 +957,15 @@ export class BazaarService {
         .catch((error) => console.error("[Bazaar Service] Liveness evaluation failed:", error));
     }, 30_000);
 
-    if (this.config.catalogRevalidationIntervalMs > 0) {
-      this.catalogRevalidationInterval = setInterval(() => {
-        this.ingestionWorker.revalidateStale({
-          staleAfterMs: this.config.catalogRevalidationStaleMs,
-          limit: this.config.catalogRevalidationBatchSize,
-        }).then((summary) => {
-          this.metrics.increment("veridex_catalog_revalidation_failures_total", summary.quarantined);
-          this.metrics.increment("veridex_catalog_revalidation_retained_total", summary.retained);
-          if (summary.checked > 0) console.log("[Bazaar Service] Catalog revalidation", summary);
-        }).catch((error) =>
-          console.error("[Bazaar Service] Catalog revalidation failed:", error)
-        );
-      }, this.config.catalogRevalidationIntervalMs);
-    }
+    this.catalogRevalidationInterval = scheduleCatalogRevalidation({
+      intervalMs: this.config.catalogRevalidationIntervalMs,
+      staleAfterMs: this.config.catalogRevalidationStaleMs,
+      batchSize: this.config.catalogRevalidationBatchSize,
+      worker: this.ingestionWorker,
+      metrics: this.metrics,
+      log: (message, detail) => console.log(message, detail),
+      logError: (message, error) => console.error(message, error),
+    });
 
     console.log(`[Bazaar Service] ✓ Service ready at http://${this.config.host}:${this.config.port}`);
     console.log("[Bazaar Service] Endpoints:");
