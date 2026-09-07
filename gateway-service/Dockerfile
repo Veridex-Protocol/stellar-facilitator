@@ -18,7 +18,9 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /repo
 COPY --from=build /repo/sdk-typescript/package.json ./sdk-typescript/
+COPY sdk-typescript/package-lock.json ./sdk-typescript/
 COPY --from=build /repo/sdk-typescript/dist ./sdk-typescript/dist
+RUN npm --prefix sdk-typescript ci --omit=dev
 WORKDIR /repo/gateway-service
 COPY gateway-service/package.json gateway-service/package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
