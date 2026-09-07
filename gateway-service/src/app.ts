@@ -799,9 +799,13 @@ async function assertSafeDns(
   config: GatewayConfig,
   resolver: (hostname: string) => Promise<string[]>,
 ): Promise<void> {
-  const hostname = new URL(config.upstream).hostname;
+  const upstream = new URL(config.upstream);
+  const hostname = upstream.hostname;
   const addresses = await resolver(hostname);
   if (addresses.length === 0) throw new Error("upstream hostname did not resolve");
+  const developmentOriginAllowed = config.allowHttpForDevelopment === true &&
+    config.allowedUpstreamOrigins?.some((entry) => new URL(entry).origin === upstream.origin);
+  if (developmentOriginAllowed) return;
   for (const address of addresses) assertPublicAddress(address);
 }
 

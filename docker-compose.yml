@@ -70,8 +70,8 @@ services:
       # HTTP listings are fetched asynchronously and must reproduce their 402
       # terms. The explicit map preserves the public URL as catalog identity
       # while routing the validation request through the Compose network.
-      CATALOG_REVALIDATION_ALLOWED_ORIGINS: http://localhost:${DEMO_SERVER_HOST_PORT:-3003}
-      CATALOG_REVALIDATION_TRANSPORT_ORIGIN_MAP: '{"http://localhost:${DEMO_SERVER_HOST_PORT:-3003}":"http://demo-server:3003"}'
+      CATALOG_REVALIDATION_ALLOWED_ORIGINS: http://localhost:${DEMO_SERVER_HOST_PORT:-3003},http://localhost:${GATEWAY_HOST_PORT:-3005}
+      CATALOG_REVALIDATION_TRANSPORT_ORIGIN_MAP: '{"http://localhost:${DEMO_SERVER_HOST_PORT:-3003}":"http://demo-server:3003","http://localhost:${GATEWAY_HOST_PORT:-3005}":"http://gateway:3005"}'
       CATALOG_REVALIDATION_INTERVAL_MS: ${CATALOG_REVALIDATION_INTERVAL_MS:-300000}
       CATALOG_REVALIDATION_STALE_MS: ${CATALOG_REVALIDATION_STALE_MS:-3600000}
       CATALOG_REVALIDATION_TIMEOUT_MS: ${CATALOG_REVALIDATION_TIMEOUT_MS:-5000}
@@ -185,6 +185,36 @@ services:
       facilitator:
         condition: service_healthy
 
+  # Lowest-friction seller path: puts canonical Stellar x402 in front of the
+  # controlled existing demo API without changing that API's handlers.
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway-service/Dockerfile
+    ports:
+      - "${GATEWAY_HOST_PORT:-3005}:3005"
+    volumes:
+      - gateway-data:/var/lib/veridex/gateway
+    environment:
+      GATEWAY_PORT: 3005
+      GATEWAY_CONFIG: gateway.config.json
+      GATEWAY_DATA_DIRECTORY: /var/lib/veridex/gateway
+      GATEWAY_UPSTREAM: http://demo-server:3003/demo-api
+      GATEWAY_PUBLIC_BASE_URL: ${PUBLIC_GATEWAY_URL:-http://localhost:3005}
+      GATEWAY_PAY_TO: ${SELLER_ADDRESS}
+      FACILITATOR_URL: http://facilitator:3002
+      PAYMENT_ASSET: ${PAYMENT_ASSET}
+      PAYMENT_AMOUNT: ${GATEWAY_PAYMENT_AMOUNT:-100000}
+      PROVIDER_OUTCOME_SECRET_KEY: ${PROVIDER_OUTCOME_SECRET_KEY:-${SELLER_SECRET_KEY}}
+      PROVIDER_OBSERVER_TOKEN: ${PROVIDER_OBSERVER_TOKEN:-}
+      GATEWAY_MANAGEMENT_TOKEN: ${GATEWAY_MANAGEMENT_TOKEN:-}
+      BAZAAR_URL: http://bazaar:3001
+    depends_on:
+      facilitator:
+        condition: service_healthy
+      demo-server:
+        condition: service_healthy
+
   # Browser-facing sandbox. Holds no keys: visitors' keypairs are generated in
   # their own browser and funded by Friendbot.
   playground:
@@ -199,12 +229,13 @@ services:
       # browser can resolve - not the compose service names.
       FACILITATOR_URL: ${PUBLIC_FACILITATOR_URL:-http://localhost:3002}
       DEMO_SERVER_URL: ${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}
+      GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-http://localhost:3005}
       BAZAAR_URL: ${PUBLIC_BAZAAR_URL:-http://localhost:3001}
       STELLAR_NETWORK: testnet
       PAYMENT_ASSET: ${PAYMENT_ASSET}
       # The proxy reaches the seller from inside the network, so it is
       # allowlisted for both the service name and the public URL.
-      PLAYGROUND_ALLOWED_ORIGINS: "http://demo-server:3003,${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}"
+      PLAYGROUND_ALLOWED_ORIGINS: "http://demo-server:3003,http://gateway:3005,${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003},${PUBLIC_GATEWAY_URL:-http://localhost:3005}"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3004/api/config"]
       interval: 15s
@@ -212,7 +243,7 @@ services:
       retries: 5
       start_period: 20s
     depends_on:
-      demo-server:
+      gateway:
         condition: service_healthy
 
   # MCP Discovery Server (optional)
@@ -235,6 +266,7 @@ services:
 volumes:
   postgres-data:
   facilitator-outbox:
+  gateway-data:
 
 networks:
   default:

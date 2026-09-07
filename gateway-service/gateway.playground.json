@@ -1,0 +1,49 @@
+{
+  "id": "playground_demo_gateway",
+  "upstream": "http://demo-server:3003/demo-api",
+  "publicBaseUrl": "http://localhost:3005",
+  "facilitatorUrl": "http://facilitator:3002",
+  "payTo": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  "network": "stellar:testnet",
+  "asset": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
+  "price": "100000",
+  "name": "Veridex Gateway Demo API",
+  "description": "A controlled existing API protected by the Veridex Stellar x402 Gateway.",
+  "tags": ["gateway", "demo", "stellar", "testnet"],
+  "state": "active",
+  "timeoutMs": 10000,
+  "maxRequestBodyBytes": 65536,
+  "maxResponseBodyBytes": 262144,
+  "maxConcurrentRequests": 20,
+  "rateLimit": { "windowMs": 60000, "max": 60 },
+  "allowHttpForDevelopment": true,
+  "allowedUpstreamOrigins": ["http://demo-server:3003"],
+  "expiresAt": "2099-01-01T00:00:00.000Z",
+  "routes": [
+    {
+      "path": "/hello",
+      "methods": ["GET"],
+      "name": "Gateway Hello API",
+      "description": "A deterministic existing API response protected by exact Stellar x402.",
+      "tags": ["gateway", "hello", "demo"],
+      "bazaar": { "enabled": true, "output": { "example": { "message": "Hello from the existing API behind Veridex Gateway." } } },
+      "mcp": { "toolName": "gateway_hello" }
+    },
+    {
+      "path": "/weather",
+      "methods": ["GET"],
+      "name": "Gateway Weather API",
+      "description": "A deterministic weather API response protected by exact Stellar x402.",
+      "tags": ["gateway", "weather", "demo"],
+      "bazaar": { "enabled": true, "output": { "example": { "location": "San Francisco", "temperatureCelsius": 18 } } }
+    },
+    {
+      "path": "/data",
+      "methods": ["POST"],
+      "name": "Gateway Data API",
+      "description": "A deterministic JSON API protected by exact Stellar x402.",
+      "tags": ["gateway", "data", "demo"],
+      "bazaar": { "enabled": true, "output": { "example": { "accepted": true } } }
+    }
+  ]
+}

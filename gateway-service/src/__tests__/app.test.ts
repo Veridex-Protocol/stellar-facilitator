@@ -1,5 +1,9 @@
 import { Keypair } from "@stellar/stellar-sdk";
-import { decodePaymentRequiredHeader, encodePaymentSignatureHeader } from "@x402/core/http";
+import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  encodePaymentSignatureHeader,
+} from "@x402/core/http";
 import { Hono } from "hono";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { serve, type ServerType } from "@hono/node-server";
@@ -10,6 +14,7 @@ import type { GatewayConfig } from "../types.js";
 let facilitator: ServerType;
 let facilitatorUrl: string;
 const calls: string[] = [];
+const publicDns = async () => ["93.184.216.34"];
 
 beforeAll(async () => {
   const app = new Hono();
@@ -54,19 +59,43 @@ function gatewayConfig(): GatewayConfig {
   };
 }
 
+async function paymentHeader(
+  app: Awaited<ReturnType<typeof createGatewayApp>>,
+  url = "https://gateway.example.com/demo",
+  method = "GET",
+): Promise<string> {
+  const challenge = await app.request(url, { method });
+  const requiredHeader = challenge.headers.get("PAYMENT-REQUIRED");
+  if (!requiredHeader) throw new Error("gateway did not return PAYMENT-REQUIRED");
+  const paymentRequired = decodePaymentRequiredHeader(requiredHeader);
+  return encodePaymentSignatureHeader({
+    x402Version: 2,
+    resource: paymentRequired.resource,
+    accepted: paymentRequired.accepts[0],
+    payload: { transaction: "opaque-test-authorization" },
+    extensions: paymentRequired.extensions,
+  });
+}
+
 describe("gateway payment gate", () => {
   it("never forwards an unpaid protected request", async () => {
     const upstreamFetch = vi.fn<typeof fetch>();
-    const app = await createGatewayApp(gatewayConfig(), { fetch: upstreamFetch });
+    const store = new InMemoryGatewayEventStore();
+    const app = await createGatewayApp(gatewayConfig(), {
+      fetch: upstreamFetch,
+      eventStore: store,
+      resolveHostname: publicDns,
+    });
 
     const response = await app.request("https://gateway.example.com/demo");
 
     expect(response.status).toBe(402);
     expect(response.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
     expect(upstreamFetch).not.toHaveBeenCalled();
+    expect(store.paymentEvents.at(-1)?.status).toBe("challenged");
   });
 
-  it("verifies, forwards, and settles a paid request exactly once", async () => {
+  it("verifies, settles, and then forwards a paid request", async () => {
     calls.length = 0;
     const store = new InMemoryGatewayEventStore();
     const upstreamFetch = vi.fn<typeof fetch>().mockImplementation(async () => {
@@ -74,29 +103,148 @@ describe("gateway payment gate", () => {
       return Response.json({ ok: true });
     });
     const config = gatewayConfig();
-    const app = await createGatewayApp(config, { fetch: upstreamFetch, eventStore: store });
-    const challenge = await app.request("https://gateway.example.com/demo");
-    const requiredHeader = challenge.headers.get("PAYMENT-REQUIRED");
-    if (!requiredHeader) throw new Error("gateway did not return PAYMENT-REQUIRED");
-    const paymentRequired = decodePaymentRequiredHeader(requiredHeader);
-    const accepted = paymentRequired.accepts[0];
-    const paymentPayload = {
-      x402Version: 2,
-      resource: paymentRequired.resource,
-      accepted,
-      payload: { transaction: "opaque-test-authorization" },
-      extensions: paymentRequired.extensions,
-    };
+    const app = await createGatewayApp(config, {
+      fetch: upstreamFetch,
+      eventStore: store,
+      resolveHostname: publicDns,
+    });
+    const signature = await paymentHeader(app);
+    calls.length = 0;
 
     const response = await app.request("https://gateway.example.com/demo", {
-      headers: {
-        "PAYMENT-SIGNATURE": encodePaymentSignatureHeader(paymentPayload),
-      },
+      headers: { "PAYMENT-SIGNATURE": signature },
     });
 
     expect(response.status).toBe(200);
-    expect(calls).toEqual(["verify", "upstream", "settle"]);
+    expect(calls).toEqual(["verify", "settle", "upstream"]);
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
     expect(store.providerOutcomes).toHaveLength(1);
+    expect(store.paymentEvents.map((event) => event.status)).toEqual([
+      "challenged",
+      "verified",
+      "settled",
+    ]);
+    const paymentResponse = response.headers.get("PAYMENT-RESPONSE");
+    expect(paymentResponse && decodePaymentResponseHeader(paymentResponse).transaction).toBe("a".repeat(64));
+  });
+
+  it("settles a replay once and forwards a stable upstream idempotency key", async () => {
+    calls.length = 0;
+    const idempotencyKeys: string[] = [];
+    const upstreamFetch = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      calls.push("upstream");
+      idempotencyKeys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      return Response.json({ ok: true });
+    });
+    const app = await createGatewayApp(gatewayConfig(), {
+      fetch: upstreamFetch,
+      eventStore: new InMemoryGatewayEventStore(),
+      resolveHostname: publicDns,
+    });
+    const signature = await paymentHeader(app);
+    calls.length = 0;
+
+    await app.request("https://gateway.example.com/demo", {
+      headers: { "PAYMENT-SIGNATURE": signature },
+    });
+    await app.request("https://gateway.example.com/demo", {
+      headers: { "PAYMENT-SIGNATURE": signature },
+    });
+
+    expect(calls).toEqual(["verify", "settle", "upstream", "upstream"]);
+    expect(idempotencyKeys[0]).toMatch(/^[0-9a-f]{64}$/);
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+  });
+
+  it("preserves method, path, query, safe headers, and body", async () => {
+    let forwardedUrl = "";
+    let forwardedInit: RequestInit | undefined;
+    const upstreamFetch = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+      calls.push("upstream");
+      forwardedUrl = String(url);
+      forwardedInit = init;
+      return Response.json({ ok: true });
+    });
+    const config = gatewayConfig();
+    config.upstream = "https://api.example.com/base";
+    config.routes = [{ path: "/demo", methods: ["POST"] }];
+    const app = await createGatewayApp(config, {
+      fetch: upstreamFetch,
+      resolveHostname: publicDns,
+    });
+    const signature = await paymentHeader(app, "https://gateway.example.com/demo?mode=full", "POST");
+
+    const response = await app.request("https://gateway.example.com/demo?mode=full", {
+      method: "POST",
+      headers: {
+        "PAYMENT-SIGNATURE": signature,
+        Authorization: "Bearer must-not-forward",
+        "X-Forwarded-Host": "must-not-forward",
+        "X-Custom": "safe",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ hello: "gateway" }),
+    });
+
+    const headers = new Headers(forwardedInit?.headers);
+    expect(response.status).toBe(200);
+    expect(forwardedUrl).toBe("https://api.example.com/base/demo?mode=full");
+    expect(forwardedInit?.method).toBe("POST");
+    expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("PAYMENT-SIGNATURE")).toBeNull();
+    expect(headers.get("X-Forwarded-Host")).toBeNull();
+    expect(headers.get("X-Custom")).toBe("safe");
+    expect(Buffer.from(forwardedInit?.body as ArrayBuffer).toString("utf8")).toBe('{"hello":"gateway"}');
+  });
+
+  it("returns settlement proof when the upstream fails after settlement", async () => {
+    calls.length = 0;
+    const upstreamFetch = vi.fn<typeof fetch>().mockImplementation(async () => {
+      calls.push("upstream");
+      throw new Error("offline");
+    });
+    const store = new InMemoryGatewayEventStore();
+    const app = await createGatewayApp(gatewayConfig(), {
+      fetch: upstreamFetch,
+      eventStore: store,
+      resolveHostname: publicDns,
+    });
+    const signature = await paymentHeader(app);
+    calls.length = 0;
+
+    const response = await app.request("https://gateway.example.com/demo", {
+      headers: { "PAYMENT-SIGNATURE": signature },
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(calls).toEqual(["verify", "settle", "upstream"]);
+    expect(body.payment).toEqual({ status: "settled", transactionHash: "a".repeat(64) });
+    expect(response.headers.get("PAYMENT-RESPONSE")).toBeTruthy();
+    expect(store.providerOutcomes.at(-1)?.reasonCode).toBe("upstream_unreachable");
+  });
+
+  it("blocks a hostname that resolves to a private address", async () => {
+    await expect(createGatewayApp(gatewayConfig(), {
+      resolveHostname: async () => ["127.0.0.1"],
+    })).rejects.toThrow("private or reserved IPv4");
+  });
+
+  it("exposes metrics and authenticated portal contracts", async () => {
+    const app = await createGatewayApp(gatewayConfig(), {
+      resolveHostname: publicDns,
+      managementToken: "test-management-token",
+    });
+
+    const unauthorized = await app.request("https://gateway.example.com/v1/gateways/gateway_test");
+    const snapshot = await app.request("https://gateway.example.com/v1/gateways/gateway_test", {
+      headers: { Authorization: "Bearer test-management-token" },
+    });
+    const metrics = await app.request("https://gateway.example.com/metrics");
+
+    expect(unauthorized.status).toBe(401);
+    expect(snapshot.status).toBe(200);
+    expect((await snapshot.json()).schemaVersion).toBe("veridex.portal.stellar-gateway/v1");
+    expect(await metrics.text()).toContain("veridex_gateway_settlements_total");
   });
 });

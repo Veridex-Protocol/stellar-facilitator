@@ -8,10 +8,14 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "veridex-gateway": "./dist/cli.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "init": "tsx src/cli.ts init",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
   },

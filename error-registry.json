@@ -18,4 +18,11 @@
   "mcp_tool_failed": { "reason": "The MCP tool could not complete the requested operation.", "retryable": false, "category": "provider" },
   "rpc_unavailable": { "reason": "No configured RPC provider could complete the operation.", "retryable": true, "category": "network" },
   "rpc_disagreement": { "reason": "Independent RPC providers disagree on the final transaction state.", "retryable": false, "category": "network" }
+  ,"invalid_gateway_config": { "reason": "The gateway configuration is invalid or unsafe.", "retryable": false, "category": "validation" }
+  ,"upstream_unreachable": { "reason": "The configured gateway upstream could not be reached.", "retryable": true, "category": "provider" }
+  ,"upstream_timeout": { "reason": "The configured gateway upstream exceeded its response deadline.", "retryable": true, "category": "provider" }
+  ,"ssrf_blocked": { "reason": "The gateway blocked an unsafe upstream destination.", "retryable": false, "category": "validation" }
+  ,"body_limit_exceeded": { "reason": "The gateway request or response exceeded its configured size limit.", "retryable": false, "category": "validation" }
+  ,"gateway_disabled": { "reason": "The requested gateway is paused, disabled, or expired.", "retryable": false, "category": "provider" }
+  ,"settlement_failed": { "reason": "The gateway payment could not be settled by the facilitator.", "retryable": false, "category": "payment" }
 }
