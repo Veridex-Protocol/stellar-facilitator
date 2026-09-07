@@ -1,0 +1,37 @@
+{
+  "kind": "veridex-local-multiprocess-federation-proof",
+  "generatedAt": "2026-09-07T01:59:52.705Z",
+  "network": "stellar:testnet",
+  "settlementTransaction": "a7f65fe111515479a3b5a5a96b962022489b0e40d9674345178d6564582a27e2",
+  "processes": 3,
+  "databases": [
+    "veridex_federation_a",
+    "veridex_federation_b",
+    "veridex_federation_c"
+  ],
+  "assertions": {
+    "distinctTransportIdentities": true,
+    "fullTopicMesh": true,
+    "aToBToC": true,
+    "replayIgnored": true,
+    "securityRejections": [
+      "invalid_signature",
+      "unauthorized_signer",
+      "stale"
+    ],
+    "deterministicConflictDigest": "2b29da32cb4a59e3916afccc1319a74dfa69bd4e21fb1dff2d128b1cdb7f9a47",
+    "restartRetainedState": true,
+    "revokeConverged": true,
+    "restoreConverged": true
+  },
+  "limitations": [
+    "Nodes are independent OS processes and PostgreSQL databases on one workstation.",
+    "This does not prove independent operators, public reachability, or production federation SLOs."
+  ],
+  "peerIds": [
+    "12D3KooWEEEE64MSWWr36n4pSx3UGgeFbS5yjg8sj3gzAk4kkEUj",
+    "12D3KooWC45fqCSeA8YKJhx3tTJ9bvBdwo7RrN1SFoXfauZUwZyX",
+    "12D3KooWPe2u3tqMSeCwqUDZ4fDYktNDBLoGQRJ5CAiEU3CBWDkn"
+  ],
+  "passed": true
+}

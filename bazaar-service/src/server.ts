@@ -654,6 +654,7 @@ export class BazaarService {
         const result = await this.ingestionWorker.applyCatalogDelta(delta, {
           authorizedSigners: allowed,
         });
+        if (result.status === "applied") await this.p2pNode.publishCatalogDelta(delta);
         return c.json({ ...result, key: catalogDeltaKey(delta) }, result.status === "rejected" ? 400 : 202);
       } catch (error) {
         return c.json(errorResponse("invalid_catalog_delta", error instanceof Error ? error.message : undefined), 400);
