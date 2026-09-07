@@ -267,10 +267,9 @@ function decodeProviderOutcome(raw: string | undefined): any | undefined {
 
 async function findBazaarListing(config: PlaygroundConfig, resourceUrl: string): Promise<any | undefined> {
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const url = new URL("/discovery/search", config.bazaarUrl);
-    url.searchParams.set("q", "gateway hello demo");
+    const url = new URL("/discovery/resources", config.bazaarUrl);
     url.searchParams.set("network", config.network);
-    url.searchParams.set("limit", "20");
+    url.searchParams.set("limit", "100");
     const response = await fetchWithTimeout(url.toString(), {}, 10_000, "Bazaar gateway lookup");
     if (response.ok) {
       const body = await response.json();
