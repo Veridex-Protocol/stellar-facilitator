@@ -43,6 +43,7 @@ The status vocabulary is evidence-sensitive and used consistently throughout thi
 ### TESTNET PROVEN
 
 - Stock-client `exact`: 402 challenge, payer authorization, verification, settlement, signed receipt, and protected response.
+- Exact HTTPS gateway: controlled existing API, canonical 402, browser signing, settlement, upstream response, signed provider outcome, durable event, and searchable Bazaar resource.
 - Direct `upto` partial and zero settlement, replay rejection, and the custom HTTP `upto` seller/client path.
 - Bazaar automatic cataloging, settlement/resource binding, persistence, browse/search discovery, and restart survival for the captured clean-room stack.
 - Keyless MCP discovery and paid calls with client-side signing.
@@ -173,7 +174,7 @@ flowchart LR
 | Component            | Responsibility                                                                  | Durable state                                                         | Failure behavior                                                    |
 | -------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | Facilitator service  | `/supported`, `/verify`, `/settle`, transaction rebuilding and submission | Durable catalog outbox; process-local receipt responses, channel state, and metrics | Rejects unsafe/expired requests; never guesses a settlement result. |
-| Gateway service | Existing-API route configuration, exact 402 orchestration, bounded forwarding, payment/provider events | Single-host JSONL event files; configuration file | Never forwards unpaid requests; returns settlement proof if upstream fails after payment. |
+| Gateway service | Existing-API route configuration, exact 402 orchestration, bounded forwarding, payment/provider events | Single-host JSONL event files; configuration file | Testnet-proven happy path; never forwards unpaid requests; returns settlement proof if upstream fails after payment. |
 | Channel-account pool | Leases sequence-number sources and quarantines uncertain submissions | Operator-managed channel keys; process-local lease/quarantine state | Requires authenticated explicit recovery after reconciliation. |
 | PostgreSQL Bazaar    | Catalog, search index metadata, telemetry, announcement audit trail             | PostgreSQL 16 + pgvector                                              | Search may degrade; settlement continues.                           |
 | Embedding worker     | Target production component for versioned learned representations | Not implemented as an independent durable worker | Current ingestion uses synchronous feature hashing with fallback; settlement remains independent. |

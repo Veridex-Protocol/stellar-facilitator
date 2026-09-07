@@ -266,7 +266,7 @@ function decodeProviderOutcome(raw: string | undefined): any | undefined {
 }
 
 async function findBazaarListing(config: PlaygroundConfig, resourceUrl: string): Promise<any | undefined> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     const url = new URL("/discovery/search", config.bazaarUrl);
     url.searchParams.set("q", "gateway hello demo");
     url.searchParams.set("network", config.network);
@@ -277,7 +277,7 @@ async function findBazaarListing(config: PlaygroundConfig, resourceUrl: string):
       const match = body.results?.find((entry: any) => entry.resourceUrl === resourceUrl);
       if (match) return match;
     }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
   }
   return undefined;
 }

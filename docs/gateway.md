@@ -1,6 +1,6 @@
 # Veridex Stellar x402 Gateway
 
-**Status:** Implemented and locally tested on `stellar:testnet`; live gateway transaction evidence is recorded separately after execution. This is not a production-readiness claim.
+**Status:** Exact gateway flow is proven on `stellar:testnet`; this is not a production-readiness claim. See the [gateway testnet proof](rfp/gateway-testnet-proof-2026-09-07.md).
 
 The gateway is for a developer who already operates an API:
 

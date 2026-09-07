@@ -7,7 +7,10 @@ import {
   encodePaymentResponseHeader,
 } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequirements, SettleResponse } from "@x402/core/types";
-import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+import {
+  bazaarResourceServerExtension,
+  declareDiscoveryExtension,
+} from "@x402/extensions/bazaar";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import {
   applyProviderOutcomeHeaders,
@@ -56,6 +59,7 @@ export async function createGatewayApp(
   const resourceServer = new x402ResourceServer(
     new HTTPFacilitatorClient({ url: config.facilitatorUrl }),
   ).register(config.network, new ExactStellarScheme());
+  resourceServer.registerExtension(bazaarResourceServerExtension);
   await resourceServer.initialize();
 
   const app = new Hono<GatewayEnv>();
@@ -165,9 +169,16 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
   const resourceId = stableId(
     `${config.publicBaseUrl}|${route.routeTemplate ?? route.path}|exact|${config.network}`,
   );
-  const extensions = route.bazaar?.enabled === false
+  const declaredExtensions = route.bazaar?.enabled === false
     ? undefined
     : declareDiscoveryExtension({ output: route.bazaar?.output ?? { example: {} } });
+  const extensions = declaredExtensions
+    ? resourceServer.enrichExtensions(declaredExtensions, {
+        method: context.req.method,
+        routePattern: route.routeTemplate ?? joinPath(config.routePrefix ?? "/", route.path),
+        adapter: { getPath: () => context.req.path },
+      })
+    : undefined;
   const requirements = await resourceServer.buildPaymentRequirementsFromOptions([{
     scheme: "exact",
     network: config.network,
@@ -423,7 +434,7 @@ async function forwardSettledRequest(
     const signedOutcome = createSignedOutcome(options, responseBody, record);
     if (signedOutcome) {
       applyProviderOutcomeHeaders(signedOutcome, (name, value) => headers.set(name, value), "exact");
-      void reportProviderOutcome(options, signedOutcome);
+      void reportProviderOutcome(options, signedOutcome, options.settleResult.transaction);
     }
     return new Response(responseBody, {
       status: upstreamResponse.status,
@@ -639,10 +650,11 @@ function createSignedOutcome(
 async function reportProviderOutcome(
   options: RequestHandlerOptions,
   outcome: ProviderOutcome,
+  settlementTransaction?: string,
 ): Promise<void> {
   if (!options.config.bazaarUrl || !options.providerObserverToken) return;
   try {
-    await options.fetchImplementation(
+    const observationResponse = await options.fetchImplementation(
       new URL("/provider-quality/observations", options.config.bazaarUrl),
       {
         method: "POST",
@@ -651,6 +663,23 @@ async function reportProviderOutcome(
           Authorization: `Bearer ${options.providerObserverToken}`,
         },
         body: JSON.stringify(outcome),
+        signal: AbortSignal.timeout(2_000),
+      },
+    );
+    if (!observationResponse.ok || !settlementTransaction) return;
+    await options.fetchImplementation(
+      new URL("/provider-quality/observations/settlement", options.config.bazaarUrl),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${options.providerObserverToken}`,
+        },
+        body: JSON.stringify({
+          signer: outcome.signer,
+          signature: outcome.signature,
+          settlementTx: settlementTransaction,
+        }),
         signal: AbortSignal.timeout(2_000),
       },
     );

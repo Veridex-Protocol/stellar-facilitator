@@ -90,7 +90,10 @@ describe("gateway payment gate", () => {
     const response = await app.request("https://gateway.example.com/demo");
 
     expect(response.status).toBe(402);
-    expect(response.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
+    const requiredHeader = response.headers.get("PAYMENT-REQUIRED");
+    expect(requiredHeader).toBeTruthy();
+    const required = decodePaymentRequiredHeader(requiredHeader!);
+    expect((required.extensions?.bazaar as any).info.input.method).toBe("GET");
     expect(upstreamFetch).not.toHaveBeenCalled();
     expect(store.paymentEvents.at(-1)?.status).toBe("challenged");
   });
@@ -246,5 +249,122 @@ describe("gateway payment gate", () => {
     expect(snapshot.status).toBe(200);
     expect((await snapshot.json()).schemaVersion).toBe("veridex.portal.stellar-gateway/v1");
     expect(await metrics.text()).toContain("veridex_gateway_settlements_total");
+  });
+
+  it.each(["GET", "POST", "PUT", "PATCH", "DELETE"] as const)(
+    "forwards paid %s requests",
+    async (method) => {
+      let forwardedMethod = "";
+      const upstreamFetch = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+        forwardedMethod = init?.method ?? "";
+        return Response.json({ ok: true });
+      });
+      const config = gatewayConfig();
+      config.routes = [{ path: "/demo", methods: [method] }];
+      const app = await createGatewayApp(config, { fetch: upstreamFetch, resolveHostname: publicDns });
+      const signature = await paymentHeader(app, "https://gateway.example.com/demo", method);
+      const response = await app.request("https://gateway.example.com/demo", {
+        method,
+        headers: { "PAYMENT-SIGNATURE": signature, "Content-Type": "application/json" },
+        body: method === "GET" ? undefined : "{}",
+      });
+
+      expect(response.status).toBe(200);
+      expect(forwardedMethod).toBe(method);
+    },
+  );
+
+  it("rejects an oversized request before verify or settlement", async () => {
+    calls.length = 0;
+    const config = gatewayConfig();
+    config.maxRequestBodyBytes = 4;
+    config.routes = [{ path: "/demo", methods: ["POST"] }];
+    const upstreamFetch = vi.fn<typeof fetch>();
+    const app = await createGatewayApp(config, { fetch: upstreamFetch, resolveHostname: publicDns });
+    const signature = await paymentHeader(app, "https://gateway.example.com/demo", "POST");
+    calls.length = 0;
+
+    const response = await app.request("https://gateway.example.com/demo", {
+      method: "POST",
+      headers: { "PAYMENT-SIGNATURE": signature, "Content-Type": "text/plain" },
+      body: "too-large",
+    });
+
+    expect(response.status).toBe(413);
+    expect(calls).toEqual([]);
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("enforces paused, expired, and rate-limited lifecycle states", async () => {
+    const paused = gatewayConfig();
+    paused.state = "paused";
+    const pausedApp = await createGatewayApp(paused, { resolveHostname: publicDns });
+    expect((await pausedApp.request("https://gateway.example.com/demo")).status).toBe(503);
+
+    const expired = gatewayConfig();
+    expired.expiresAt = "2020-01-01T00:00:00.000Z";
+    const expiredApp = await createGatewayApp(expired, { resolveHostname: publicDns });
+    expect((await expiredApp.request("https://gateway.example.com/demo")).status).toBe(410);
+
+    const limited = gatewayConfig();
+    limited.rateLimit = { windowMs: 60_000, max: 1 };
+    const limitedApp = await createGatewayApp(limited, { resolveHostname: publicDns });
+    expect((await limitedApp.request("https://gateway.example.com/demo")).status).toBe(402);
+    expect((await limitedApp.request("https://gateway.example.com/demo")).status).toBe(429);
+  });
+
+  it.each([
+    [400, "caller", false],
+    [401, "caller", false],
+    [403, "caller", false],
+    [404, "caller", false],
+    [429, "caller", false],
+    [500, "provider", true],
+    [502, "provider", true],
+  ] as const)("attributes upstream HTTP %s", async (status, attributable, providerAtFault) => {
+    const store = new InMemoryGatewayEventStore();
+    const app = await createGatewayApp(gatewayConfig(), {
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response("upstream", { status })),
+      eventStore: store,
+      resolveHostname: publicDns,
+    });
+    const signature = await paymentHeader(app);
+    await app.request("https://gateway.example.com/demo", {
+      headers: { "PAYMENT-SIGNATURE": signature },
+    });
+
+    expect(store.providerOutcomes.at(-1)).toMatchObject({ attributable, providerAtFault, upstreamStatus: status });
+  });
+
+  it("reports a signed provider outcome and settlement correlation asynchronously", async () => {
+    const seller = Keypair.random();
+    const reportedPaths: string[] = [];
+    const config = gatewayConfig();
+    config.payTo = seller.publicKey();
+    config.bazaarUrl = "https://bazaar.example.com";
+    const upstreamFetch = vi.fn<typeof fetch>().mockImplementation(async (url) => {
+      const target = new URL(String(url));
+      if (target.origin === "https://bazaar.example.com") {
+        reportedPaths.push(target.pathname);
+        return Response.json({ status: "accepted" }, { status: 202 });
+      }
+      return Response.json({ ok: true });
+    });
+    const app = await createGatewayApp(config, {
+      fetch: upstreamFetch,
+      resolveHostname: publicDns,
+      providerOutcomeSecretKey: seller.secret(),
+      providerObserverToken: "internal-token",
+    });
+    const signature = await paymentHeader(app);
+    const response = await app.request("https://gateway.example.com/demo", {
+      headers: { "PAYMENT-SIGNATURE": signature },
+    });
+
+    expect(response.headers.get("X-Veridex-Provider-Outcome")).toBeTruthy();
+    await vi.waitFor(() => expect(reportedPaths).toEqual([
+      "/provider-quality/observations",
+      "/provider-quality/observations/settlement",
+    ]));
   });
 });

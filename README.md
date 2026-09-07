@@ -30,7 +30,7 @@ production-readiness claim is part of the current evidence set.
 | MCP | Testnet proven for keyless discovery and exact paid calls |
 | `@veridex/stellar` buyer SDK | Built, packed, and externally exercised; npm publication remains pending |
 | Seller integration | Working with official x402 middleware; discovery is optional |
-| HTTPS API gateway | Implemented and locally tested; live testnet proof pending this change's clean-room run |
+| HTTPS API gateway | Testnet proven through the Playground: settlement, upstream response, Bazaar listing, and signed provider outcome |
 | Provider quality | Implemented and tested; representative independent-observer operation is not proven |
 | Federation | Local three-process/three-database restart proof; multi-operator production federation is not claimed |
 | Pubnet | Approval-gated and unvalidated |
