@@ -1,6 +1,6 @@
 # Architecture v3 Gap Audit
 
-Date: 2026-09-06. Target: `docs/architecture.md` version 3.0-draft. Baseline:
+Date: 2026-09-06; reconciled 2026-09-07. Target: `docs/architecture.md` version 3.1. Baseline:
 `3098ba4` plus the dated evidence worktree. `PROVEN` means live
 testnet evidence exists; `IMPLEMENTED NOT PROVEN` means executable behavior and
 local tests exist but no post-change live proof.
@@ -10,7 +10,7 @@ local tests exist but no post-change live proof.
 | Payment plane is independent from discovery | Settlement enqueues transaction-keyed catalog work, returns queued status, and delivers asynchronously | Fresh `36/36`; unavailable-Bazaar retention/replay regression | HA/shared outbox is not implemented | **IMPLEMENTED + PROVEN/TESTED** on one host; preserve the plane boundary |
 | Discovery plane is advisory | Bazaar metadata never authorizes settlement; payment terms are signed and live terms are revalidated | Fresh payment evidence; anti-hijack/live-term tests | Periodic revalidation lacks a captured live drill | **PROVEN** for payment authority; revalidation is `IMPLEMENTED NOT LIVE-PROVEN` |
 | Durable post-settlement outbox | Atomic file spool in a named volume, idempotent transaction IDs, asynchronous replay, pending/age metrics | Unavailable-Bazaar retention/restart/replay test; live queue drained to zero | Single-host spool is not HA | **IMPLEMENTED + TESTED**; multi-instance queue remains deployment work |
-| PostgreSQL is Bazaar source of truth | Catalog, telemetry, observations, aggregates, delta state, revalidation, and source disagreement use six migrations | Prior clean Docker persistence; migration tests | Migrations `005/006` not captured in a destructive clean-stack run | **PROVEN** baseline, latest migrations `IMPLEMENTED NOT DEPLOYMENT-PROVEN` |
+| PostgreSQL is Bazaar source of truth | Catalog, telemetry, observations, aggregates, delta state, revalidation, and source disagreement use six migrations | Fresh empty volume applied all six migrations before `36/36`; migration tests | Timed live periodic revalidation remains unexercised | **PROVEN** migration/bootstrap; revalidation remains `IMPLEMENTED NOT LIVE-PROVEN` |
 | pgvector catalog retrieval | `vector(384)` and cosine leg exist | Build/tests and prior catalog run | Current feature hash is lexical, not semantic | **PROVEN** as pgvector-backed lexical feature retrieval; do not call semantic |
 | Hard filters, lexical, vector, RRF, bounded quality | Filters are pushed into retrieval CTEs; lexical/feature-hash RRF and bounded telemetry modulation | 10-document/50-query reviewed report and regression tests | No PostgreSQL production-latency or diverse-activity benchmark | **IMPLEMENTED + TESTED** as a small lexical regression set; do not call semantic |
 | Versioned asynchronous embedding worker | Embeddings are generated synchronously during ingestion; HTTP provider falls back to local feature hashing | Embedding fallback tests and backlog gauge | No job table, version, independent worker, retry, or lexical-first publication | **TARGET ONLY**: separate embedding from admission after durable outbox work |
@@ -28,7 +28,7 @@ local tests exist but no post-change live proof.
 | `upto` enforces `actual <= max` and remains distinct | Custom contract/scheme routes explicitly; active contract binds terms and replay state | 27 active Rust tests and prior direct/HTTP testnet transactions | Architecture sections still describe an obsolete prototype/target shape | **PROVEN** on testnet, experimental and unaudited; update architecture after validation |
 | Stable outward errors are shared | Canonical 19-code registry with facilitator/Bazaar/MCP/SDK snapshots and adapters | Drift gate and package tests | External consumer adoption remains | **IMPLEMENTED + TESTED** without changing canonical x402 reason fields |
 | Prometheus observability | Facilitator/Bazaar expose RPC failover/latency, P2P invalid, liveness, channel, outbox, payment, search, and provider signals | Endpoint tests and docs | External retention/alerts and unavailable upstream fee amount remain | **IMPLEMENTED + TESTED** for observable repository signals |
-| Failure-domain policy is proven | Outbox replay, RPC scenarios, channel quarantine, and isolated P2P behavior are automated | Focused tests plus fresh conformance/load/loopback drills | Embedding/P2P process, real ambiguity, and destructive migration drills remain | **PARTIAL PROOF** with explicit open drills |
+| Failure-domain policy is proven | Outbox replay, RPC scenarios, channel quarantine, and isolated P2P behavior are automated | Focused tests plus fresh six-migration conformance/load/loopback drills | Embedding/P2P process, timed revalidation, and real ambiguity drills remain | **PARTIAL PROOF** with explicit open drills |
 | Public reviewer proof | Playground exposes payment, Bazaar search/provenance, local policy, wire, receipts, attacks, and evidence | Next `16.3.4` build/smoke and responsive browser checks | No `upto`/keyless MCP execution UI or deployed smart-account proof | **IMPLEMENTED + PARTIAL**; keep policy panel claim local |
 | Permissive dependency path | Direct runtime dependencies are permissive; errors/license gates run in CI; Playground audits clean | Lockfile/license report and production audits | 14 optional `sharp`/`libvips` LGPL artifacts require legal review | **IMPLEMENTED + REVIEW REQUIRED** for Playground distribution |
 
@@ -47,7 +47,7 @@ local tests exist but no post-change live proof.
 
 ## Priority From This Audit
 
-1. Capture a destructive clean-stack run applying migrations `005/006` and exercising periodic revalidation.
+1. Exercise a timed live stale-row revalidation through refresh and quarantine.
 2. Run genuinely independent RPC operators plus a real ambiguous-submission quarantine/recovery drill.
 3. Build and audit the deployed smart-account/stablecoin signed policy path.
 4. Run a diverse, representative activity corpus without manufacturing volume or extrapolating production throughput.

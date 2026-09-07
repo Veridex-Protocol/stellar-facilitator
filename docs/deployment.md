@@ -91,9 +91,9 @@ docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
 psql "host=127.0.0.1 port=${DATABASE_HOST_PORT:-55432} dbname=veridex_bazaar user=postgres"
 ```
 
-The original clean-room artifact covered migrations `001`-`004`. Migrations
-`005`/`006` and periodic revalidation are implemented/tested but still need a
-captured destructive clean-stack run before broader deployment claims.
+The latest clean-room run applied all six migrations to an empty volume and
+then passed `36/36` conformance. Periodic revalidation is implemented and
+package-tested; a timed live stale-row refresh/quarantine drill remains open.
 
 ## Settlement signers
 

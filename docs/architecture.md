@@ -46,7 +46,7 @@ The status vocabulary is evidence-sensitive and used consistently throughout thi
 - Direct `upto` partial and zero settlement, replay rejection, and the custom HTTP `upto` seller/client path.
 - Bazaar automatic cataloging, settlement/resource binding, persistence, browse/search discovery, and restart survival for the captured clean-room stack.
 - Keyless MCP discovery and paid calls with client-side signing.
-- Fresh-account/empty-volume bootstrap for migrations `001`-`004`; migrations `005` and `006` were added later and are not covered by that destructive-bootstrap artifact.
+- Fresh-account/empty-volume bootstrap applying all six migrations, followed by `36/36` conformance and settlement-backed discovery.
 
 ### IMPLEMENTED
 
@@ -57,7 +57,7 @@ The status vocabulary is evidence-sensitive and used consistently throughout thi
 
 - Channel leasing/quarantine: exercised by unit/integration tests and a `10/25/50/100` testnet load smoke, but not by a real ambiguous-submission recovery drill or multi-instance deployment.
 - RPC failover/reconciliation: exercised by deterministic tests and a live loopback testnet drill, but not by independently operated providers or pubnet.
-- Catalog revalidation and migrations `005`/`006`: implemented and tested, but not captured in a fresh destructive clean-stack/revalidation drill.
+- Catalog revalidation: implemented and package-tested; all migrations are clean-stack proven, but a timed live periodic revalidation/quarantine drill remains open.
 - Provider-quality aggregation and observability: active and tested, without a representative independent-observer corpus, external monitoring stack, or alert-routing proof.
 
 ### PROTOTYPE
@@ -88,7 +88,7 @@ This distinction is intentional: it keeps the architecture persuasive without cl
 |---|---|---|---|
 | Canonical `exact` facilitator | `TESTNET PROVEN` | Stock-client `36/36`, ledger settlement, receipt recomputation | Pubnet and external audit are approval gates |
 | Active custom `upto` | `TESTNET PROVEN` | Direct partial/zero/replay plus custom HTTP path | Experimental, unaudited, not stock upstream interoperability |
-| Bazaar catalog/discovery | `TESTNET PROVEN` | Automatic cataloging, settlement binding, browse/search, restart persistence | Later revalidation migrations are not destructive-stack proven |
+| Bazaar catalog/discovery | `TESTNET PROVEN` | Automatic cataloging, six-migration clean bootstrap, settlement binding, browse/search, captured restart persistence | Timed live periodic revalidation remains package-tested only |
 | Durable catalog outbox | `IMPLEMENTED` | Unavailable-Bazaar retention/restart/replay test | Single-host file spool, not HA/shared queue |
 | Search regression | `IMPLEMENTED` | 10 documents, 50 reviewed queries, committed metrics | Lexical feature hashing, not semantic; latency is in-memory |
 | Channel leasing/quarantine | `IMPLEMENTED BUT NOT FULLY PROVEN` | Scheduler tests and testnet saturation smoke | Process-local state; real ambiguity drill pending |
@@ -306,7 +306,7 @@ Six focused tests cover normal operation, pre-submit failover, ambiguous timeout
 
 ### 7.1 Current catalog and retrieval implementation
 
-**Status: `TESTNET PROVEN` for settlement-backed cataloging, persistence, browse/search, and restart survival; `IMPLEMENTED BUT NOT FULLY PROVEN` for periodic revalidation and migrations `005`/`006`.** PostgreSQL is the source of truth for a local Bazaar node. `catalog_resources` holds normalized payment-bound resource metadata, `resource_telemetry` holds liveness and settlement counters, and provider observation/aggregate tables hold provider-quality evidence.
+**Status: `TESTNET PROVEN` for a six-migration empty-volume bootstrap, settlement-backed cataloging, persistence, browse/search, and captured restart survival; `IMPLEMENTED BUT NOT FULLY PROVEN` for timed periodic revalidation.** PostgreSQL is the source of truth for a local Bazaar node. `catalog_resources` holds normalized payment-bound resource metadata, `resource_telemetry` holds liveness and settlement counters, and provider observation/aggregate tables hold provider-quality evidence.
 
 Current search uses two lexical retrieval legs:
 
@@ -337,7 +337,7 @@ flowchart TD
 
 For a new paid resource, discovery metadata passes bounded validation, live HTTP resources must return matching 402 terms, and a real settlement must confirm the advertised `payTo`. One transaction can bind only one catalog entry, and an existing URL/tool key cannot be reassigned to a different payee. A confirmed payment is queued to a transaction-keyed atomic file-spool outbox; ingestion and search indexing occur asynchronously, so Bazaar failure does not change settlement success.
 
-Existing HTTP rows are selected after their verification timestamp becomes stale. Revalidation re-fetches the live 402 challenge: matching terms refresh the row, while missing, changed, or unsafe terms set a stable reason and soft-drop the row from search. This lifecycle is implemented and package-tested; a fresh destructive-stack run applying migrations `005`/`006` and exercising revalidation remains open.
+Existing HTTP rows are selected after their verification timestamp becomes stale. Revalidation re-fetches the live 402 challenge: matching terms refresh the row, while missing, changed, or unsafe terms set a stable reason and soft-drop the row from search. This lifecycle is implemented and package-tested; all six migrations now have a fresh empty-volume application artifact, while a timed live revalidation/quarantine drill remains open.
 
 Signed owner/delegate catalog deltas are validated for authority, ordering, and conflict behavior, but they do not independently bypass settlement proof for catalog admission. Transport peer identity is not listing authority. Persisted/exposed provenance classes and operator-reviewed admission are `NOT IMPLEMENTED` in the current response model.
 
@@ -623,7 +623,7 @@ For an HTTP Stellar x402 buyer, use `createVeridexClient(...)` from the focused 
 |---|---|---|---|
 | Exact conformance | Stock client `36/36`, Horizon-confirmed settlement, independently recomputed receipt | `TESTNET PROVEN` | Pubnet run, external review, production access/fee controls |
 | Custom `upto` | Direct partial/zero/replay and HTTP 200 metered path; 27 Rust tests | `TESTNET PROVEN`, experimental | Independent review, reproducible WASM/release manifest, pubnet approval |
-| Bazaar | Payment-bound cataloging, browse/search, restart persistence; live-term/revalidation tests | `TESTNET PROVEN` plus implemented hardening | Destructive migrations `005/006` drill, HA/restore and production SLOs |
+| Bazaar | Six-migration clean bootstrap, payment-bound cataloging, browse/search, restart persistence; live-term/revalidation tests | `TESTNET PROVEN` plus implemented hardening | Timed revalidation drill, HA/restore and production SLOs |
 | Search | 10-document/50-query reviewed lexical regression artifact | `IMPLEMENTED` | PostgreSQL latency corpus, broader judgments, target anti-concentration metadata |
 | MCP | Keyless exact discovery/payment ledgers and 19 tests | `TESTNET PROVEN` for exercised path | Broader client interoperability and DNS/redirect hardening |
 | Provider quality | Signed outcomes/aggregates, source/disagreement persistence, seller policy tests | `IMPLEMENTED BUT NOT FULLY PROVEN` | Representative independent corpus and observatory operations |

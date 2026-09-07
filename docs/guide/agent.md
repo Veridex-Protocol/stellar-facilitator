@@ -21,12 +21,14 @@ agent
 
 ```bash
 curl -fsS \
-  "http://localhost:3001/discovery/search?q=payment&network=stellar:testnet&limit=5" \
-  | jq '.results[] | {resourceUrl, scheme, network, asset, amount, payTo, compositeScore}'
+  "http://localhost:3001/discovery/search?q=demo&network=stellar:testnet&limit=5" \
+  | jq '.results[] | {resourceUrl, scheme, network, payTo, compositeScore}'
 ```
 
 The agent treats descriptions, tags, schemas, and seller output as untrusted
-data. A result is a recommendation, not authority to pay.
+data. A result is a recommendation, not authority to pay. Current catalog rows
+identify scheme/network/payee; the agent reads authoritative asset/amount terms
+from the live 402 before signing.
 
 ## 2. Apply policy before signing
 

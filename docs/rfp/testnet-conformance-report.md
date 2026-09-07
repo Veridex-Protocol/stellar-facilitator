@@ -209,19 +209,20 @@ TESTNET DESIGN PARTNER READY.
 
 This classification does not imply mainnet readiness, production readiness, independent security audit completion, federation production readiness, or npm publication.
 
-## 2026-09-06 local hardening addendum
+## 2026-09-07 clean-stack synchronization addendum
 
-The post-hardening stack completed a fresh `36/36` conformance run on
-`stellar:testnet`. This was a fresh application run, but not a newly captured
-destructive empty-volume bootstrap for migrations `005/006`.
+After documentation/standards synchronization, the documented quickstart was
+run from a removed Compose volume and deleted `.env`. Fresh Friendbot accounts
+were created, the empty PostgreSQL database applied all six migrations, and the
+stack completed `36/36` conformance on `stellar:testnet`.
 
 ```text
-exact:        4b36d1f406fb1560c9e61873c911fd71a26f9408f2ffbaf24239259f65cdee08
-exact ledger: 4539054
-upto partial: b4b474d151de351b84e9af1a6c39e8145d33481ff3f741300f2dec631c1a3142
-partial ledger: 4539058
-upto zero:    638b71e6dddd4dd0e214355b998ffda28e79c042f091655aa2b03d3dc421e2bf
-zero ledger:  4539060
+exact:        a7f65fe111515479a3b5a5a96b962022489b0e40d9674345178d6564582a27e2
+exact ledger: 4544070
+upto partial: 3275e082985a903e8a5e0e4be3f2cdba015f03b0f1f20fcc198d5a9c0955183d
+partial ledger: 4544074
+upto zero:    795b75c950c2f91bff4d61970ba192b220af9e1203108eeaaa6d2cb1bafcac61
+zero ledger:  4544076
 ```
 
 The exact run used stock `@x402/core`, `@x402/fetch`, and
@@ -236,7 +237,7 @@ provider observations/disagreements, keyless MCP, a canonical error registry,
 a local three-node federation proof, concurrency tooling, and testnet RPC
 coordination.
 
-Local validation on 2026-09-06:
+Local validation on 2026-09-06/07:
 
 - facilitator: 135 tests passed
 - Bazaar: 89 tests passed
@@ -254,6 +255,8 @@ Local validation on 2026-09-06:
 - npm publication: registry returned 404; still unpublished
 - MCP and Playground production dependency audits: zero vulnerabilities
 - error-registry and license-policy CI gates: passed
+- documentation drift gate: 65 Markdown files passed
+- fresh empty volume applied migrations `001` through `006`
 - local monorepo consumer proof against public agent policy APIs: `$2` passes a
   `$10` cap, `$12` blocks, and `$9` after a prior `$2` blocks as an `$11`
   rolling-total overrun
@@ -273,9 +276,8 @@ Additional testnet evidence:
 - The running stack finished with zero pending catalog outbox events and zero
   quarantined signers.
 
-Still not proven: a new destructive empty-volume bootstrap for migrations
-`005/006`, a diverse 50-100-payment activity corpus, multi-process federation
-restart/persistence, a genuinely independent-provider RPC drill, a real
-ambiguous-submission signer-quarantine drill, and a deployed smart-account
-stablecoin policy path. The release classification therefore remains `GREEN`,
-not `GREEN+`.
+Still not proven: a timed live periodic revalidation/quarantine drill, a diverse
+50-100-payment activity corpus, multi-process federation restart/persistence, a
+genuinely independent-provider RPC drill, a real ambiguous-submission
+signer-quarantine drill, and a deployed smart-account stablecoin policy path.
+The release classification therefore remains `GREEN`, not `GREEN+`.

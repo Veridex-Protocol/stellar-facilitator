@@ -66,7 +66,7 @@ const bazaar = createBazaarClient({
   defaultNetwork: "stellar:testnet",
 });
 
-const page = await bazaar.search({ query: "payment", limit: 5 });
+const page = await bazaar.search({ query: "demo", limit: 5 });
 const resource = page.results[0];
 if (!resource) throw new Error("no resource matched");
 

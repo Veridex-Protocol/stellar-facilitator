@@ -13,6 +13,9 @@ provider quality, channel internals, or the `upto` contract.
 
 ## One command
 
+If default ports `3001`, `3002`, `3003`, `4001`, or `4002` are already in use,
+choose the [port overrides](#port-conflicts) before this first run.
+
 ```bash
 git clone https://github.com/Veridex-Protocol/stellar-facilitator.git
 cd stellar-facilitator
@@ -87,7 +90,7 @@ Search the catalog:
 
 ```bash
 curl -fsS \
-  "http://localhost:3001/discovery/search?q=payment&network=stellar:testnet&limit=5" \
+  "http://localhost:3001/discovery/search?q=demo&network=stellar:testnet&limit=5" \
   | jq '{total, partialResults, results}'
 ```
 

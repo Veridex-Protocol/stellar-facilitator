@@ -131,8 +131,9 @@ curl -fsS \
 
 An existing HTTP listing is periodically revalidated. Matching live terms
 refresh it; missing, changed, or unsafe terms quarantine it by soft-dropping it
-from search. This hardening is implemented/tested, but migrations `005/006` and
-the periodic lifecycle lack a captured destructive-stack proof.
+from search. All six migrations now have a captured empty-volume application
+run; the periodic lifecycle is implemented/package-tested but still lacks a
+timed live stale-row drill.
 
 ## 6. Dynamic routes
 
