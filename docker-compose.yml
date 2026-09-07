@@ -225,6 +225,8 @@ services:
       - "${PLAYGROUND_HOST_PORT:-3004}:3004"
     environment:
       PLAYGROUND_PORT: 3004
+      PORT: 3004
+      HOSTNAME: 0.0.0.0
       # Reached from the visitor's browser, so these must be the URLs the
       # browser can resolve - not the compose service names.
       FACILITATOR_URL: ${PUBLIC_FACILITATOR_URL:-http://localhost:3002}

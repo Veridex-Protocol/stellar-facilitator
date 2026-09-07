@@ -1,8 +1,8 @@
 {
   "kind": "veridex-local-multiprocess-federation-proof",
-  "generatedAt": "2026-09-07T01:59:52.705Z",
+  "generatedAt": "2026-09-07T14:06:16.455Z",
   "network": "stellar:testnet",
-  "settlementTransaction": "a7f65fe111515479a3b5a5a96b962022489b0e40d9674345178d6564582a27e2",
+  "settlementTransaction": "98f055359c97905e5a7b8e63a56a29643125219e1faa423f04d4882d4d06de84",
   "processes": 3,
   "databases": [
     "veridex_federation_a",
@@ -19,7 +19,7 @@
       "unauthorized_signer",
       "stale"
     ],
-    "deterministicConflictDigest": "2b29da32cb4a59e3916afccc1319a74dfa69bd4e21fb1dff2d128b1cdb7f9a47",
+    "deterministicConflictDigest": "2dea4b40cbf4a787fbe84e4c064ab2ea7823e0c5e9ed0b8d901d9316c1c44a6e",
     "restartRetainedState": true,
     "revokeConverged": true,
     "restoreConverged": true
@@ -29,9 +29,9 @@
     "This does not prove independent operators, public reachability, or production federation SLOs."
   ],
   "peerIds": [
-    "12D3KooWEEEE64MSWWr36n4pSx3UGgeFbS5yjg8sj3gzAk4kkEUj",
-    "12D3KooWC45fqCSeA8YKJhx3tTJ9bvBdwo7RrN1SFoXfauZUwZyX",
-    "12D3KooWPe2u3tqMSeCwqUDZ4fDYktNDBLoGQRJ5CAiEU3CBWDkn"
+    "12D3KooWRguK4d64bdbgPo3DFuNgpksaX993anYhMFMvFLzbNAba",
+    "12D3KooWDxHQ3UckUGRinArBoZDbRa2jNQUVEWBAai9PpoxKJFce",
+    "12D3KooWFuTUc4PMJ4UH6Npj8NvPYTTVGZM5fXbBzNX5esYvq86R"
   ],
   "passed": true
 }

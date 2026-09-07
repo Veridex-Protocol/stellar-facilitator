@@ -49,8 +49,8 @@ export function GatewayPanel({ config, wallet, setWallet, setBalance }: GatewayP
     setError(null);
     setRun(null);
     try {
-      const health = await fetchWithTimeout(config.gatewayUrl + "/health", {}, 5_000, "Gateway health check");
-      if (!health.ok) throw new Error(`Gateway health check failed (${health.status})`);
+      const health = await callSeller(config.gatewayUrl + "/health");
+      if (health.status !== 200) throw new Error(`Gateway health check failed (${health.status})`);
       const response = await callSeller(config.gatewayResourceUrl);
       if (response.status !== 402) throw new Error(`Expected gateway HTTP 402, received ${response.status}`);
       const required = header(response.headers, "PAYMENT-REQUIRED");
