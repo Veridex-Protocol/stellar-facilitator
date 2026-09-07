@@ -76,9 +76,12 @@ export function GatewayPanel({ config, wallet, setWallet, setBalance }: GatewayP
       if (!activeWallet) {
         activeWallet = createWallet();
         setWallet(activeWallet);
-        await fundFromFriendbot(config.friendbotUrl, activeWallet.publicKey);
-        await waitForRpcVisibility(config.rpcUrl, activeWallet.publicKey);
       }
+      const currentBalance = await fetchNativeBalance(config.horizonUrl, activeWallet.publicKey);
+      if (Number(currentBalance) === 0) {
+        await fundFromFriendbot(config.friendbotUrl, activeWallet.publicKey);
+      }
+      await waitForRpcVisibility(config.rpcUrl, activeWallet.publicKey);
       const paymentPayload = await signPayload(activeWallet, config.network, challenge.terms, {
         resource: challenge.decoded.resource,
         extensions: challenge.decoded.extensions,

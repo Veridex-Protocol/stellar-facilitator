@@ -30,13 +30,13 @@ GET existing /demo-api/hello
 | Network | `stellar:testnet` |
 | Asset | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | Authorized/settled amount | `100000` atomic units (`0.01 XLM`) |
-| Payer | `GCKNH2XOVQ3T6IHJRPFN4M6JSNIOMRXZZD2TAMIOOWQL6MYAW52D6QRJ` |
+| Payer | `GDBH75ZCO3NCHWDAX7EH4WRNDJMM4WGSLC5KJBVHZWRKXXBXQX25C4HB` |
 | PayTo | `GAECPJ5QZEUX7PN3MQA5WEHTTYD6ZSC3UHADG6LEHWW3X3D4FXUAAAR5` |
-| Transaction | `060730898ee9a579d3a22ebbbbe59a3320f315828bf017b2522eec3cb9900e51` |
-| Ledger | `4553830` |
+| Transaction | `56fe0647aa9f6211f1e1720873e9f5e54d46ffff638b195175912f67f7574c05` |
+| Ledger | `4554582` |
 | Horizon success | `true` |
 | Horizon fee charged | `20644` stroops |
-| End-to-end Playground time | `30.9s` including funding/RPC/Horizon/Bazaar waits |
+| End-to-end Playground time | `36.4s` including funding/RPC/Horizon/Bazaar waits |
 
 Horizon independently returned the same transaction hash, ledger, success
 state, and fee. Bazaar returned one HTTP catalog row with service name
@@ -45,7 +45,8 @@ output example. Facilitator outbox metrics returned pending `0` after delivery.
 
 The provider outcome was signed by the seller/payee, bound to the gateway
 resource and response digest, and reported `usable: true`,
-`providerAtFault: false`, `reasonCode: "ok"`.
+`providerAtFault: false`, `reasonCode: "ok"`. Bazaar stored it as `in_band`
+evidence and attached the same settlement transaction hash.
 
 ## Limits
 
