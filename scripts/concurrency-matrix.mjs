@@ -22,7 +22,13 @@ for (const concurrency of levels) {
   process.stderr.write(`Running testnet concurrency ${concurrency}\n`);
   const child = spawnSync(
     process.execPath,
-    [new URL("./concurrency-probe.mjs", import.meta.url).pathname, "--n", String(concurrency), "--json"],
+    [
+      new URL("./concurrency-probe.mjs", import.meta.url).pathname,
+      "--n",
+      String(concurrency),
+      "--json",
+      "--allow-capacity-rejection",
+    ],
     { cwd: process.cwd(), encoding: "utf8", env: process.env },
   );
   if (child.stderr) process.stderr.write(child.stderr);
@@ -40,6 +46,7 @@ const report = {
   levels,
   claimsProductionThroughput: false,
   runs,
+  safetyPassed: !failed,
 };
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 process.exitCode = failed ? 1 : 0;

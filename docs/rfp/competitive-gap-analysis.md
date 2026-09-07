@@ -1,4 +1,4 @@
-# Competitive Hardening Gap Analysis
+# Final Hardening Gap Analysis
 
 Date: 2026-09-06
 
@@ -9,7 +9,7 @@ executable behavior from architecture text and prior testnet evidence.
 Classification vocabulary: `ALREADY IMPLEMENTED`, `IMPLEMENTED BUT UNPROVEN`,
 `IMPLEMENTED DIFFERENTLY`, `MISSING`, `NOT WORTH ADDING`.
 
-| Capability | Rail402-style pattern | Veridex current design | Gap | Recommendation |
+| Capability | Review criterion | Veridex current design | Gap | Recommendation |
 |---|---|---|---|---|
 | Catalog provenance | Payment-backed publication | `CatalogIngestionWorker` confirms the settlement on Horizon/Soroban, prevents `payTo` replacement, and accepts signed owner/delegate deltas | `ALREADY IMPLEMENTED` | Preserve it as the first admission gate; live terms complement rather than replace settlement proof. |
 | Live 402 term validation | Fetch the resource before publication | Ingestion validates submitted metadata, owner authority, and settlement effects, but never fetches the resource challenge | `MISSING`: submitted `resource`, `network`, `scheme`, `asset`, `payTo`, and `amount` are not compared with live terms | Add a bounded, SSRF-safe HTTP challenge fetch in the asynchronous ingestion worker. Reject mismatches with stable reasons. |
@@ -42,7 +42,7 @@ Classification vocabulary: `ALREADY IMPLEMENTED`, `IMPLEMENTED BUT UNPROVEN`,
 | Clean-room acceptance | Destroy state, bootstrap, exact, upto, discovery, MCP, restart | A clean 2026-09-05 run is documented with 36/36 and fresh exact/upto hashes, persistence, MCP, and external package evidence | `ALREADY IMPLEMENTED` for the prior baseline | Re-run only after implementation and preserve failures as environment/code/external classifications. |
 | Full validation matrix | JS, Rust, Go, Python, search, load, federation, security, package, Compose, shell | JS aggregate tests/typecheck/build and Rust tests are recorded; Go/Python sibling surfaces and newer requested harnesses are not represented in one run | `IMPLEMENTED BUT UNPROVEN` | Run what exists locally, list skipped/unavailable environments honestly, and avoid treating external service failures as code passes. |
 | Full blockchain explorer | Custom transaction explorer | Playground links to public Stellar proof and exposes raw wire evidence | `NOT WORTH ADDING` | Continue linking Horizon/stellar.expert; a custom explorer adds scope without strengthening proof. |
-| Search rewrite for embeddings | Replace current retrieval with competitor stack | Current bounded hybrid/RRF architecture is deliberate and measurable | `NOT WORTH ADDING` | Improve the benchmark and only change ranking when regression evidence supports it. |
+| Search rewrite for embeddings | Replace the current retrieval architecture without evidence | Current bounded hybrid/RRF architecture is deliberate and measurable | `NOT WORTH ADDING` | Improve the benchmark and only change ranking when regression evidence supports it. |
 | Dynamic channel creation under load | Scale pool automatically | Durable operator-provisioned signer leases deliberately bound exposure | `NOT WORTH ADDING` | Keep static configured channels and explicit capacity errors. |
 | Grafana dashboards | Full visualization stack | No Prometheus exporter yet | `NOT WORTH ADDING` in this phase | Export correct metrics first; dashboards are deployment-specific follow-up. |
 | Managed `upto` fees | Add platform fee mechanics | No demonstrated RFP requirement; `upto` is testnet-only and unaudited | `NOT WORTH ADDING` | Keep the settlement contract minimal until an approved requirement exists. |

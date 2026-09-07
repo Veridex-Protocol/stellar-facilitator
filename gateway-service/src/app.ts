@@ -235,6 +235,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
       resourceUrl,
       requestId,
       status: "challenged",
+      providerPolicy: policyDecision,
     }));
     return withProviderPolicy(encodedPaymentRequired(paymentRequired), policyDecision);
   }
@@ -275,6 +276,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
       requestId,
       status: "rejected",
       failureCode,
+      providerPolicy: policyDecision,
     }));
     return withProviderPolicy(encodedPaymentRequired(await resourceServer.createPaymentRequiredResponse(
       requirements,
@@ -310,6 +312,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
           status: "rejected",
           payer: verifyResult.payer,
           failureCode: verifyResult.invalidReason,
+          providerPolicy: policyDecision,
         }));
         return withProviderPolicy(encodedPaymentRequired(await resourceServer.createPaymentRequiredResponse(
           requirements,
@@ -329,6 +332,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
         requestId,
         status: "verified",
         payer: verifyResult.payer,
+        providerPolicy: policyDecision,
       }));
 
       const settlementStartedAt = Date.now();
@@ -350,6 +354,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
           status: "failed",
           payer: verifyResult.payer,
           failureCode: settleResult.errorReason,
+          providerPolicy: policyDecision,
         }));
         return context.json({
           code: "settlement_failed",
@@ -370,6 +375,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
         transactionHash: settleResult.transaction,
         settlementLatencyMs: Date.now() - settlementStartedAt,
         settledAt: new Date().toISOString(),
+        providerPolicy: policyDecision,
       });
       await eventStore.appendPaymentEvent(settlement);
     } catch (error) {
@@ -383,6 +389,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
         requestId,
         status: "failed",
         failureCode: "facilitator_unavailable",
+        providerPolicy: policyDecision,
       }));
       return context.json({
         code: "facilitator_unavailable",
@@ -607,6 +614,7 @@ function paymentEvent(input: {
   settlementLatencyMs?: number;
   settledAt?: string;
   failureCode?: string;
+  providerPolicy?: import("./types.js").GatewayProviderPolicyDecision;
 }): VeridexPaymentEvent {
   const amount = input.route.price ?? input.config.price;
   return {
@@ -634,6 +642,7 @@ function paymentEvent(input: {
     createdAt: new Date().toISOString(),
     settledAt: input.settledAt,
     failureCode: input.failureCode,
+    providerPolicy: input.providerPolicy,
   };
 }
 

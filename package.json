@@ -28,6 +28,7 @@
     "licenses:check": "node scripts/check-licenses.mjs",
     "policy:proof": "node scripts/policy-budget-proof.mjs --write docs/rfp/policy-budget-proof-2026-09-06.json",
     "probe": "node scripts/concurrency-probe.mjs",
+    "probe:test": "node --test scripts/concurrency-assessment.test.mjs",
     "probe:matrix": "node scripts/concurrency-matrix.mjs",
     "federation:proof": "sh scripts/federation-process-proof.sh",
     "upto:build": "./scripts/build-upto.sh",

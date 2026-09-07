@@ -55,7 +55,7 @@ fi
 
 running_services=$($COMPOSE ps --services --status running 2>/dev/null || true)
 stack_running=yes
-for service in bazaar facilitator demo-server; do
+for service in bazaar facilitator demo-server gateway playground; do
   if ! printf '%s\n' "$running_services" | grep -qx "$service"; then
     stack_running=no
     break
@@ -67,6 +67,8 @@ requested_bazaar_p2p_host_port="${BAZAAR_P2P_HOST_PORT:-}"
 requested_bazaar_p2p_ws_host_port="${BAZAAR_P2P_WS_HOST_PORT:-}"
 requested_facilitator_host_port="${FACILITATOR_HOST_PORT:-}"
 requested_demo_server_host_port="${DEMO_SERVER_HOST_PORT:-}"
+requested_gateway_host_port="${GATEWAY_HOST_PORT:-}"
+requested_playground_host_port="${PLAYGROUND_HOST_PORT:-}"
 
 # ── 1. accounts ──────────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
@@ -88,17 +90,22 @@ BAZAAR_P2P_HOST_PORT="${requested_bazaar_p2p_host_port:-${BAZAAR_P2P_HOST_PORT:-
 BAZAAR_P2P_WS_HOST_PORT="${requested_bazaar_p2p_ws_host_port:-${BAZAAR_P2P_WS_HOST_PORT:-4002}}"
 FACILITATOR_HOST_PORT="${requested_facilitator_host_port:-${FACILITATOR_HOST_PORT:-3002}}"
 DEMO_SERVER_HOST_PORT="${requested_demo_server_host_port:-${DEMO_SERVER_HOST_PORT:-3003}}"
-export BAZAAR_HOST_PORT BAZAAR_P2P_HOST_PORT BAZAAR_P2P_WS_HOST_PORT FACILITATOR_HOST_PORT DEMO_SERVER_HOST_PORT
+GATEWAY_HOST_PORT="${requested_gateway_host_port:-${GATEWAY_HOST_PORT:-3005}}"
+PLAYGROUND_HOST_PORT="${requested_playground_host_port:-${PLAYGROUND_HOST_PORT:-3004}}"
+export BAZAAR_HOST_PORT BAZAAR_P2P_HOST_PORT BAZAAR_P2P_WS_HOST_PORT FACILITATOR_HOST_PORT DEMO_SERVER_HOST_PORT GATEWAY_HOST_PORT PLAYGROUND_HOST_PORT
 export BAZAAR_URL="http://localhost:${BAZAAR_HOST_PORT}"
 export FACILITATOR_URL="http://localhost:${FACILITATOR_HOST_PORT}"
 export DEMO_SERVER_URL="http://localhost:${DEMO_SERVER_HOST_PORT}"
+export GATEWAY_URL="http://localhost:${GATEWAY_HOST_PORT}"
+export PLAYGROUND_URL="http://localhost:${PLAYGROUND_HOST_PORT}"
 export BASE_URL="$FACILITATOR_URL"
 export BAZAAR_BASE_URL="$BAZAAR_URL"
 export PUBLIC_BAZAAR_URL="$BAZAAR_URL"
 export PUBLIC_FACILITATOR_URL="$FACILITATOR_URL"
 export PUBLIC_DEMO_SERVER_URL="$DEMO_SERVER_URL"
+export PUBLIC_GATEWAY_URL="$GATEWAY_URL"
 
-for port in "$BAZAAR_HOST_PORT" "$BAZAAR_P2P_HOST_PORT" "$BAZAAR_P2P_WS_HOST_PORT" "$FACILITATOR_HOST_PORT" "$DEMO_SERVER_HOST_PORT"; do
+for port in "$BAZAAR_HOST_PORT" "$BAZAAR_P2P_HOST_PORT" "$BAZAAR_P2P_WS_HOST_PORT" "$FACILITATOR_HOST_PORT" "$DEMO_SERVER_HOST_PORT" "$GATEWAY_HOST_PORT" "$PLAYGROUND_HOST_PORT"; do
   "$LSOF" -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || continue
   if [ "$stack_running" = yes ]; then
     echo "     port $port already served by this Compose stack - 'docker compose up' will reuse or replace it"
@@ -110,8 +117,8 @@ for port in "$BAZAAR_HOST_PORT" "$BAZAAR_P2P_HOST_PORT" "$BAZAAR_P2P_WS_HOST_POR
 done
 
 # ── 2. stack ─────────────────────────────────────────────────────────────────
-say "2/4  Starting postgres + bazaar + facilitator + demo resource server"
-$COMPOSE up --build -d postgres bazaar facilitator demo-server
+say "2/4  Starting the facilitator, Bazaar, native seller, gateway, and Playground"
+$COMPOSE up --build -d postgres bazaar facilitator demo-server gateway playground
 
 # ── 3. wait ──────────────────────────────────────────────────────────────────
 say "3/4  Waiting for every service to report healthy"
@@ -119,11 +126,15 @@ for i in $(seq 1 90); do
   bazaar_ok=$(curl -fsS "${BAZAAR_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
   facilitator_ok=$(curl -fsS "${FACILITATOR_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
   demo_ok=$(curl -fsS "${DEMO_SERVER_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
+  gateway_ok=$(curl -fsS "${GATEWAY_URL}/health" >/dev/null 2>&1 && echo yes || echo no)
+  playground_ok=$(curl -fsS "${PLAYGROUND_URL}/api/config" >/dev/null 2>&1 && echo yes || echo no)
 
-  if [ "$bazaar_ok" = yes ] && [ "$facilitator_ok" = yes ] && [ "$demo_ok" = yes ]; then
+  if [ "$bazaar_ok" = yes ] && [ "$facilitator_ok" = yes ] && [ "$demo_ok" = yes ] && [ "$gateway_ok" = yes ] && [ "$playground_ok" = yes ]; then
     echo "     bazaar       ${BAZAAR_URL}  ready"
     echo "     facilitator  ${FACILITATOR_URL}  ready"
     echo "     demo server  ${DEMO_SERVER_URL}  ready"
+    echo "     gateway      ${GATEWAY_URL}  ready"
+    echo "     playground   ${PLAYGROUND_URL}  ready"
     break
   fi
   if [ "$i" = 90 ]; then
