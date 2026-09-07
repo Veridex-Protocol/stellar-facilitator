@@ -1,0 +1,28 @@
+{
+  "invalid_request": { "reason": "The request is missing required fields or contains invalid values.", "retryable": false, "category": "validation" },
+  "not_found": { "reason": "The requested resource or endpoint was not found.", "retryable": false, "category": "validation" },
+  "unauthorized": { "reason": "Valid authorization is required for this operation.", "retryable": false, "category": "validation" },
+  "rate_limited": { "reason": "The request rate exceeded the configured limit.", "retryable": true, "category": "network" },
+  "internal_error": { "reason": "The service could not complete the operation because of an internal error.", "retryable": true, "category": "network" },
+  "resource_unavailable": { "reason": "The requested resource is temporarily unavailable.", "retryable": true, "category": "provider" },
+  "facilitator_unavailable": { "reason": "The payment facilitator is temporarily unavailable.", "retryable": true, "category": "network" },
+  "payment_rejected": { "reason": "The payment authorization or settlement was rejected.", "retryable": false, "category": "payment" },
+  "payment_timeout": { "reason": "The payment operation did not complete before its deadline.", "retryable": true, "category": "network" },
+  "unsupported_payment_scheme": { "reason": "The requested payment scheme is not supported.", "retryable": false, "category": "payment" },
+  "catalog_ingestion_failed": { "reason": "The catalog could not ingest the resource declaration.", "retryable": true, "category": "discovery" },
+  "invalid_catalog_delta": { "reason": "The signed catalog update is invalid or unauthorized.", "retryable": false, "category": "discovery" },
+  "provider_quality_unavailable": { "reason": "Provider-quality evidence is temporarily unavailable.", "retryable": true, "category": "provider" },
+  "invalid_provider_observation": { "reason": "The provider observation is invalid or unauthorized.", "retryable": false, "category": "provider" },
+  "invalid_provider_aggregate": { "reason": "The provider aggregate is invalid or unauthorized.", "retryable": false, "category": "provider" },
+  "mcp_signing_required": { "reason": "The client wallet must sign the bounded payment challenge.", "retryable": false, "category": "payment" },
+  "mcp_tool_failed": { "reason": "The MCP tool could not complete the requested operation.", "retryable": false, "category": "provider" },
+  "rpc_unavailable": { "reason": "No configured RPC provider could complete the operation.", "retryable": true, "category": "network" },
+  "rpc_disagreement": { "reason": "Independent RPC providers disagree on the final transaction state.", "retryable": false, "category": "network" }
+  ,"invalid_gateway_config": { "reason": "The gateway configuration is invalid or unsafe.", "retryable": false, "category": "validation" }
+  ,"upstream_unreachable": { "reason": "The configured gateway upstream could not be reached.", "retryable": true, "category": "provider" }
+  ,"upstream_timeout": { "reason": "The configured gateway upstream exceeded its response deadline.", "retryable": true, "category": "provider" }
+  ,"ssrf_blocked": { "reason": "The gateway blocked an unsafe upstream destination.", "retryable": false, "category": "validation" }
+  ,"body_limit_exceeded": { "reason": "The gateway request or response exceeded its configured size limit.", "retryable": false, "category": "validation" }
+  ,"gateway_disabled": { "reason": "The requested gateway is paused, disabled, or expired.", "retryable": false, "category": "provider" }
+  ,"settlement_failed": { "reason": "The gateway payment could not be settled by the facilitator.", "retryable": false, "category": "payment" }
+}

@@ -10,8 +10,13 @@ For the canonical beginner buyer flow, use the TypeScript `@veridex/stellar` fac
 
 ## Installation
 
+Registry publication is not asserted by this repository. Install the local
+package for development:
+
 ```bash
-pip install veridex-sdk
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ./sdk-python
 ```
 
 ## Discovery

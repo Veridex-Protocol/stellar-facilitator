@@ -56,7 +56,10 @@ facilitator ready ... schemes: ["exact","upto"]
 
 ## Deploy your own instance
 
-Nothing requires you to use ours, and no contract id ships as a default. The contract is stateless and has no privileged party, so an operator's own instance behaves identically:
+Nothing requires you to use ours, and no contract id ships as a default. The
+contract has no privileged party or mutable configuration; its only state is the
+bounded replay guard described above. An operator can deploy the same frozen
+WASM independently:
 
 ```bash
 npm run upto:build      # reproducible wasm

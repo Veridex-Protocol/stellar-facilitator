@@ -33,7 +33,8 @@ You do not need to check these. The process fails to start instead.
 From a clean clone, no secrets, about a minute:
 
 ```bash
-git clone https://github.com/Veridex-Protocol/stellar.git && cd stellar
+git clone https://github.com/Veridex-Protocol/stellar-facilitator.git
+cd stellar-facilitator
 npm run demo
 ```
 
@@ -43,9 +44,10 @@ x402 client from public npm paying for a real resource on testnet, with the
 settlement re-read from Horizon afterwards. The run writes
 `conformance-report.json`, which names the settled transaction hash.
 
-The same thing runs in CI on every push and pull request, with accounts created
-during the run. A fork gets the same green run. That is the property that makes
-a published settlement figure checkable rather than claimed.
+The repository defines the same Friendbot-funded conformance job in CI. Recorded
+hosted runs previously failed before runner execution, so current acceptance
+evidence comes from the reproducible local run artifacts rather than a hosted-CI
+success claim.
 
 ## Deploying it somewhere real
 
@@ -89,15 +91,12 @@ Everything above runs locally. To put it on a host:
 
 - [ ] Deploy PostgreSQL 16 with pgvector; apply
       `bazaar-service/src/db/schema.sql` to a fresh database.
-- [ ] For an existing database, apply both migrations in
-      `bazaar-service/src/db/migrations/` in order. `002_settlement_liveness.sql`
-      adds the settlement-derived liveness signal and seeds it for entries that
-      already have a settlement, so the next prune does not take them offline.
-- [ ] For an existing database, apply
-      `bazaar-service/src/db/migrations/001_settlement_binding.sql`. It adds the
-      settlement binding and **soft-drops every pre-existing entry**, because
-      those were listed on a caller's assertion that a payment happened rather
-      than on a confirmed one. Review them before re-listing anything.
+- [ ] Apply all six ordered files in `bazaar-service/src/db/migrations/` through
+      the idempotent migration runner. `001` adds settlement binding, `002`
+      settlement liveness, `003` provider quality, `004` catalog delta state,
+      `005` live revalidation, and `006` observation source/disagreement state.
+      The original destructive clean-room artifact covered `001`-`004`; capture
+      a fresh migration/revalidation drill for `005`/`006`.
 - [ ] `HORIZON_URL` - the Bazaar confirms settlements itself and will list
       nothing if it cannot reach Horizon.
 - [ ] `BAZAAR_BASE_URL` for its capability descriptor.
@@ -144,11 +143,12 @@ Testnet first, then mainnet, with separate ids for each:
 - [ ] Set `UPTO_ESCROW_CONTRACT_ID_TESTNET`. Restart; confirm `/supported` now
       carries the `upto` kind with that id, and that the boot log says
       `upto contract confirmed at C...`.
-- [ ] Execute cap, zero, partial-use, expiry, replay, and response-digest
-      transactions through the facilitator path on testnet.
-- [ ] Complete facilitator and client integration, plus an independent security
-      review.
-- [ ] Only then deploy to mainnet and set `UPTO_ESCROW_CONTRACT_ID_PUBNET`.
+- [x] Execute cap, zero, partial-use, replay, and response-digest transactions
+      through the facilitator/custom HTTP path on testnet.
+- [x] Complete Veridex facilitator, buyer, and reference seller integration.
+- [ ] Complete an independent security review.
+- [ ] Only after explicit approval deploy to pubnet and set
+      `UPTO_ESCROW_CONTRACT_ID_PUBNET`.
       A testnet id is never inherited onto pubnet - the gate reads a
       network-specific variable first, precisely so a mainnet deployment cannot
       quietly advertise a testnet contract.
@@ -162,8 +162,8 @@ Testnet first, then mainnet, with separate ids for each:
   choose the description attached to it. Binding the URL needs the resource
   server to sign the pairing. Not built.
 - **The vector leg of Bazaar ranking is feature hashing, not a learned model.**
-  It behaves as a second lexical signal alongside BM25. Nothing here is semantic
-  retrieval yet.
+      It behaves as a second lexical signal fused with PostgreSQL `ts_rank_cd`.
+      Nothing here is semantic retrieval.
 - **Multi-page cursor traversal is unexercised end to end.** The cursor logic
   has unit coverage and a forged cursor is rejected at the wire, but the demo
   catalog holds one resource, so no conformance run has actually walked a
@@ -177,12 +177,14 @@ Testnet first, then mainnet, with separate ids for each:
   queueing without limit. An explicit "no funds moved" is more useful to an
   agent than a request that hangs, but it does mean sizing the pool is an
   operator responsibility the service cannot paper over.
-- **`stellar-sdk` is pinned at 13.3.0** while 16.x is current. The upgrade is
-  deliberate follow-up work, not an oversight.
+- **Active service/SDK packages use Stellar SDK 16.2.0.** The root bootstrap
+      package still has its own dependency manifest; use package-local lockfiles as
+      the runtime authority.
 
 ## Launch gate
 
-Go live when CI is green including the conformance job, the dependency audit
-reports no high or critical findings, the harness settles against the deployed
-stack, catalog ingestion is visible in search, a forged settlement is rejected,
-and the alerts above have been fired at least once on purpose.
+For a hosted testnet deployment, require green CI/conformance, clean dependency
+audits, a ledger-confirmed payment, visible asynchronous catalog ingestion, and
+forged-settlement rejection. Pubnet/production additionally require independent
+security review, HA/restore evidence, external monitoring/alerts, and explicit
+approval; none is claimed by this runbook.

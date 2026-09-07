@@ -1,6 +1,12 @@
 # Veridex x402 Facilitator with P2P Federated Bazaar Discovery & Telemetry-Ranked Search on Stellar
 ## Proposal & Comprehensive Architecture Specification (v2.0.0)
 
+> **Historical originating proposal.** This document preserves the v2 RFP
+> design record. Its BM25 labels, roadmap defaults, federation diagrams, and
+> embedded contract draft are not current runtime/API claims. Use
+> [Architecture 3.1](../architecture.md), [standards alignment](../standards-alignment.md),
+> and the current OpenAPI/guides for implementation truth.
+
 **Document Version:** 2.0.0  
 **Status:** Implemented incrementally; production-readiness claims remain gated by the evidence matrix below
 **Target Networks:** `stellar:testnet`, `stellar:pubnet`  

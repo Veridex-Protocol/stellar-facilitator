@@ -1,5 +1,11 @@
 # Veridex upto_escrow Soroban Contract
 
+> **Obsolete historical prototype. Do not deploy or integrate.** This escrow
+> design is not the advertised Veridex `upto` scheme. The active non-retained-
+> custody implementation is `contracts/upto-settlement`; see
+> [its README](../upto-settlement/README.md) and the
+> [current scheme specification](../../docs/specifications/scheme_upto_stellar.md).
+
 **License:** Apache-2.0
 
 Metered billing escrow smart contract for x402 resource access on Stellar.

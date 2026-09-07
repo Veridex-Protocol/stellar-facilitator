@@ -1,114 +1,104 @@
-# Veridex MCP Discovery Server
+# Veridex MCP discovery and payment service
 
-**License:** Apache-2.0
+Custom stdio MCP service for Veridex Bazaar discovery and keyless exact HTTP
+payment orchestration. It uses `@modelcontextprotocol/sdk`; it is not the
+upstream `@x402/mcp` payment transport.
 
-Model Context Protocol (MCP) server that exposes Veridex Bazaar discovery and x402 payment tools to compatible clients.
-
-## Overview
-
-This MCP server enables compatible clients to:
-
-1. **Discover resources** - Search Bazaar catalog with lexical-hybrid/keyword queries
-2. **Execute payments** - Pay for resource access via x402 Stellar protocol
-
-## Tools
+## Active tools
 
 ### `discover_resources`
 
-Search Veridex Bazaar catalog using BM25 plus deterministic feature-hash lexical retrieval.
+Input:
 
-**Input:**
 ```json
 {
-  "query": "weather forecast API",
-  "network": "stellar:pubnet",
-  "limit": 20
+  "query": "payment API",
+  "network": "stellar:testnet",
+  "limit": 5
 }
 ```
 
-**Output:**
+The tool queries Veridex `/discovery/search`. Output is JSON text containing
+`ok`, `total`, and `resources`. Payment identity (`resourceUrl`, network,
+scheme, `payTo`) is separate from seller-controlled values, which are nested
+under:
+
+```json
+{
+  "sellerData": {
+    "trust": "untrusted_seller_data",
+    "serviceName": "...",
+    "description": "...",
+    "tags": []
+  }
+}
 ```
-Found 15 resources:
-
-- https://api.weather.io/forecast
-  Service: WeatherIO
-  Description: Real-time weather forecasts with 7-day predictions
-  Network: stellar:pubnet
-  Score: 0.892
-  Uptime: 99.8%
-  Avg Latency: 145ms
-  Reliability: 98.5%
-
-...
-```
-
----
 
 ### `pay_resource`
 
-Execute x402 Stellar payment to access a resource.
+This is a two-phase, exact-only flow.
 
-**Input:**
+First call:
+
 ```json
 {
-  "resourceUrl": "https://api.weather.io/forecast",
-  "amountStroops": "100000",
-  "toolName": "get_forecast"
+  "resourceUrl": "http://localhost:3003/paid-resource",
+  "method": "GET",
+  "maxAmount": "100000"
 }
 ```
 
-**Output:**
+The service fetches the HTTP 402, filters exact `stellar:testnet` requirements
+to the atomic-unit ceiling, and returns `action: "sign_payment"` with
+`signingLocation: "client_wallet"`. The MCP process performs no signing and has
+no payer private key.
+
+The client wallet creates the x402 v2 `PaymentPayload` and calls again:
+
+```json
+{
+  "resourceUrl": "http://localhost:3003/paid-resource",
+  "method": "GET",
+  "maxAmount": "100000",
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {},
+    "payload": {}
+  }
+}
 ```
-Payment successful.
 
-Resource: https://api.weather.io/forecast
-Amount: 100000 stroops (0.0100000 XLM)
-Transaction: abc123...
-Ledger: 12345678
+The service re-fetches the 402 and requires the signed payload to match resource,
+version, network, scheme, asset, amount, `payTo`, and timeout before forwarding
+`PAYMENT-SIGNATURE`. Changed terms are rejected.
 
-You can now access the resource with this authorization.
-```
+The custom Veridex Stellar `upto` flow is not exposed by this MCP tool.
 
----
+Gateway-backed exact resources require no MCP-specific behavior. Once Bazaar
+indexes one, `discover_resources` can select it and `pay_resource` uses the same
+live 402 re-match and client-wallet signature path as a native seller.
 
 ## Configuration
 
-Set environment variables:
-
-```bash
-# Required
+```text
 BAZAAR_URL=http://localhost:3001
 FACILITATOR_URL=http://localhost:3002
 STELLAR_NETWORK=testnet
-STELLAR_CLIENT_SECRET_KEY=S...
+MCP_MAX_SPEND_AMOUNT_STROOPS=10000000
 ```
 
-## Usage
-
-### 1. Install
-
-```bash
-npm install
-npm run build
-```
-
-### 2. Configure an MCP client
-
-Add the server command to the client's MCP configuration. For the repository's
-local Docker seller, set `MCP_ALLOW_LOCAL_URLS=true`; leave it unset when the
-server may be asked to fetch arbitrary external URLs.
+For an MCP client:
 
 ```json
 {
   "mcpServers": {
     "veridex": {
       "command": "node",
-      "args": ["/path/to/mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/mcp-server/dist/index.js"],
       "env": {
         "BAZAAR_URL": "http://localhost:3001",
         "FACILITATOR_URL": "http://localhost:3002",
         "STELLAR_NETWORK": "testnet",
-        "STELLAR_CLIENT_SECRET_KEY": "S...",
         "MCP_ALLOW_LOCAL_URLS": "true"
       }
     }
@@ -116,66 +106,41 @@ server may be asked to fetch arbitrary external URLs.
 }
 ```
 
-### 3. Restart the client
+Use `MCP_ALLOW_LOCAL_URLS=true` only for the repository's local Docker service.
+Leave it unset when tool callers can supply arbitrary URLs.
 
-The server exposes two tools after the client reconnects: `discover_resources` and `pay_resource`.
-
-## Example Tool Flow
-
-1. Call `discover_resources` with `{"query":"weather API"}`.
-2. Select a resource from the ranked results.
-3. Call `pay_resource` with the resource URL and amount.
-4. Use the returned authorization to access the resource.
-
-## Development
+## Run
 
 ```bash
-# Run in development mode
-npm run dev
-
-# Build TypeScript
-npm run build
-
-# Type check
-npm run typecheck
+npm --prefix mcp-server ci
+npm --prefix mcp-server run build
+MCP_ALLOW_LOCAL_URLS=true docker compose --profile mcp run --rm mcp-server
 ```
 
-## Security
+## Security boundary
 
-- Client secret key is required for payment operations
-- All transactions are signed with Stellar signatures
-- MCP server runs locally with stdio transport (no network exposure)
+- Client-side signing; no payer secret in MCP configuration.
+- Fresh challenge re-match before submission.
+- Atomic-unit spend ceiling.
+- Seller descriptions and paid bodies remain untrusted data.
+- Local/private/metadata targets are blocked by default.
+- Current URL validation does not provide an absolute guarantee against DNS
+  rebinding or redirects.
+- Prompt injection is not solved by labeling content as untrusted.
 
-## MCP Client Integration
+Errors use Veridex wrapper metadata. A first-phase signing request uses
+`mcp_signing_required`; payment/protocol failures may be wrapped as
+`payment_rejected`. Consumers should not assume raw Stellar reason codes are the
+top-level MCP code.
 
-```typescript
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+## Upstream MCP distinction
 
-const transport = new StdioClientTransport({
-  command: 'node',
-  args: ['/path/to/mcp-server/dist/index.js'],
-  env: {
-    BAZAAR_URL: 'http://localhost:3001',
-    FACILITATOR_URL: 'http://localhost:3002',
-    STELLAR_NETWORK: 'testnet',
-    STELLAR_CLIENT_SECRET_KEY: 'S...',
-  },
-});
+Current upstream `@x402/mcp` transports payment in
+`_meta["x402/payment"]` and settlement in
+`_meta["x402/payment-response"]`. This service instead exposes custom
+`discover_resources` and `pay_resource` orchestration tools over stdio. No wire
+interoperability claim is made without a dedicated test.
 
-const client = new Client({ name: 'veridex-client', version: '1.0.0' }, { capabilities: {} });
-await client.connect(transport);
-
-// Call tool
-const result = await client.request({
-  method: 'tools/call',
-  params: {
-    name: 'discover_resources',
-    arguments: { query: 'weather API' },
-  },
-});
-```
-
-## License
-
-Apache-2.0
+See [the agent guide](../docs/guide/agent.md),
+[standards alignment](../docs/standards-alignment.md), and
+[errors](../docs/errors.md).

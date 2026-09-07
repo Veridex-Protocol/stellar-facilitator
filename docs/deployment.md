@@ -1,591 +1,244 @@
-# Veridex x402 Stellar Facilitator v2.0 - Deployment Guide
+# Deployment and operations
 
-**License:** Apache-2.0
+This guide documents the current self-hosted testnet deployment. It is not a
+pubnet or production deployment recipe. Production HA, TLS, backups, external
+monitoring, alerts, and independent security review remain operator release
+gates.
 
-Complete deployment guide for production and development environments.
+## Current tested deployment
 
-## Table of Contents
+Requirements:
 
-1. [Prerequisites](#prerequisites)
-2. [Quick Start (Docker Compose)](#quick-start-docker-compose)
-3. [Manual Installation](#manual-installation)
-4. [Production Deployment](#production-deployment)
-5. [Testing](#testing)
-6. [Monitoring](#monitoring)
-7. [Troubleshooting](#troubleshooting)
-
-## Prerequisites
-
-### Required
-
-- **Node.js:** 22.x or higher
-- **PostgreSQL:** 16.x with pgvector extension
-- **Docker & Docker Compose:** Latest stable (for containerized deployment)
-- **Stellar Account:** Funded testnet/pubnet account with 100+ XLM
-
-### Optional
-
-- **Rust & Cargo:** For Soroban smart contract compilation
-- **Soroban CLI:** For contract deployment
-
-### Generate Stellar Account
-
-**Testnet:**
-```bash
-# Using Stellar Laboratory
-https://laboratory.stellar.org/#account-creator?network=test
-
-# Or using Stellar CLI
-stellar keys generate --network testnet --name facilitator
-stellar account fund facilitator --network testnet
-```
-
-**Pubnet:**
-```bash
-# Purchase XLM from an exchange and create account
-stellar keys generate --network pubnet --name facilitator
-# Transfer XLM to the generated address
-```
-
-## Quick Start (Docker Compose)
-
-### 1. Clone Repository
+- Node.js 22+
+- Docker with Compose
+- outbound access to Stellar testnet Horizon, Soroban RPC, Friendbot, and npm
 
 ```bash
-git clone https://github.com/veridex/veridex
-cd veridex/packages/stellar-facilitator
+git clone https://github.com/Veridex-Protocol/stellar-facilitator.git
+cd stellar-facilitator
+npm run demo
 ```
 
-### 2. Configure Environment
+For clean-state and port-override details, use the
+[testnet quickstart](quickstart.md).
+
+The default Compose deployment starts:
+
+| Service | Host URL/port | State |
+|---|---|---|
+| PostgreSQL + pgvector | Internal only | Named volume |
+| Bazaar | `http://localhost:3001` | PostgreSQL catalog; process-local P2P state |
+| Facilitator | `http://localhost:3002` | Process-local signer/quarantine/metrics; durable named outbox volume |
+| Reference seller | `http://localhost:3003` | Stateless reference route |
+| Gateway | `http://localhost:3005` | Static route config; JSONL payment/provider events in named volume |
+| Playground | `http://localhost:3004` | Browser-local testnet signer and real gateway/native flows |
+
+## Installation and bootstrap
+
+The explicit sequence behind `npm run demo` is:
 
 ```bash
-# Copy environment template
-cp .env.example .env
-
-# Edit configuration
-nano .env
+npm run install:all
+npm run setup
+docker compose up --build -d postgres bazaar facilitator demo-server gateway playground
+npm run conformance
 ```
 
-Required configuration:
-```bash
-FACILITATOR_PUBLIC_KEY=G...  # Your Stellar public key
-FACILITATOR_SECRET_KEY=S...  # Your Stellar secret key
-STELLAR_NETWORK=testnet      # or pubnet for production
-```
-
-### 3. Start Services
+`npm run setup` creates Friendbot-funded testnet accounts and writes `.env` with
+mode `0600`. Recreate accounts after a testnet reset:
 
 ```bash
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Check service health
-curl http://localhost:3001/health  # Bazaar
-curl http://localhost:3002/health  # Facilitator
+npm run setup -- --force
+docker compose up --build -d postgres bazaar facilitator demo-server
 ```
 
-### 4. Verify Deployment
+Do not use generated testnet keys on any network holding value.
+
+## Health and readiness
 
 ```bash
-# Test discovery
-curl "http://localhost:3001/discovery/search?q=test"
-
-# Check facilitator schemes
-curl http://localhost:3002/supported
+curl -fsS http://localhost:3001/health
+curl -fsS http://localhost:3001/ready
+curl -fsS http://localhost:3002/health
+curl -fsS http://localhost:3002/ready
+curl -fsS http://localhost:3003/health
+curl -fsS http://localhost:3005/health
+curl -fsS http://localhost:3005/metrics
 ```
 
-## Manual Installation
+The facilitator performs boot-time checks before advertising capabilities:
 
-### 1. Install PostgreSQL with pgvector
+- configured secret derives the public signer;
+- claimed fee sponsor is funded;
+- advertised testnet `upto` contract exists;
+- job descriptors use advertised schemes/networks/assets;
+- required public/internal configuration is present.
+
+Always treat `GET /supported` as the runtime authority:
 
 ```bash
-# macOS (Homebrew)
-brew install postgresql@16
-brew install pgvector
-
-# Ubuntu/Debian
-sudo apt-get install postgresql-16 postgresql-16-pgvector
-
-# Start PostgreSQL
-brew services start postgresql@16  # macOS
-sudo systemctl start postgresql    # Linux
+curl -fsS http://localhost:3002/supported | jq
 ```
 
-### 2. Create Database
+`extra.areFeesSponsored` describes the checked deployment. Do not infer it from
+documentation.
+
+## Database and migrations
+
+Compose runs PostgreSQL 16 with pgvector. Bazaar applies ordered SQL migrations
+from `bazaar-service/src/db/migrations/`. Six migrations are currently tracked.
+
+For localhost-only SQL access:
 
 ```bash
-# Create database
-createdb veridex_bazaar
-
-# Install extensions and schema
-psql veridex_bazaar < bazaar-service/src/db/schema.sql
-```
-
-### 3. Install Node.js Dependencies
-
-```bash
-# Root dependencies
-npm install
-
-# Bazaar service
-cd bazaar-service
-npm install
-npm run build
-cd ..
-
-# Facilitator service
-cd facilitator-service
-npm install
-npm run build
-cd ..
-
-# MCP server (optional)
-cd mcp-server
-npm install
-npm run build
-cd ..
-```
-
-### 4. Configure Services
-
-Create `.env` files for each service:
-
-**bazaar-service/.env:**
-```bash
-BAZAAR_PORT=3001
-BAZAAR_HOST=0.0.0.0
-
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_NAME=veridex_bazaar
-DATABASE_USER=postgres
-DATABASE_PASSWORD=yourpassword
-
-P2P_LISTEN_ADDRS=/ip4/0.0.0.0/tcp/4001,/ip4/0.0.0.0/tcp/4002/ws
-P2P_BOOTSTRAP_PEERS=
-```
-
-The Compose P2P host bindings default to `4001` and `4002`. Set
-`BAZAAR_P2P_HOST_PORT` and `BAZAAR_P2P_WS_HOST_PORT` when another local node
-already owns those ports; service-to-service traffic continues to use the
-container ports and Compose DNS.
-
-**facilitator-service/.env:**
-```bash
-FACILITATOR_PORT=3002
-FACILITATOR_HOST=0.0.0.0
-
-STELLAR_NETWORK=testnet
-FACILITATOR_PUBLIC_KEY=G...
-FACILITATOR_SECRET_KEY=S...
-
-CHANNEL_POOL_SIZE=0
-CHANNEL_SECRET_KEYS=
-CHANNEL_AUTO_CREATE=false
-CHANNEL_COOLDOWN_MS=5000
-CHANNEL_STARTING_BALANCE=5
-CHANNEL_REFILL_THRESHOLD=2
-CHANNEL_REFILL_AMOUNT=3
-```
-
-### 5. Start Services
-
-**Bazaar Service:**
-```bash
-cd bazaar-service
-npm start
-```
-
-**Facilitator Service (in new terminal):**
-```bash
-cd facilitator-service
-npm start
-```
-
-**MCP Server (optional, in new terminal):**
-```bash
-cd mcp-server
-BAZAAR_URL=http://localhost:3001 \
-FACILITATOR_URL=http://localhost:3002 \
-STELLAR_NETWORK=testnet \
-STELLAR_CLIENT_SECRET_KEY=S... \
-npm start
-```
-
-## Production Deployment
-
-### Architecture
-
-```
-        Internet
-           │
-           ▼
-    ┌──────────────┐
-    │  Cloudflare  │  (CDN, DDoS protection)
-    │   / nginx    │
-    └──────────────┘
-           │
-      ┌────┴────┐
-      │         │
-      ▼         ▼
-┌─────────┐ ┌──────────┐
-│ Bazaar  │ │Facilita  │
-│  :3001  │ │tor :3002 │
-└─────────┘ └──────────┘
-      │         │
-      └────┬────┘
-           ▼
-    ┌──────────────┐
-    │  PostgreSQL  │
-    │ (Primary +   │
-    │  Replica)    │
-    └──────────────┘
-```
-
-### 1. Secure PostgreSQL
-
-```bash
-# Enable SSL
-postgresql.conf:
-  ssl = on
-  ssl_cert_file = '/path/to/server.crt'
-  ssl_key_file = '/path/to/server.key'
-
-# Restrict connections
-pg_hba.conf:
-  hostssl veridex_bazaar all 10.0.0.0/8 scram-sha-256
-
-# Restart PostgreSQL
-sudo systemctl restart postgresql
-```
-
-### 2. Configure Reverse Proxy
-
-**nginx configuration:**
-```nginx
-# Bazaar service
-upstream bazaar {
-    server localhost:3001;
-}
-
-# Facilitator service
-upstream facilitator {
-    server localhost:3002;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name bazaar.veridex.io;
-
-    ssl_certificate /etc/letsencrypt/live/veridex.io/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/veridex.io/privkey.pem;
-
-    location / {
-        proxy_pass http://bazaar;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-server {
-    listen 443 ssl http2;
-    server_name facilitator.veridex.io;
-
-    ssl_certificate /etc/letsencrypt/live/veridex.io/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/veridex.io/privkey.pem;
-
-    location / {
-        proxy_pass http://facilitator;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-### 3. Deploy Soroban Contract
-
-```bash
-cd contracts/upto-settlement
-
-# Build reproducible WASM with the pinned toolchain
-../../scripts/build-upto.sh
-
-# Deploy to pubnet
-export STELLAR_SECRET_KEY=S...
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/upto_settlement.wasm \
-  --source $STELLAR_SECRET_KEY \
-  --network pubnet
-
-# Save contract ID
-export ESCROW_CONTRACT_ID=C...
-```
-
-### 4. Configure P2P Bootstrap Peers
-
-```bash
-# Set bootstrap peers for P2P mesh
-export P2P_BOOTSTRAP_PEERS=/ip4/1.2.3.4/tcp/4001/p2p/12D3KooW...,/ip4/5.6.7.8/tcp/4001/p2p/12D3KooW...
-```
-
-### 5. Production docker-compose.yml
-
-```yaml
-version: '3.8'
-
-services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    restart: always
-    environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    networks:
-      - veridex-internal
-
-  bazaar:
-    image: veridex/bazaar:latest
-    restart: always
-    ports:
-      - "3001:3001"
-    environment:
-      DATABASE_HOST: postgres
-      DATABASE_SSL: "true"
-      P2P_BOOTSTRAP_PEERS: ${P2P_BOOTSTRAP_PEERS}
-    depends_on:
-      - postgres
-    networks:
-      - veridex-internal
-
-  facilitator:
-    image: veridex/facilitator:latest
-    restart: always
-    ports:
-      - "3002:3002"
-    environment:
-      STELLAR_NETWORK: pubnet
-      FACILITATOR_SECRET_KEY: ${FACILITATOR_SECRET_KEY}
-      CHANNEL_POOL_SIZE: 100
-    networks:
-      - veridex-internal
-
-volumes:
-  postgres-data:
-
-networks:
-  veridex-internal:
-    driver: bridge
-```
-
-## Testing
-
-### Integration Tests
-
-```bash
-# Start test environment
-docker-compose up -d
-
-# Wait for services to be healthy
-sleep 10
-
-# Run integration tests
-cd tests
-npm install
-npm test
-```
-
-### Manual Testing
-
-**Test Discovery:**
-```bash
-curl -X GET "http://localhost:3001/discovery/search?q=weather&limit=5"
-```
-
-**Test Payment Flow:**
-```bash
-# 1. Get facilitator info
-curl http://localhost:3002/supported
-
-# 2. Build and sign transaction (use SDK)
-# 3. Submit settlement
-curl -X POST http://localhost:3002/settle \
-  -H "Content-Type: application/json" \
-  -d '{
-    "scheme": "stellar",
-    "network": "testnet",
-    "resourceServer": "G...",
-    "transactionXdr": "..."
-  }'
-```
-
-### Load Testing
-
-```bash
-# Install k6
-brew install k6
-
-# Run load test
-k6 run tests/load/search-load.js
-```
-
-## Monitoring
-
-### Metrics
-
-Prometheus metrics available at:
-- **Bazaar:** `http://localhost:3001/metrics`
-- **Facilitator:** `http://localhost:3002/metrics`
-
-### Key Metrics
-
-```
-# Bazaar
-veridex_search_requests_total
-veridex_search_latency_seconds
-veridex_p2p_peers
-veridex_telemetry_nodes_tracked
-
-# Facilitator
-veridex_settlement_requests_total
-veridex_settlement_success_total
-veridex_channel_pool_available
-veridex_channel_pool_in_use
-```
-
-### Grafana Dashboard
-
-Import dashboard template:
-```bash
-# Dashboard JSON available at: dashboards/veridex-overview.json
-```
-
-### Log Aggregation
-
-```bash
-# Configure log shipping
-docker-compose.yml:
-  logging:
-    driver: "json-file"
-    options:
-      max-size: "10m"
-      max-file: "3"
-      labels: "service"
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**1. Database connection failed**
-
-```bash
-# Check PostgreSQL is running
-pg_isready
-
-# Check pgvector extension
-psql veridex_bazaar -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
-
-# Verify connection string
 docker compose -f docker-compose.yml -f docker-compose.host-db.yml up -d
 psql "host=127.0.0.1 port=${DATABASE_HOST_PORT:-55432} dbname=veridex_bazaar user=postgres"
 ```
 
-**2. Channel pool initialization fails**
+The latest clean-room run applied all six migrations to an empty volume and
+then passed `36/36` conformance. Periodic revalidation is implemented and
+package-tested; a timed live stale-row refresh/quarantine drill remains open.
 
-```bash
-# Check facilitator account balance
-stellar account get FACILITATOR_PUBLIC_KEY --network testnet
+## Settlement signers
 
-# Verify funding (need 250+ XLM for 50 channels @ 5 XLM each)
-# If insufficient, fund the account
+Each Stellar source account has one sequence number. Configure disjoint funded
+channel keys per facilitator process:
+
+```text
+CHANNEL_SECRET_KEYS=SA...,SB...,SC...
+SETTLE_QUEUE_TIMEOUT_MS=30000
 ```
 
-**3. P2P mesh not connecting**
+The scheduler leases one signer per settlement and rejects saturated waits with
+`settlement_capacity_exceeded` before submission. An unsuccessful result carrying
+a transaction hash quarantines the exact leased signer. After reconciling the
+hash, recover it explicitly:
 
 ```bash
-# Check listen address is accessible
-netstat -an | grep 4001
-
-# Verify bootstrap peers are reachable
-telnet 1.2.3.4 4001
-
-# Check firewall rules
-sudo ufw status
+curl -X POST \
+  "$FACILITATOR_URL/internal/channels/$SIGNER/recover" \
+  -H "Authorization: Bearer $FACILITATOR_INTERNAL_TOKEN"
 ```
 
-**4. Settlement transactions failing**
+Lease/quarantine state is process-local. Instances must never share channel
+keys; durable multi-instance ownership is a production target.
+
+## RPC coordination
+
+Testnet can use an ordered provider list:
+
+```text
+SOROBAN_RPC_URLS=https://rpc-primary.example,https://rpc-secondary.example
+RPC_REQUEST_TIMEOUT_MS=5000
+```
+
+The coordinator fails over reads/pre-submit health checks, submits to exactly
+one provider, computes the envelope hash locally, and reconciles an ambiguous
+result without blind resubmission. Conflicting final states fail safely.
+
+Current proof is deterministic tests plus a live loopback testnet drill, not an
+independent-operator or pubnet deployment.
+
+## Catalog outbox
+
+Confirmed settlement creates a transaction-keyed file-spool event before
+asynchronous Bazaar delivery. In Compose the spool uses a named volume.
+
+```text
+CATALOG_OUTBOX_DIRECTORY=.veridex/catalog-outbox
+CATALOG_OUTBOX_REPLAY_INTERVAL_MS=5000
+```
+
+Monitor `veridex_catalog_outbox_pending` and
+`veridex_catalog_outbox_oldest_age`. This design isolates settlement from a
+Bazaar outage on one host; it is not a shared HA queue.
+
+## MCP
+
+Run the optional stdio server:
 
 ```bash
-# Check Horizon status
-curl https://horizon-testnet.stellar.org/
-
-# Verify transaction XDR format
-stellar xdr decode --type TransactionEnvelope <XDR>
-
-# Check account sequence
-stellar account get ACCOUNT --network testnet
+MCP_ALLOW_LOCAL_URLS=true docker compose --profile mcp run --rm mcp-server
 ```
 
-### Debug Mode
+Use the local URL override only for this development stack. MCP holds no payer
+key; signing remains client-side. See the [MCP guide](../mcp-server/README.md).
+
+## Metrics and logs
 
 ```bash
-# Enable debug logging
-export LOG_LEVEL=debug
-export DEBUG=veridex:*
-
-# Start services
-npm start
+curl -fsS http://localhost:3001/metrics
+curl -fsS http://localhost:3002/metrics
+curl -fsS http://localhost:3005/metrics
+docker compose logs --no-log-prefix facilitator | npm run outcomes
 ```
 
-### Health Checks
+Metrics are process-local unless scraped externally. The repository does not
+ship Grafana dashboards, an alert manager, durable metrics retention, or
+end-to-end request correlation. See [metrics](metrics.md).
 
-```bash
-# Bazaar health
-curl http://localhost:3001/health | jq
+Gateway events persist under `GATEWAY_DATA_DIRECTORY`; Compose uses the
+`gateway-data` volume. `GATEWAY_MANAGEMENT_TOKEN` enables read-only `/v1`
+contracts. Do not expose those routes without edge TLS and authenticated
+project ownership. The local JSONL store is not multi-instance safe.
 
-# Facilitator health
-curl http://localhost:3002/health | jq
+## Current facilitator request shape
 
-# Check all components
-./scripts/health-check.sh
+Manual `/verify` and `/settle` calls use x402 v2 objects:
+
+```json
+{
+  "x402Version": 2,
+  "paymentPayload": {
+    "x402Version": 2,
+    "resource": { "url": "http://localhost:3003/paid-resource" },
+    "accepted": {
+      "scheme": "exact",
+      "network": "stellar:testnet",
+      "asset": "<SEP-41 contract>",
+      "amount": "100000",
+      "payTo": "<seller G-address>",
+      "maxTimeoutSeconds": 120,
+      "extra": { "areFeesSponsored": true }
+    },
+    "payload": { "transaction": "<base64 Stellar envelope>" }
+  },
+  "paymentRequirements": {
+    "scheme": "exact",
+    "network": "stellar:testnet",
+    "asset": "<SEP-41 contract>",
+    "amount": "100000",
+    "payTo": "<seller G-address>",
+    "maxTimeoutSeconds": 120,
+    "extra": { "areFeesSponsored": true }
+  }
+}
 ```
 
-## Security Best Practices
+Do not use flattened `{scheme, network, transactionXdr}` bodies or
+`maxAmountRequired` in v2. Prefer the SDK/middleware instead of manually building
+signed payloads.
 
-1. **Secret Management**
-   - Use environment variables or secret management service (Vault, AWS Secrets Manager)
-   - Never commit `.env` files
-   - Rotate keys quarterly
+## Production and pubnet gates
 
-2. **Network Security**
-   - Enable firewall rules
-   - Use VPC/private networks
-   - Restrict database access to application servers only
+Before any public production claim:
 
-3. **Monitoring & Alerts**
-   - Set up alerts for failed settlements
-   - Monitor channel account balances
-   - Track error rates
+1. Complete independent review of exact integration, fee sponsorship, custom
+   `upto`, and cross-service controls.
+2. Obtain explicit pubnet approval and publish pubnet transaction/conformance
+   evidence. No such execution is part of the current evidence set.
+3. Deploy pinned, reviewed container images; do not use `latest` tags.
+4. Provide TLS termination, edge authentication/rate limiting, secret management,
+   and key rotation.
+5. Provide HA PostgreSQL and a tested backup/restore procedure.
+6. Define shared outbox/channel ownership or strict instance partitioning.
+7. Use independently operated RPC endpoints and test disagreement/ambiguity.
+8. Deploy external metrics retention, dashboards, alert routing, and tested
+   incident runbooks.
+9. Prove multi-process federation restart/persistence before claiming production
+   federation.
+10. Publish reproducible `upto` WASM hashes/contract IDs and resolve audit
+    findings before enabling the scheme.
 
-4. **Backups**
-   - Daily PostgreSQL backups
-   - Test restoration procedure monthly
-   - Store backups in separate region/datacenter
-
-## Support
-
-- **Documentation:** https://docs.veridex.io
-- **Issues:** https://github.com/veridex/veridex/issues
-- **Discord:** https://discord.gg/veridex
-
-## License
-
-Apache-2.0
+The current repository is testnet design-partner evidence, not a ready-made
+production topology.

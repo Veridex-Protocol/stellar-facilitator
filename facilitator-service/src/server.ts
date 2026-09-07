@@ -16,6 +16,7 @@
  * with no contract behind it, or fee sponsorship from an unfunded account.
  */
 
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { serve, type ServerType } from "@hono/node-server";
 import { cors } from "hono/cors";
@@ -54,6 +55,10 @@ import {
   loadCapabilityJobs,
   type CapabilityJob,
 } from "./capability-descriptor.js";
+import { createFacilitatorMetrics, type PrometheusRegistry } from "./metrics.js";
+import { RpcCoordinator } from "./rpc-coordinator.js";
+import { CatalogOutbox, type CatalogOutboxEvent } from "./catalog-outbox.js";
+import { publicError } from "./errors.js";
 
 /** Legacy (pre-canonical) Stellar request, served only under /legacy/*. */
 const X402StellarRequestSchema = z.object({
@@ -82,6 +87,12 @@ export interface FacilitatorServiceConfig {
   ledgerSkew: { retries: number; delayMs: number };
   /** How long a settlement may wait for a free signer before being refused. */
   settleQueueTimeoutMs: number;
+  /** Maximum best-effort delay after settlement while reporting catalog status. */
+  catalogHandoffTimeoutMs: number;
+  catalogOutboxDirectory: string;
+  catalogOutboxReplayIntervalMs: number;
+  catalogOutboxBatchSize: number;
+  rpcRequestTimeoutMs: number;
   rateLimit: { windowMs: number; max: number };
   /** Path to the JSON job list backing `/.well-known/x402`. */
   jobsFile?: string;
@@ -115,6 +126,10 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
   const rpcUrl =
     process.env.SOROBAN_RPC_URL ||
     (network === "pubnet" ? "https://mainnet.sorobanrpc.com" : "https://soroban-testnet.stellar.org");
+  const rpcUrls = (process.env.SOROBAN_RPC_URLS || rpcUrl)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   const port = parseInt(process.env.FACILITATOR_PORT || "3002", 10);
   const host = process.env.FACILITATOR_HOST || "0.0.0.0";
@@ -146,6 +161,11 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
     // Long enough to ride out a settlement ahead in the queue, short enough
     // that a caller gets a usable answer well inside a typical HTTP timeout.
     settleQueueTimeoutMs: parseInt(process.env.SETTLE_QUEUE_TIMEOUT_MS || "30000", 10),
+    catalogHandoffTimeoutMs: parseInt(process.env.CATALOG_HANDOFF_TIMEOUT_MS || "2000", 10),
+    catalogOutboxDirectory: process.env.CATALOG_OUTBOX_DIRECTORY || ".veridex/catalog-outbox",
+    catalogOutboxReplayIntervalMs: parseInt(process.env.CATALOG_OUTBOX_REPLAY_INTERVAL_MS || "5000", 10),
+    catalogOutboxBatchSize: parseInt(process.env.CATALOG_OUTBOX_BATCH_SIZE || "20", 10),
+    rpcRequestTimeoutMs: parseInt(process.env.RPC_REQUEST_TIMEOUT_MS || "5000", 10),
     jobsFile: process.env.X402_JOBS_FILE || undefined,
     intendToSponsorFees: process.env.SPONSOR_FEES !== "false",
     stellar: {
@@ -153,6 +173,7 @@ export function getDefaultConfig(): FacilitatorServiceConfig {
       networkPassphrase,
       horizonUrl,
       rpcUrl,
+      rpcUrls,
       facilitatorPublicKey,
       facilitatorSecretKey,
     },
@@ -194,6 +215,11 @@ export class FacilitatorService {
   private settler: StellarTransactionSettler;
   private x402Facilitator: X402Facilitator;
   private logger: Logger;
+  private metrics: PrometheusRegistry;
+  private rpcCoordinator?: RpcCoordinator;
+  private catalogOutbox: CatalogOutbox;
+  private catalogOutboxInterval?: NodeJS.Timeout;
+  private catalogOutboxDrain?: Promise<void>;
   private httpServer?: ServerType;
   private serviceReady = false;
   private capabilities: VerifiedCapabilities;
@@ -210,6 +236,8 @@ export class FacilitatorService {
   constructor(config: FacilitatorServiceConfig, logger: Logger = createLogger()) {
     this.config = config;
     this.logger = logger;
+    this.metrics = createFacilitatorMetrics();
+    this.catalogOutbox = new CatalogOutbox(config.catalogOutboxDirectory);
     this.app = new Hono();
 
     this.channelPool = createChannelPool(config.channelPool);
@@ -246,15 +274,24 @@ export class FacilitatorService {
 
   private setupMiddleware(): void {
     this.app.use("*", secureHeaders());
+    this.app.use("*", async (c, next) => {
+      const incoming = c.req.header("X-Request-Id")?.trim();
+      const requestId = incoming && /^[A-Za-z0-9._:-]{1,128}$/.test(incoming)
+        ? incoming
+        : randomUUID();
+      (c as any).set("requestId", requestId);
+      c.header("X-Request-Id", requestId);
+      await next();
+    });
     this.app.use(
       "*",
       cors({
         origin: process.env.CORS_ORIGINS?.split(",").map((o) => o.trim()) ?? "*",
         allowMethods: ["GET", "POST", "OPTIONS"],
-        allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL", "X-Job-Id"],
+        allowHeaders: ["Content-Type", "Authorization", "X-Resource-URL", "X-Job-Id", "X-Request-Id", "X-Payment-Id"],
         // Cataloging outcomes are reported in this header; without exposing it
         // a browser-based caller cannot read its own listing result.
-        exposeHeaders: ["EXTENSION-RESPONSES", "RateLimit-Limit", "RateLimit-Remaining", "Retry-After"],
+        exposeHeaders: ["EXTENSION-RESPONSES", "RateLimit-Limit", "RateLimit-Remaining", "Retry-After", "X-Request-Id"],
       }),
     );
 
@@ -279,6 +316,7 @@ export class FacilitatorService {
         max: this.config.rateLimit.max,
         onRejected: (c) =>
           this.logger.outcome({
+            ...requestLogContext(c),
             endpoint: c.req.path,
             outcome: "rate_limited",
             status: 429,
@@ -354,8 +392,9 @@ export class FacilitatorService {
       }, ready ? 200 : 503);
     });
 
-    this.app.get("/stats", (c) => {
+    this.app.get("/stats", async (c) => {
       const uptime = Date.now() - this.stats.startTime;
+      const catalogOutbox = await this.catalogOutbox.stats().catch(() => ({ pending: 0, oldestAgeSeconds: 0 }));
       return c.json({
         uptime,
         // These reset on restart. Published reliability figures must come from
@@ -385,12 +424,44 @@ export class FacilitatorService {
         // accounts. A rising 'queued' or any 'totalRejected' means the pool is
         // too small for the offered load.
         settlementConcurrency: this.x402Facilitator.getSchedulerStats(),
+        quarantinedSigners: this.x402Facilitator.getQuarantinedSigners(),
         channels: this.channelPool.getStats(),
+        rpcProviders: this.rpcCoordinator?.getHealth() ?? [{
+          url: this.config.stellar.rpcUrl,
+          healthy: true,
+          consecutiveFailures: 0,
+        }],
+        catalogOutbox,
         timestamp: Date.now(),
       });
     });
 
+    this.app.get("/metrics", async (c) => {
+      const scheduler = this.x402Facilitator.getSchedulerStats();
+      const channels = this.channelPool.getStats();
+      const outbox = await this.catalogOutbox.stats().catch(() => ({ pending: 0, oldestAgeSeconds: 0 }));
+      this.metrics.set("veridex_channel_available", Math.max(0, scheduler.poolSize - scheduler.inFlight));
+      this.metrics.set("veridex_channel_in_use", scheduler.inFlight);
+      this.metrics.set("veridex_channel_quarantined", scheduler.quarantined + channels.error);
+      this.metrics.set("veridex_catalog_outbox_pending", outbox.pending);
+      this.metrics.set("veridex_catalog_outbox_oldest_age", outbox.oldestAgeSeconds);
+      c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      return c.body(this.metrics.render());
+    });
+
     this.app.get("/supported", (c) => c.json(this.buildSupported()));
+
+    this.app.post("/internal/channels/:address/recover", async (c) => {
+      if (!process.env.FACILITATOR_INTERNAL_TOKEN || c.req.header("Authorization") !== `Bearer ${process.env.FACILITATOR_INTERNAL_TOKEN}`) {
+        return c.json(publicError("unauthorized"), 401);
+      }
+      const address = c.req.param("address");
+      if (!this.x402Facilitator.recoverSigner(address)) {
+        return c.json(publicError("not_found", { reason: "The signer is not quarantined." }), 404);
+      }
+      this.logger.info("settlement signer recovered after reconciliation", { address });
+      return c.json({ status: "recovered", address }, 200);
+    });
 
     this.app.get("/.well-known/x402", (c) =>
       c.json(
@@ -419,8 +490,15 @@ export class FacilitatorService {
           isValid: false,
           invalidReason: LOCAL_REASONS.INVALID_REQUEST_BODY,
           invalidMessage: invalidRequest,
+          extra: {
+            veridexError: publicError("invalid_request", {
+              reason: invalidRequest,
+              details: { protocolCode: LOCAL_REASONS.INVALID_REQUEST_BODY },
+            }),
+          },
         };
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/verify",
           outcome: "invalid",
           reason: response.invalidReason,
@@ -432,6 +510,8 @@ export class FacilitatorService {
 
       const { paymentPayload, paymentRequirements } = body as any;
       this.stats.totalVerifications++;
+      this.metrics.increment("veridex_verifications_total");
+      this.metrics.increment("veridex_rpc_requests_total");
 
       try {
         let attempts = 0;
@@ -452,6 +532,7 @@ export class FacilitatorService {
         if (result.isValid) this.stats.successfulVerifications++;
 
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/verify",
           outcome: result.isValid ? "valid" : "invalid",
           reason: result.invalidReason,
@@ -472,7 +553,11 @@ export class FacilitatorService {
           invalidMessage: `${describeReason(reason)} (detail: ${errorDetail(error)})`,
         };
         this.logger.warn("verify raised", { reason, detail: errorDetail(error) });
+        if (reason === LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE) {
+          this.metrics.increment("veridex_rpc_failures_total");
+        }
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/verify",
           outcome: isClientFault ? "invalid" : "error",
           reason,
@@ -502,8 +587,15 @@ export class FacilitatorService {
           network: (body as any)?.paymentRequirements?.network ?? `stellar:${this.config.stellar.network}`,
           errorReason: LOCAL_REASONS.INVALID_REQUEST_BODY,
           errorMessage: invalidRequest,
+          extra: {
+            veridexError: publicError("invalid_request", {
+              reason: invalidRequest,
+              details: { protocolCode: LOCAL_REASONS.INVALID_REQUEST_BODY },
+            }),
+          },
         };
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/settle",
           outcome: "failed",
           reason: response.errorReason,
@@ -515,6 +607,8 @@ export class FacilitatorService {
 
       const { paymentPayload, paymentRequirements } = body as any;
       this.stats.totalSettlements++;
+      this.metrics.increment("veridex_settlements_total");
+      this.metrics.increment("veridex_rpc_requests_total");
 
       try {
         let attempts = 0;
@@ -535,7 +629,10 @@ export class FacilitatorService {
         this.recordSkew(attempts, result.success);
 
         if (!result.success) {
+          this.metrics.increment("veridex_settlement_failures_total");
+          this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
           this.logger.outcome({
+            ...requestLogContext(c, body, result.transaction),
             endpoint: "/settle",
             outcome: "failed",
             reason: result.errorReason,
@@ -565,6 +662,7 @@ export class FacilitatorService {
         const receipt = this.issueReceipt(c, paymentPayload, paymentRequirements, result);
 
         this.logger.outcome({
+          ...requestLogContext(c, body, result.transaction),
           endpoint: "/settle",
           outcome: "settled",
           transaction: result.transaction,
@@ -573,6 +671,7 @@ export class FacilitatorService {
           latencyMs: Math.round(performance.now() - startedAt),
           skewRetries: attempts - 1,
         });
+        this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
         return c.json(receipt ? { ...result, receipt } : result, 200);
       } catch (error) {
         // Being refused for capacity is a definite "no funds moved", which is
@@ -586,6 +685,11 @@ export class FacilitatorService {
           errorReason: reason,
           errorMessage: busy ? (error as SignerBusyError).message : `${describeReason(reason)} (detail: ${errorDetail(error)})`,
         };
+        this.metrics.increment("veridex_settlement_failures_total");
+        this.metrics.observe("veridex_settlement_latency", (performance.now() - startedAt) / 1000);
+        if (reason === LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE) {
+          this.metrics.increment("veridex_rpc_failures_total");
+        }
         if (busy) {
           this.logger.warn("settlement refused: all signers busy", {
             waitedMs: (error as SignerBusyError).waitedMs,
@@ -595,6 +699,7 @@ export class FacilitatorService {
           this.logger.warn("settle raised", { reason, detail: errorDetail(error) });
         }
         this.logger.outcome({
+          ...requestLogContext(c, body),
           endpoint: "/settle",
           outcome: "failed",
           reason,
@@ -650,10 +755,18 @@ export class FacilitatorService {
   private withVerifyReason(response: VerifyResponse): VerifyResponse {
     if (response.isValid) return response;
     const invalidReason = response.invalidReason?.trim() || LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR;
+    const invalidMessage = response.invalidMessage?.trim() || describeReason(invalidReason);
     return {
       ...response,
       invalidReason,
-      invalidMessage: response.invalidMessage?.trim() || describeReason(invalidReason),
+      invalidMessage,
+      extra: {
+        ...response.extra,
+        veridexError: publicError(classifyPublicReason(invalidReason), {
+          reason: invalidMessage,
+          details: { protocolCode: invalidReason },
+        }),
+      },
     };
   }
 
@@ -666,10 +779,18 @@ export class FacilitatorService {
   private withSettleReason(response: SettleResponse): SettleResponse {
     if (response.success) return response;
     const errorReason = response.errorReason?.trim() || LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR;
+    const errorMessage = response.errorMessage?.trim() || describeReason(errorReason);
     return {
       ...response,
       errorReason,
-      errorMessage: response.errorMessage?.trim() || describeReason(errorReason),
+      errorMessage,
+      extra: {
+        ...response.extra,
+        veridexError: publicError(classifyPublicReason(errorReason), {
+          reason: errorMessage,
+          details: { protocolCode: errorReason },
+        }),
+      },
     };
   }
 
@@ -836,22 +957,16 @@ export class FacilitatorService {
     if (!discovered) return undefined;
     const info: any = discovered.discoveryInfo;
     const resourceType = info.input?.type === "mcp" ? "mcp" : "http";
-
-    const response = await fetch(new URL("/catalog/ingest", bazaarUrl), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(process.env.BAZAAR_INTERNAL_TOKEN
-          ? { Authorization: `Bearer ${process.env.BAZAAR_INTERNAL_TOKEN}` }
-          : {}),
-      },
-      body: JSON.stringify({
+    const payload = {
         resourceUrl: discovered.resourceUrl,
+        validationUrl: paymentPayload.resource?.url ?? discovered.resourceUrl,
         resourceType,
         toolName: resourceType === "mcp" ? info.input.toolName : undefined,
         payTo: paymentRequirements.payTo,
         network: paymentRequirements.network,
         scheme: paymentRequirements.scheme,
+        asset: paymentPayload.accepted?.asset ?? paymentRequirements.asset,
+        amount: paymentPayload.accepted?.amount ?? paymentRequirements.amount,
         bazaarExtension: {
           serviceName: discovered.serviceName,
           description: discovered.description || info.input?.description || discovered.resourceUrl,
@@ -874,23 +989,68 @@ export class FacilitatorService {
             expectedResultDigest: paymentPayload.payload?.resultDigest,
           },
         } : {}),
-      }),
-    });
+      };
+    const event = await this.catalogOutbox.enqueue(result.transaction, payload);
+    void this.drainCatalogOutbox();
+    return encodeQueuedCatalogResponse(event.id);
+  }
+
+  private async deliverCatalogEvent(event: CatalogOutboxEvent): Promise<string | undefined> {
+    const bazaarUrl = process.env.BAZAAR_URL;
+    if (!bazaarUrl) return undefined;
+    const attempted = await this.catalogOutbox.markAttempt(event);
+    const response = await postCatalogIngest(new URL("/catalog/ingest", bazaarUrl), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.BAZAAR_INTERNAL_TOKEN
+          ? { Authorization: `Bearer ${process.env.BAZAAR_INTERNAL_TOKEN}` }
+          : {}),
+      },
+      body: JSON.stringify(attempted.payload),
+    }, this.config.catalogHandoffTimeoutMs);
     // The catalog reports the outcome in this header on both acceptance and
     // rejection, so read it before deciding whether this was an error.
     const extensionResponses = response.headers.get("EXTENSION-RESPONSES") ?? undefined;
 
-    if (!response.ok && !extensionResponses) {
+    if (response.status >= 500 || (!response.ok && !extensionResponses)) {
       throw new Error(`Bazaar ingestion returned HTTP ${response.status}`);
     }
+    await this.catalogOutbox.acknowledge(event.id);
     if (!response.ok) {
       this.logger.info("catalog rejected the listing", {
         status: response.status,
-        transaction: result.transaction,
+        transaction: event.id,
       });
     }
 
     return extensionResponses;
+  }
+
+  async drainCatalogOutbox(): Promise<void> {
+    if (!process.env.BAZAAR_URL) return;
+    if (this.catalogOutboxDrain) return this.catalogOutboxDrain;
+
+    const drain = (async () => {
+      const events = await this.catalogOutbox.list(this.config.catalogOutboxBatchSize);
+      for (const event of events) {
+        try {
+          await this.deliverCatalogEvent(event);
+        } catch (error) {
+          this.logger.warn("catalog outbox event retained", {
+            transaction: event.id,
+            attempts: event.attempts + 1,
+            detail: errorDetail(error),
+          });
+        }
+      }
+    })();
+    this.catalogOutboxDrain = drain;
+    try {
+      await drain;
+    } finally {
+      if (this.catalogOutboxDrain === drain) this.catalogOutboxDrain = undefined;
+    }
   }
 
   /**
@@ -976,18 +1136,53 @@ export class FacilitatorService {
       baseUrl: this.config.baseUrl,
     });
 
-    await this.channelPool.initialize();
-    this.x402Facilitator.refreshSigners();
+    try {
+      const rpcProviders = this.config.stellar.rpcUrls ?? [this.config.stellar.rpcUrl];
+      if (rpcProviders.length > 1) {
+        if (this.config.stellar.network !== "testnet") {
+          throw new Error("SOROBAN_RPC_URLS multi-provider mode is testnet-only until the local coordinator supports TLS");
+        }
+        this.rpcCoordinator = new RpcCoordinator({
+          providers: rpcProviders,
+          networkPassphrase: this.config.stellar.networkPassphrase,
+          requestTimeoutMs: this.config.rpcRequestTimeoutMs,
+          onFailure: () => this.metrics.increment("veridex_rpc_failures_total"),
+          onFailover: () => this.metrics.increment("veridex_rpc_failover_total"),
+          onLatency: (seconds) => this.metrics.observe("veridex_rpc_latency", seconds),
+          onReconciliation: () => this.metrics.increment("veridex_rpc_reconciliation_total"),
+          onDisagreement: () => this.metrics.increment("veridex_rpc_disagreements_total"),
+        });
+        const coordinatedRpcUrl = await this.rpcCoordinator.start();
+        this.config.stellar.rpcUrl = coordinatedRpcUrl;
+        this.verifier = createVerifier(this.config.stellar);
+        this.x402Facilitator.setRpcUrl(coordinatedRpcUrl);
+      }
 
-    // Everything advertised is confirmed here. A failure aborts the boot.
-    await this.runStartupChecks();
+      await this.channelPool.initialize();
+      this.x402Facilitator.refreshSigners();
 
-    this.httpServer = serve({
-      fetch: this.app.fetch,
-      port: this.config.port,
-      hostname: this.config.host,
-    });
-    this.serviceReady = true;
+      // Everything advertised is confirmed here. A failure aborts the boot.
+      await this.runStartupChecks();
+
+      this.httpServer = serve({
+        fetch: this.app.fetch,
+        port: this.config.port,
+        hostname: this.config.host,
+      });
+      this.serviceReady = true;
+      if (this.config.catalogOutboxReplayIntervalMs > 0) {
+        this.catalogOutboxInterval = setInterval(() => {
+          this.drainCatalogOutbox().catch((error) =>
+            this.logger.warn("catalog outbox replay failed", { detail: errorDetail(error) }),
+          );
+        }, this.config.catalogOutboxReplayIntervalMs);
+      }
+      void this.drainCatalogOutbox();
+    } catch (error) {
+      await this.rpcCoordinator?.stop();
+      this.rpcCoordinator = undefined;
+      throw error;
+    }
 
     this.logger.info("facilitator ready", {
       url: `http://${this.config.host}:${this.config.port}`,
@@ -999,6 +1194,10 @@ export class FacilitatorService {
 
   async stop(): Promise<void> {
     this.serviceReady = false;
+    if (this.catalogOutboxInterval) {
+      clearInterval(this.catalogOutboxInterval);
+      this.catalogOutboxInterval = undefined;
+    }
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) =>
         this.httpServer!.close((error?: Error) => (error ? reject(error) : resolve())),
@@ -1006,6 +1205,8 @@ export class FacilitatorService {
       this.httpServer = undefined;
     }
     await this.channelPool.shutdown();
+    await this.rpcCoordinator?.stop();
+    this.rpcCoordinator = undefined;
     this.logger.info("facilitator stopped");
   }
 
@@ -1018,6 +1219,56 @@ export class FacilitatorService {
   getCapabilities(): Readonly<VerifiedCapabilities> {
     return this.capabilities;
   }
+}
+
+export async function postCatalogIngest(
+  url: URL,
+  init: RequestInit,
+  timeoutMs: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  return fetchImpl(url, {
+    ...init,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
+function classifyPublicReason(reason: string) {
+  if (reason === LOCAL_REASONS.INVALID_REQUEST_BODY) return "invalid_request" as const;
+  if (reason === LOCAL_REASONS.UPSTREAM_RPC_UNAVAILABLE || reason.includes("replay_check_failed")) return "rpc_unavailable" as const;
+  if (reason === LOCAL_REASONS.SETTLEMENT_CAPACITY_EXCEEDED) return "resource_unavailable" as const;
+  if (reason === LOCAL_REASONS.FACILITATOR_INTERNAL_ERROR || reason.startsWith("unexpected_")) return "internal_error" as const;
+  if (reason.includes("unsupported_scheme") || reason === LOCAL_REASONS.UNSUPPORTED_SCHEME_OR_NETWORK) return "unsupported_payment_scheme" as const;
+  return "payment_rejected" as const;
+}
+
+function encodeQueuedCatalogResponse(transaction: string): string {
+  return Buffer.from(JSON.stringify({
+    bazaar: {
+      status: "queued",
+      reason: "Catalog validation is running asynchronously and does not affect settlement.",
+      transaction,
+    },
+  })).toString("base64");
+}
+
+function requestLogContext(
+  c: any,
+  body?: unknown,
+  transactionHash?: string,
+): Pick<import("./logger.js").RequestOutcome, "requestId" | "paymentId" | "resource" | "transactionHash"> {
+  const requestId = c.get("requestId") as string | undefined;
+  const paymentId = c.req.header("X-Payment-Id")?.trim();
+  const candidate = body && typeof body === "object"
+    ? (body as { paymentPayload?: { resource?: { url?: unknown } } }).paymentPayload?.resource?.url
+    : undefined;
+  const resource = typeof candidate === "string" ? candidate.slice(0, 2048) : undefined;
+  return {
+    ...(requestId ? { requestId } : {}),
+    ...(paymentId && /^[A-Za-z0-9._:-]{1,128}$/.test(paymentId) ? { paymentId } : {}),
+    ...(resource ? { resource } : {}),
+    ...(transactionHash ? { transactionHash } : {}),
+  };
 }
 
 /**

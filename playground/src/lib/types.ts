@@ -1,6 +1,9 @@
 export interface PlaygroundConfig {
   facilitatorUrl: string;
   demoServerUrl: string;
+  gatewayUrl: string;
+  gatewayResourceUrl: string;
+  gatewayUpstreamUrl: string;
   bazaarUrl: string;
   network: string;
   horizonUrl: string;
@@ -39,4 +42,15 @@ export interface RunRecord {
   resourceResponse?: any;
   txHash?: string;
   error?: string;
+}
+
+export interface GatewayRunRecord {
+  challenge: any;
+  paymentPayload: any;
+  settlement: any;
+  transaction: any;
+  upstreamResponse: any;
+  providerOutcome?: any;
+  bazaar?: any;
+  totalMs: number;
 }

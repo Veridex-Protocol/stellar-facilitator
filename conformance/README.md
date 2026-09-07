@@ -20,7 +20,8 @@ It validates:
 ## Running the Conformance Suite
 
 ### Prerequisites
-Make sure the stack is running (facilitator on port 3002, bazaar on port 3001, demo-server on port 4020).
+Make sure the stack is running (facilitator on port 3002, Bazaar on port 3001,
+and demo server on port 3003).
 
 ### Run Harness
 ```bash

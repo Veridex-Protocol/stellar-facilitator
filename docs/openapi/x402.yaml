@@ -3,7 +3,9 @@ info:
   title: Veridex x402 facilitator API
   version: 0.3.0
   description: >
-    Canonical x402 v2 facilitator for Stellar. Every capability advertised here
+    Stellar x402 v2 facilitator. The exact path uses the canonical installed
+    packages; upto, x402job/1 receipts, and Veridex error metadata are local
+    extensions. Every capability advertised here
     is confirmed against the network before the server binds: the process
     refuses to start rather than advertise fee sponsorship from an unfunded
     account, and a scheme with no deployed contract is omitted entirely rather
@@ -110,9 +112,10 @@ paths:
             EXTENSION-RESPONSES:
               description: >
                 Present when the payment carried the Bazaar discovery extension.
-                Base64 JSON reporting whether the listing landed, forwarded from
-                the catalog so a seller learns the outcome from the same call
-                that settled the payment.
+                The current asynchronous handoff returns base64 JSON containing
+                bazaar.status "queued" and the settlement transaction. Eventual
+                catalog acceptance/rejection is observed from Bazaar, not this
+                immediate response.
               schema: { type: string }
           content:
             application/json:
@@ -185,6 +188,25 @@ paths:
                     description: False means nothing advertised here has been confirmed yet
                   channels: { type: object, additionalProperties: true }
 
+  /ready:
+    get:
+      tags: [ops]
+      summary: Startup/readiness state
+      responses:
+        '200': { description: Ready }
+        '503': { description: Startup checks have not completed successfully }
+
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus text metrics
+      responses:
+        '200':
+          description: Process-local counters, gauges, and histograms
+          content:
+            text/plain:
+              schema: { type: string }
+
   /stats:
     get:
       tags: [ops]
@@ -234,6 +256,18 @@ paths:
         '200': { description: Transaction status }
         '404': { description: Not found }
 
+  /internal/channels/{address}/recover:
+    post:
+      tags: [ops]
+      summary: Recover a reconciled quarantined signer
+      security: [{ internalToken: [] }]
+      parameters:
+        - { in: path, name: address, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Signer recovered }
+        '401': { description: Missing or invalid internal bearer token }
+        '404': { description: Signer is not quarantined }
+
   /x402/verify:
     post:
       tags: [protocol]
@@ -259,6 +293,11 @@ paths:
       responses: { '200': { description: Settled }, '400': { description: Rejected } }
 
 components:
+  securitySchemes:
+    internalToken:
+      type: http
+      scheme: bearer
+      description: FACILITATOR_INTERNAL_TOKEN used only for operator recovery.
   responses:
     RateLimited:
       description: >
@@ -306,6 +345,13 @@ components:
       type: object
       required: [paymentPayload, paymentRequirements]
       properties:
+        x402Version:
+          type: integer
+          enum: [2]
+          description: >
+            Standard x402 v2 facilitator requests include this field. The
+            current runtime also accepts installed clients that omit it and
+            validates paymentPayload.x402Version.
         paymentPayload: { $ref: '#/components/schemas/PaymentPayload' }
         paymentRequirements: { $ref: '#/components/schemas/PaymentRequirements' }
 
@@ -356,6 +402,11 @@ components:
         payer: { type: string }
         invalidReason: { type: string, description: Never null on a rejection }
         invalidMessage: { type: string, description: A sentence explaining the reason }
+        extensions: { type: object, additionalProperties: true }
+        extra:
+          type: object
+          additionalProperties: true
+          description: May contain Veridex error metadata under veridexError.
 
     SettleResponse:
       type: object
@@ -365,14 +416,25 @@ components:
         transaction: { type: string, description: Hash, empty when nothing was submitted }
         network: { type: string }
         payer: { type: string }
+        amount:
+          type: string
+          pattern: '^\d+$'
+          description: Actual atomic amount when supplied by the scheme, including upto.
         errorReason: { type: string }
         errorMessage: { type: string }
+        extensions: { type: object, additionalProperties: true }
+        extra:
+          type: object
+          additionalProperties: true
+          description: May contain Veridex error metadata under veridexError.
         receipt: { $ref: '#/components/schemas/JobReceipt' }
 
     JobReceipt:
       type: object
       description: >
-        An x402job/1 receipt, present when the settlement named a payer. Signed
+        Custom Veridex/proposal x402job/1 receipt; not the core SettleResponse
+        and not the upstream offer-receipt extension. Present when the
+        settlement named a payer. Signed
         over the RFC 8785 canonical form of the claims, so a third party can
         recompute both digests and check the signature independently.
       properties:

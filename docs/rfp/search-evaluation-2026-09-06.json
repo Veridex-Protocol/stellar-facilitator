@@ -1,0 +1,54 @@
+{
+  "provider": "feature-hash",
+  "semanticClaim": false,
+  "generatedAt": "2026-09-06T16:38:23.053Z",
+  "datasetSize": 10,
+  "queryCount": 50,
+  "categories": [
+    "exact",
+    "paraphrase",
+    "zero_lexical_overlap",
+    "ambiguous",
+    "no_result",
+    "mcp",
+    "filtered"
+  ],
+  "labelingMethodology": "Hand-authored graded relevance judgments: 3 perfect, 2 highly relevant, 1 marginal, 0 irrelevant. No-result queries have empty qrels.",
+  "evaluationProcedure": "Apply declared structured filters, rank the same in-memory corpus with lexical-only and feature-hash-plus-lexical RRF, then macro-average judged queries. Measure each ranking call with performance.now().",
+  "lexicalBaseline": {
+    "recall1": 0.6489361702127658,
+    "recall5": 0.8546099290780141,
+    "recall20": 0.8546099290780141,
+    "ndcg5": 0.8588674068591817,
+    "ndcg10": 0.8588674068591817,
+    "mrr": 0.8765957446808511,
+    "coverage": 0.8936170212765957,
+    "zeroResultRate": 0.16,
+    "noResultAccuracy": 1,
+    "latencyMs": {
+      "p50": 0.012499999999988631,
+      "p95": 0.035041999999975815
+    }
+  },
+  "currentHybrid": {
+    "recall1": 0.6489361702127658,
+    "recall5": 0.8546099290780141,
+    "recall20": 0.8546099290780141,
+    "ndcg5": 0.8632973133121637,
+    "ndcg10": 0.8632973133121637,
+    "mrr": 0.8794326241134751,
+    "coverage": 0.8936170212765957,
+    "zeroResultRate": 0.16,
+    "noResultAccuracy": 1,
+    "latencyMs": {
+      "p50": 0.6371249999999975,
+      "p95": 1.6962080000000128
+    }
+  },
+  "knownLimitations": [
+    "Feature hashing is lexical, not semantic; the zero-lexical-overlap paraphrase is not retrieved.",
+    "Latency measures the in-memory evaluation runner, not PostgreSQL or production throughput.",
+    "The dataset is a small reviewer regression set and is not representative of production traffic."
+  ],
+  "command": "npm --prefix bazaar-service run search:eval"
+}

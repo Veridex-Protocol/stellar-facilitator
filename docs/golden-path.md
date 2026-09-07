@@ -16,10 +16,8 @@ cd ../path/to/your-project
 npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
 ```
 
-`@veridex/stellar` is not yet published to npm. For the current repository
-release candidate, pack and install the SDK locally as described in its
-[package README](../sdk-typescript/README.md); use the command above after
-the package is published.
+Install the packed tarball as described above. Do not use a registry install
+until publication is independently confirmed.
 
 ```ts
 import { createVeridexClient } from "@veridex/stellar";
@@ -44,7 +42,10 @@ Install `@x402/core`, `@x402/extensions`, `@x402/hono`, `@x402/stellar`, Hono, a
 ```ts
 import { createBazaarClient, createVeridexClient } from "@veridex/stellar";
 
-const bazaar = createBazaarClient({ bazaarUrl: "http://localhost:3001" });
+const bazaar = createBazaarClient({
+  bazaarUrl: "http://localhost:3001",
+  defaultNetwork: "stellar:testnet",
+});
 const page = await bazaar.search({ query: "weather forecast", network: "stellar:testnet" });
 const client = createVeridexClient({
   network: "stellar:testnet",
@@ -57,7 +58,7 @@ Discovery is settlement-seeded: a seller appears after a payment-backed catalog 
 
 ## Agent / MCP
 
-Run the repository MCP server with the local stack. Its active tools are `discover_resources` and `pay_resource`; it uses the same official x402 payment flow.
+Run the repository MCP server with the local stack. Its active tools are `discover_resources` and `pay_resource`. `pay_resource` returns a bounded challenge for the client wallet and accepts the externally signed payload on a second call; no buyer key is configured in MCP.
 
 The local demo resource uses a private Docker hostname, so enable local URLs
 only for this local stdio session. Keep the default disabled for deployments

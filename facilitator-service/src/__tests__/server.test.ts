@@ -80,6 +80,12 @@ describe("canonical facilitator HTTP surface", () => {
     expect(body.isValid).toBe(false);
     expect(body.invalidReason).toBe("invalid_request_body");
     expect(body.invalidMessage.length).toBeGreaterThan(20);
+    expect(body.extra?.veridexError).toMatchObject({
+      code: "invalid_request",
+      reason: expect.any(String),
+      retryable: false,
+      category: "validation",
+    });
   });
 
   it("names the offending field when the asset is a classic identifier", async () => {
@@ -111,6 +117,12 @@ describe("canonical facilitator HTTP surface", () => {
     expect(body.errorReason).toBe("invalid_request_body");
     expect(body.errorMessage).toMatch(/SEP-41 token contract address/);
     expect(body.transaction).toBe("");
+    expect(body.extra?.veridexError).toMatchObject({
+      code: "invalid_request",
+      reason: expect.any(String),
+      retryable: false,
+      category: "validation",
+    });
   });
 
   it("logs one structured outcome line per request, with latency", async () => {
@@ -120,14 +132,33 @@ describe("canonical facilitator HTTP surface", () => {
 
     await service.getApp().request("/verify", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Request-Id": "review-request-1",
+        "X-Payment-Id": "payment-1",
+      },
       body: "{}",
     });
 
     const outcomes = lines.filter((line) => line.kind === "request_outcome");
     expect(outcomes).toHaveLength(1);
-    expect(outcomes[0]).toMatchObject({ endpoint: "/verify", outcome: "invalid", status: 400 });
+    expect(outcomes[0]).toMatchObject({
+      endpoint: "/verify",
+      outcome: "invalid",
+      status: 400,
+      requestId: "review-request-1",
+      paymentId: "payment-1",
+    });
     expect(typeof outcomes[0].latencyMs).toBe("number");
+  });
+
+  it("generates and echoes a safe request id when the caller does not supply one", async () => {
+    const { config } = makeConfig();
+    const service = new FacilitatorService(config, recordingLogger().logger);
+
+    const response = await service.getApp().request("/health");
+
+    expect(response.headers.get("X-Request-Id")).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("rate limits before it will spend fees on an unbounded request rate", async () => {
@@ -200,6 +231,32 @@ describe("canonical facilitator HTTP surface", () => {
     const body = (await (await service.getApp().request("/stats")).json()) as any;
     expect(body.note).toMatch(/reset on restart/);
     expect(body.ledgerSkew).toMatchObject({ retriesIssued: 0, recoveredAfterRetry: 0 });
+  });
+
+  it("requires internal authentication to recover a reconciled signer", async () => {
+    const saved = process.env.FACILITATOR_INTERNAL_TOKEN;
+    process.env.FACILITATOR_INTERNAL_TOKEN = "internal-test-token";
+    const { config } = makeConfig();
+    const service = new FacilitatorService(config, recordingLogger().logger);
+    const scheduler = (service as any).x402Facilitator.scheduler;
+    const signer = scheduler.selectSigner([...((service as any).x402Facilitator.exactScheme.signingAddresses)]);
+    await scheduler.withSigner(async () => "uncertain", signer, () => true);
+
+    try {
+      const unauthorized = await service.getApp().request(`/internal/channels/${signer}/recover`, { method: "POST" });
+      expect(unauthorized.status).toBe(401);
+
+      const recovered = await service.getApp().request(`/internal/channels/${signer}/recover`, {
+        method: "POST",
+        headers: { Authorization: "Bearer internal-test-token" },
+      });
+      expect(recovered.status).toBe(200);
+      expect(await recovered.json()).toEqual({ status: "recovered", address: signer });
+      expect(scheduler.getStats().quarantined).toBe(0);
+    } finally {
+      if (saved === undefined) delete process.env.FACILITATOR_INTERNAL_TOKEN;
+      else process.env.FACILITATOR_INTERNAL_TOKEN = saved;
+    }
   });
 });
 

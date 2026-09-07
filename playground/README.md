@@ -30,6 +30,9 @@ were lying, each panel gives you the means to catch it.
 | **Receipt** | Verifies the facilitator's `x402job/1` receipt in your browser, with this page's own RFC 8785 implementation. Then invites you to forge one. |
 | **Refusals** | Nine ways to send a dishonest payment, plus a raw editor. Everything goes to `/verify`, which settles nothing, so probing is free. |
 | **Evidence** | The repository's CI conformance report, served verbatim, with every transaction linked. |
+| **Bazaar Discovery** | Queries the live catalog and exposes payment identity separately from seller-controlled metadata. |
+| **API Gateway** | Activates the allowlisted demo gateway, signs a real testnet payment, receives the original API response, and displays Stellar/Bazaar/provider proof. |
+| **Agent Policy** | Demonstrates local atomic-unit policy before signing; it is not a deployed smart-account proof. |
 
 ## Where the keys are
 
@@ -120,17 +123,14 @@ network.
 
 Stated here rather than implied by omission:
 
-- **Bazaar search.** The catalog and its hybrid ranking exist in
-  `bazaar-service/`, but no panel here queries them. A discovery panel should
-  wait until filtered search returns correct results — filters are currently
-  applied after candidate retrieval, so a filtered query can come back empty
-  while matching resources sit in the catalog.
 - **The metered `upto` flow in this playground.** The facilitator and custom
   HTTP seller/client path are proven on testnet, but this browser playground
   still exposes the exact flow only. The `upto` contract and adapter remain
   experimental and unaudited.
 - **Mainnet.** Nothing here has run against `stellar:pubnet`, and the server
   refuses to try.
+- **Smart-account budget enforcement.** The policy panel is local browser logic,
+  not an on-chain `$10/$2/$12` stablecoin authorization fixture.
 
 ## Deploying
 

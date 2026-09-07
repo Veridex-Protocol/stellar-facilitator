@@ -3,6 +3,7 @@
  * License: Apache-2.0
  */
 
+import { performance } from "node:perf_hooks";
 import {
   BENCHMARK_DOCUMENTS,
   BENCHMARK_QUERIES,
@@ -13,25 +14,36 @@ import {
   calculateNDCG,
   calculateReciprocalRank,
   calculateRecallAtK,
-  calculatePrecisionAtK,
 } from "./metrics.js";
 import { generateEmbedding } from "../embeddings.js";
 
+export interface EvaluationMetrics {
+  recall1: number;
+  recall5: number;
+  recall20: number;
+  ndcg5: number;
+  ndcg10: number;
+  mrr: number;
+  coverage: number;
+  zeroResultRate: number;
+  noResultAccuracy: number;
+  latencyMs: { p50: number; p95: number };
+}
+
 export interface EvaluationResult {
-  meanNDCG5: number;
-  meanNDCG10: number;
-  meanMRR: number;
-  meanRecall5: number;
-  meanPrecision5: number;
-  queryResults: {
+  datasetSize: number;
+  queryCount: number;
+  labelingMethodology: string;
+  evaluationProcedure: string;
+  lexicalBaseline: EvaluationMetrics;
+  currentHybrid: EvaluationMetrics;
+  queryResults: Array<{
     query: string;
-    ndcg5: number;
-    ndcg10: number;
-    mrr: number;
-    recall5: number;
-    precision5: number;
-    rankedIds: string[];
-  }[];
+    category: JudgedQuery["category"];
+    expectedNoResults: boolean;
+    lexical: { rankedIds: string[]; latencyMs: number };
+    current: { rankedIds: string[]; latencyMs: number };
+  }>;
 }
 
 /**
@@ -41,57 +53,53 @@ export interface EvaluationResult {
 export async function rankBenchmarkDocuments(
   query: string,
   documents: BenchmarkDocument[] = BENCHMARK_DOCUMENTS,
-  weights = { vector: 1.0, text: 1.0, rrfK: 60 }
+  weights = { vector: 1.0, text: 1.0, rrfK: 60 },
 ): Promise<string[]> {
-  const queryTokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const queryTokens = tokenize(query);
   const queryEmbedding = await generateEmbedding(query);
-
-  // 1. Vector similarity leg
   const vectorScores: { id: string; score: number }[] = [];
-  for (const doc of documents) {
-    const docText = `${doc.serviceName} ${doc.description} ${doc.tags.join(" ")}`;
-    const docEmbedding = await generateEmbedding(docText);
-    // Cosine similarity
-    let dot = 0;
-    for (let i = 0; i < queryEmbedding.length; i++) {
-      dot += queryEmbedding[i] * docEmbedding[i];
-    }
-    vectorScores.push({ id: doc.id, score: dot });
-  }
-  vectorScores.sort((a, b) => b.score - a.score);
-  const vectorRankMap = new Map<string, number>();
-  vectorScores.forEach((item, index) => vectorRankMap.set(item.id, index + 1));
-
-  // 2. Full-text cover density leg (lexical match over tokens)
   const textScores: { id: string; score: number }[] = [];
-  for (const doc of documents) {
-    const docText = `${doc.serviceName} ${doc.description} ${doc.tags.join(" ")}`.toLowerCase();
-    let matches = 0;
-    for (const token of queryTokens) {
-      if (docText.includes(token)) {
-        matches++;
-      }
+  for (const document of documents) {
+    const documentText = searchableText(document);
+    const documentEmbedding = await generateEmbedding(documentText);
+    let dot = 0;
+    for (let index = 0; index < queryEmbedding.length; index++) {
+      dot += queryEmbedding[index] * documentEmbedding[index];
     }
-    const score = matches / Math.max(1, queryTokens.length);
-    textScores.push({ id: doc.id, score });
-  }
-  textScores.sort((a, b) => b.score - a.score);
-  const textRankMap = new Map<string, number>();
-  textScores.forEach((item, index) => textRankMap.set(item.id, index + 1));
-
-  // 3. Reciprocal Rank Fusion (RRF)
-  const k = weights.rrfK || 60;
-  const fusedScores: { id: string; rrfScore: number }[] = [];
-  for (const doc of documents) {
-    const vRank = vectorRankMap.get(doc.id) || 1000;
-    const tRank = textRankMap.get(doc.id) || 1000;
-
-    const rrfScore = (weights.vector / (k + vRank)) + (weights.text / (k + tRank));
-    fusedScores.push({ id: doc.id, rrfScore });
+    vectorScores.push({ id: document.id, score: dot });
+    textScores.push({ id: document.id, score: lexicalScore(queryTokens, documentText) });
   }
 
-  fusedScores.sort((a, b) => b.rrfScore - a.rrfScore);
-  return fusedScores.map((item) => item.id);
+  vectorScores.sort(scoreOrder);
+  textScores.sort(scoreOrder);
+  const vectorRank = new Map(vectorScores.map((item, index) => [item.id, index + 1]));
+  const textRank = new Map(textScores.filter((item) => item.score > 0).map((item, index) => [item.id, index + 1]));
+  const candidates = new Set([
+    ...vectorScores.filter((item) => textRank.has(item.id)).map((item) => item.id),
+    ...textRank.keys(),
+  ]);
+
+  return [...candidates]
+    .map((id) => ({
+      id,
+      score:
+        (weights.vector / (weights.rrfK + (vectorRank.get(id) ?? 1000))) +
+        (weights.text / (weights.rrfK + (textRank.get(id) ?? 1000))),
+    }))
+    .sort(scoreOrder)
+    .map((item) => item.id);
+}
+
+export function rankLexicalDocuments(
+  query: string,
+  documents: BenchmarkDocument[] = BENCHMARK_DOCUMENTS,
+): string[] {
+  const queryTokens = tokenize(query);
+  return documents
+    .map((document) => ({ id: document.id, score: lexicalScore(queryTokens, searchableText(document)) }))
+    .filter((item) => item.score > 0)
+    .sort(scoreOrder)
+    .map((item) => item.id);
 }
 
 /**
@@ -99,49 +107,97 @@ export async function rankBenchmarkDocuments(
  */
 export async function runSearchEvaluation(
   queries: JudgedQuery[] = BENCHMARK_QUERIES,
-  documents: BenchmarkDocument[] = BENCHMARK_DOCUMENTS
+  documents: BenchmarkDocument[] = BENCHMARK_DOCUMENTS,
 ): Promise<EvaluationResult> {
   const queryResults: EvaluationResult["queryResults"] = [];
-
-  let totalNDCG5 = 0;
-  let totalNDCG10 = 0;
-  let totalMRR = 0;
-  let totalRecall5 = 0;
-  let totalPrecision5 = 0;
-
-  for (const q of queries) {
-    const rankedIds = await rankBenchmarkDocuments(q.query, documents);
-
-    const ndcg5 = calculateNDCG(rankedIds, q.qrels, 5);
-    const ndcg10 = calculateNDCG(rankedIds, q.qrels, 10);
-    const mrr = calculateReciprocalRank(rankedIds, q.qrels);
-    const recall5 = calculateRecallAtK(rankedIds, q.qrels, 5);
-    const precision5 = calculatePrecisionAtK(rankedIds, q.qrels, 5);
-
-    totalNDCG5 += ndcg5;
-    totalNDCG10 += ndcg10;
-    totalMRR += mrr;
-    totalRecall5 += recall5;
-    totalPrecision5 += precision5;
-
+  for (const judgedQuery of queries) {
+    const candidates = applyFilters(documents, judgedQuery);
+    const lexicalStart = performance.now();
+    const lexicalIds = rankLexicalDocuments(judgedQuery.query, candidates);
+    const lexicalLatencyMs = performance.now() - lexicalStart;
+    const currentStart = performance.now();
+    const currentIds = await rankBenchmarkDocuments(judgedQuery.query, candidates);
+    const currentLatencyMs = performance.now() - currentStart;
     queryResults.push({
-      query: q.query,
-      ndcg5,
-      ndcg10,
-      mrr,
-      recall5,
-      precision5,
-      rankedIds,
+      query: judgedQuery.query,
+      category: judgedQuery.category,
+      expectedNoResults: judgedQuery.expectedNoResults === true,
+      lexical: { rankedIds: lexicalIds, latencyMs: lexicalLatencyMs },
+      current: { rankedIds: currentIds, latencyMs: currentLatencyMs },
     });
   }
 
-  const count = queries.length;
   return {
-    meanNDCG5: totalNDCG5 / count,
-    meanNDCG10: totalNDCG10 / count,
-    meanMRR: totalMRR / count,
-    meanRecall5: totalRecall5 / count,
-    meanPrecision5: totalPrecision5 / count,
+    datasetSize: documents.length,
+    queryCount: queries.length,
+    labelingMethodology: "Hand-authored graded relevance judgments: 3 perfect, 2 highly relevant, 1 marginal, 0 irrelevant. No-result queries have empty qrels.",
+    evaluationProcedure: "Apply declared structured filters, rank the same in-memory corpus with lexical-only and feature-hash-plus-lexical RRF, then macro-average judged queries. Measure each ranking call with performance.now().",
+    lexicalBaseline: summarize(queryResults.map((result, index) => ({
+      rankedIds: result.lexical.rankedIds,
+      latencyMs: result.lexical.latencyMs,
+      query: queries[index],
+    }))),
+    currentHybrid: summarize(queryResults.map((result, index) => ({
+      rankedIds: result.current.rankedIds,
+      latencyMs: result.current.latencyMs,
+      query: queries[index],
+    }))),
     queryResults,
   };
+}
+
+function summarize(results: Array<{ rankedIds: string[]; latencyMs: number; query: JudgedQuery }>): EvaluationMetrics {
+  const judged = results.filter(({ query }) => !query.expectedNoResults);
+  const noResult = results.filter(({ query }) => query.expectedNoResults);
+  const mean = (values: number[]) => values.length === 0
+    ? 0
+    : values.reduce((sum, value) => sum + value, 0) / values.length;
+  const latencies = results.map(({ latencyMs }) => latencyMs).sort((left, right) => left - right);
+  return {
+    recall1: mean(judged.map(({ rankedIds, query }) => calculateRecallAtK(rankedIds, query.qrels, 1))),
+    recall5: mean(judged.map(({ rankedIds, query }) => calculateRecallAtK(rankedIds, query.qrels, 5))),
+    recall20: mean(judged.map(({ rankedIds, query }) => calculateRecallAtK(rankedIds, query.qrels, 20))),
+    ndcg5: mean(judged.map(({ rankedIds, query }) => calculateNDCG(rankedIds, query.qrels, 5))),
+    ndcg10: mean(judged.map(({ rankedIds, query }) => calculateNDCG(rankedIds, query.qrels, 10))),
+    mrr: mean(judged.map(({ rankedIds, query }) => calculateReciprocalRank(rankedIds, query.qrels))),
+    coverage: mean(judged.map(({ rankedIds, query }) =>
+      Object.entries(query.qrels).some(([id, relevance]) => relevance > 0 && rankedIds.includes(id)) ? 1 : 0,
+    )),
+    zeroResultRate: mean(results.map(({ rankedIds }) => rankedIds.length === 0 ? 1 : 0)),
+    noResultAccuracy: mean(noResult.map(({ rankedIds }) => rankedIds.length === 0 ? 1 : 0)),
+    latencyMs: {
+      p50: percentile(latencies, 0.50),
+      p95: percentile(latencies, 0.95),
+    },
+  };
+}
+
+function applyFilters(documents: BenchmarkDocument[], query: JudgedQuery): BenchmarkDocument[] {
+  return documents.filter((document) =>
+    (!query.filters?.resourceType || document.resourceType === query.filters.resourceType) &&
+    (!query.filters?.toolName || document.toolName === query.filters.toolName) &&
+    (!query.filters?.tags || query.filters.tags.every((tag) => document.tags.includes(tag))),
+  );
+}
+
+function searchableText(document: BenchmarkDocument): string {
+  return `${document.serviceName} ${document.description} ${document.tags.join(" ")} ${document.toolName ?? ""}`.toLowerCase();
+}
+
+function tokenize(value: string): string[] {
+  return value.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
+}
+
+function lexicalScore(queryTokens: string[], documentText: string): number {
+  if (queryTokens.length === 0) return 0;
+  return queryTokens.filter((token) => documentText.includes(token)).length / queryTokens.length;
+}
+
+function scoreOrder(left: { id: string; score: number }, right: { id: string; score: number }): number {
+  return right.score - left.score || left.id.localeCompare(right.id);
+}
+
+function percentile(values: number[], quantile: number): number {
+  if (values.length === 0) return 0;
+  return values[Math.min(values.length - 1, Math.ceil(values.length * quantile) - 1)];
 }

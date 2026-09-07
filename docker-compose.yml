@@ -57,6 +57,8 @@ services:
       PROVIDER_AGGREGATE_ISSUER_SECRET_KEY: ${PROVIDER_AGGREGATE_ISSUER_SECRET_KEY:-${FACILITATOR_SECRET_KEY}}
       PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS: ${PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS:-${FACILITATOR_PUBLIC_KEY}}
       PROVIDER_QUALITY_AUTHORIZED_SIGNERS: ${PROVIDER_QUALITY_AUTHORIZED_SIGNERS:-${SELLER_ADDRESS}}
+      PROVIDER_OBSERVER_TOKEN: ${PROVIDER_OBSERVER_TOKEN:-}
+      PROVIDER_OBSERVER_AUTHORIZED_SIGNERS: ${PROVIDER_OBSERVER_AUTHORIZED_SIGNERS:-}
 
       # Required. Guards /catalog/ingest, which writes to the public catalog.
       BAZAAR_INTERNAL_TOKEN: ${BAZAAR_INTERNAL_TOKEN:?set BAZAAR_INTERNAL_TOKEN - run npm run setup}
@@ -64,6 +66,16 @@ services:
       # Used to confirm the settlement behind every catalog entry.
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       BAZAAR_BASE_URL: ${BAZAAR_BASE_URL:-http://localhost:3001}
+
+      # HTTP listings are fetched asynchronously and must reproduce their 402
+      # terms. The explicit map preserves the public URL as catalog identity
+      # while routing the validation request through the Compose network.
+      CATALOG_REVALIDATION_ALLOWED_ORIGINS: http://localhost:${DEMO_SERVER_HOST_PORT:-3003},http://localhost:${GATEWAY_HOST_PORT:-3005}
+      CATALOG_REVALIDATION_TRANSPORT_ORIGIN_MAP: '{"http://localhost:${DEMO_SERVER_HOST_PORT:-3003}":"http://demo-server:3003","http://localhost:${GATEWAY_HOST_PORT:-3005}":"http://gateway:3005"}'
+      CATALOG_REVALIDATION_INTERVAL_MS: ${CATALOG_REVALIDATION_INTERVAL_MS:-300000}
+      CATALOG_REVALIDATION_STALE_MS: ${CATALOG_REVALIDATION_STALE_MS:-3600000}
+      CATALOG_REVALIDATION_TIMEOUT_MS: ${CATALOG_REVALIDATION_TIMEOUT_MS:-5000}
+      CATALOG_REVALIDATION_BATCH_SIZE: ${CATALOG_REVALIDATION_BATCH_SIZE:-20}
 
       # Logging
       LOG_LEVEL: info
@@ -84,6 +96,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${FACILITATOR_HOST_PORT:-3002}:3002"
+    volumes:
+      - facilitator-outbox:/var/lib/veridex/catalog-outbox
     environment:
       # HTTP Server
       FACILITATOR_PORT: 3002
@@ -93,6 +107,7 @@ services:
       STELLAR_NETWORK: testnet
       FACILITATOR_PUBLIC_KEY: ${FACILITATOR_PUBLIC_KEY}
       FACILITATOR_SECRET_KEY: ${FACILITATOR_SECRET_KEY}
+      FACILITATOR_INTERNAL_TOKEN: ${FACILITATOR_INTERNAL_TOKEN:-${BAZAAR_INTERNAL_TOKEN}}
 
       # Public origin advertised in /.well-known/x402. Required: the descriptor
       # states where clients reach this service, which a bind address cannot.
@@ -112,11 +127,16 @@ services:
       MAX_TRANSACTION_FEE_STROOPS: ${MAX_TRANSACTION_FEE_STROOPS:-1000000}
       LEDGER_SKEW_RETRIES: ${LEDGER_SKEW_RETRIES:-2}
       LEDGER_SKEW_RETRY_DELAY_MS: ${LEDGER_SKEW_RETRY_DELAY_MS:-6000}
+      CATALOG_HANDOFF_TIMEOUT_MS: ${CATALOG_HANDOFF_TIMEOUT_MS:-2000}
+      CATALOG_OUTBOX_DIRECTORY: /var/lib/veridex/catalog-outbox
+      CATALOG_OUTBOX_REPLAY_INTERVAL_MS: ${CATALOG_OUTBOX_REPLAY_INTERVAL_MS:-5000}
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
 
       # Channel Account Pool
       HORIZON_URL: ${HORIZON_URL:-https://horizon-testnet.stellar.org}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
+      SOROBAN_RPC_URLS: ${SOROBAN_RPC_URLS:-${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}}
+      RPC_REQUEST_TIMEOUT_MS: ${RPC_REQUEST_TIMEOUT_MS:-5000}
       CHANNEL_POOL_SIZE: ${CHANNEL_POOL_SIZE:-0}
       CHANNEL_SECRET_KEYS: ${CHANNEL_SECRET_KEYS:-}
       CHANNEL_AUTO_CREATE: ${CHANNEL_AUTO_CREATE:-false}
@@ -165,6 +185,36 @@ services:
       facilitator:
         condition: service_healthy
 
+  # Lowest-friction seller path: puts canonical Stellar x402 in front of the
+  # controlled existing demo API without changing that API's handlers.
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway-service/Dockerfile
+    ports:
+      - "${GATEWAY_HOST_PORT:-3005}:3005"
+    volumes:
+      - gateway-data:/var/lib/veridex/gateway
+    environment:
+      GATEWAY_PORT: 3005
+      GATEWAY_CONFIG: gateway.config.json
+      GATEWAY_DATA_DIRECTORY: /var/lib/veridex/gateway
+      GATEWAY_UPSTREAM: http://demo-server:3003/demo-api
+      GATEWAY_PUBLIC_BASE_URL: ${PUBLIC_GATEWAY_URL:-http://localhost:3005}
+      GATEWAY_PAY_TO: ${SELLER_ADDRESS}
+      FACILITATOR_URL: http://facilitator:3002
+      PAYMENT_ASSET: ${PAYMENT_ASSET}
+      PAYMENT_AMOUNT: ${GATEWAY_PAYMENT_AMOUNT:-100000}
+      PROVIDER_OUTCOME_SECRET_KEY: ${PROVIDER_OUTCOME_SECRET_KEY:-${SELLER_SECRET_KEY}}
+      PROVIDER_OBSERVER_TOKEN: ${BAZAAR_INTERNAL_TOKEN:-}
+      GATEWAY_MANAGEMENT_TOKEN: ${GATEWAY_MANAGEMENT_TOKEN:-}
+      BAZAAR_URL: http://bazaar:3001
+    depends_on:
+      facilitator:
+        condition: service_healthy
+      demo-server:
+        condition: service_healthy
+
   # Browser-facing sandbox. Holds no keys: visitors' keypairs are generated in
   # their own browser and funded by Friendbot.
   playground:
@@ -175,16 +225,21 @@ services:
       - "${PLAYGROUND_HOST_PORT:-3004}:3004"
     environment:
       PLAYGROUND_PORT: 3004
+      PORT: 3004
+      HOSTNAME: 0.0.0.0
       # Reached from the visitor's browser, so these must be the URLs the
       # browser can resolve - not the compose service names.
       FACILITATOR_URL: ${PUBLIC_FACILITATOR_URL:-http://localhost:3002}
       DEMO_SERVER_URL: ${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}
+      DEMO_SERVER_INTERNAL_URL: http://demo-server:3003
+      GATEWAY_URL: ${PUBLIC_GATEWAY_URL:-http://localhost:3005}
+      GATEWAY_INTERNAL_URL: http://gateway:3005
       BAZAAR_URL: ${PUBLIC_BAZAAR_URL:-http://localhost:3001}
       STELLAR_NETWORK: testnet
       PAYMENT_ASSET: ${PAYMENT_ASSET}
       # The proxy reaches the seller from inside the network, so it is
       # allowlisted for both the service name and the public URL.
-      PLAYGROUND_ALLOWED_ORIGINS: "http://demo-server:3003,${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003}"
+      PLAYGROUND_ALLOWED_ORIGINS: "http://demo-server:3003,http://gateway:3005,${PUBLIC_DEMO_SERVER_URL:-http://localhost:3003},${PUBLIC_GATEWAY_URL:-http://localhost:3005}"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3004/api/config"]
       interval: 15s
@@ -192,7 +247,7 @@ services:
       retries: 5
       start_period: 20s
     depends_on:
-      demo-server:
+      gateway:
         condition: service_healthy
 
   # MCP Discovery Server (optional)
@@ -204,7 +259,7 @@ services:
       BAZAAR_URL: http://bazaar:3001
       FACILITATOR_URL: http://facilitator:3002
       STELLAR_NETWORK: testnet
-      STELLAR_CLIENT_SECRET_KEY: ${STELLAR_CLIENT_SECRET_KEY:-$BUYER_SECRET_KEY}
+      MCP_MAX_SPEND_AMOUNT_STROOPS: ${MCP_MAX_SPEND_AMOUNT_STROOPS:-10000000}
       SOROBAN_RPC_URL: ${SOROBAN_RPC_URL:-https://soroban-testnet.stellar.org}
     depends_on:
       - bazaar
@@ -214,6 +269,8 @@ services:
 
 volumes:
   postgres-data:
+  facilitator-outbox:
+  gateway-data:
 
 networks:
   default:

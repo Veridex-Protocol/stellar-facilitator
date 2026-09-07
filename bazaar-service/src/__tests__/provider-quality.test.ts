@@ -30,6 +30,7 @@ function observation(overrides: Partial<ProviderObservationRecord> = {}): Provid
     reasonCode: "ok",
     signer: payTo,
     signature: "signature",
+    source: "in_band",
     createdAt: new Date(1_700_000_000_000),
     ...overrides,
   };

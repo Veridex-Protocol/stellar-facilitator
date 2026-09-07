@@ -15,3 +15,12 @@ export async function createSearchEvaluationReport() {
     ...result,
   };
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  createSearchEvaluationReport()
+    .then((report) => process.stdout.write(`${JSON.stringify(report, null, 2)}\n`))
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exitCode = 1;
+    });
+}

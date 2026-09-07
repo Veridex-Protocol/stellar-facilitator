@@ -197,7 +197,30 @@ describe("signed provider aggregates and seller policy", () => {
     expect(decision.action).toBe("hold");
   });
 
-  it("holds a published aggregate above the configured policy ceiling", () => {
+  it.each([
+    [0.0999, "sell"],
+    [0.10, "sell-and-warn"],
+    [0.15, "sell-and-warn"],
+    [0.1501, "hold"],
+  ] as const)("applies published policy boundaries at fault upper bound %s", (bound, action) => {
+    const decision = new SellerPolicyEngine({ warnMax: 0.10, holdMax: 0.15 }).evaluate(resource, {
+      status: "fresh",
+      stale: false,
+      aggregate: createProviderAggregate({
+        endpoint: resource,
+        payTo: payTo.publicKey(),
+        state: "published",
+        faultRateUpperBound: bound,
+        faultsObserved: 20,
+        n: 100,
+        window: "30d",
+        retrievedAt: 1_700_000_000,
+      }, payTo.secret()),
+    });
+    expect(decision.action).toBe(action);
+  });
+
+  it("keeps maxFaultRateUpperBound as a holdMax compatibility alias", () => {
     const decision = new SellerPolicyEngine({ maxFaultRateUpperBound: 0.15 }).evaluate(resource, {
       status: "fresh",
       stale: false,
@@ -212,7 +235,11 @@ describe("signed provider aggregates and seller policy", () => {
         retrievedAt: 1_700_000_000,
       }, payTo.secret()),
     });
-    expect(decision.action).toBe("stop");
+    expect(decision.action).toBe("hold");
+  });
+
+  it("rejects inverted seller policy thresholds", () => {
+    expect(() => new SellerPolicyEngine({ warnMax: 0.2, holdMax: 0.1 })).toThrow(/warnMax/);
   });
 
   it("preserves the last valid aggregate during a bounded indexer outage", async () => {

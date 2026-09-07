@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted (2026-08-23) - records the discovery surface as the spec names it: the six filters on both endpoints, cursor pagination bound to the query that issued it, and `EXTENSION-RESPONSES` carried all the way back to the seller.
+Accepted (2026-08-23) - records the discovery filters, cursor pagination bound
+to the query that issued it, and server-internal `EXTENSION-RESPONSES` outcome
+handling.
+
+Reconciled 2026-09-06: direct Bazaar ingestion still reports final
+`success`/`rejected`, but facilitator settlement now returns a truthful Veridex
+`queued` outcome before asynchronous outbox delivery. The upstream sidechannel
+is server-internal and is not buyer payment proof.
 
 ## Context
 
@@ -64,17 +71,19 @@ Silently answering would return the wrong page while looking correct - **the sam
 
 Each retrieval leg contributes at most 50 candidates before fusion. A saturated pool means ranking never saw some matches, so the page is not a complete answer. `partialReason` states it in words. Listing (`/discovery/resources`) applies no candidate truncation, so it reports `false` honestly rather than by default.
 
-### 4. The cataloging outcome reaches the seller
+### 4. A truthful immediate catalog status reaches the seller
 
-Three hops, all now connected:
+The direct Bazaar endpoint returns final success/rejection. The facilitator path
+has a different timing contract:
 
-1. The Bazaar sets `EXTENSION-RESPONSES` on `/catalog/ingest` - on **acceptance and rejection**, including the pre-ingest rejection when `settlementTx` is absent.
-2. The facilitator reads the header from the catalog's response and returns it on its own `/settle` response.
-3. `exposeHeaders` lists it in CORS, so a browser-based caller can read its own result.
+1. Successful settlement writes a durable transaction-keyed outbox event.
+2. The facilitator returns `EXTENSION-RESPONSES` with `bazaar.status: "queued"` and the transaction.
+3. Bazaar later validates live terms, settlement, and metadata and returns final `success` or `rejected` on the internal ingestion call.
 
-Cataloging failure never fails a settled payment - the money has already moved - so the outcome travels in a header rather than a status code.
+Cataloging failure never changes a successful settlement. Immediate queued status
+must not be documented as final catalog acceptance.
 
-Verified end to end. On rejection the seller receives:
+Direct ingestion rejection remains actionable:
 
 ```json
 {"bazaar":{"status":"rejected","rejectedReason":"settlementTx is required: a catalog
@@ -92,7 +101,7 @@ Percent-decode **before** traversal and scheme-injection checks, because `%2e%2e
 - A stock client's filters do what they say. The silent-no-op class of bug is gone from this surface.
 - Cursors are safe to hand out: opaque, query-bound, versioned, and rejected rather than misinterpreted when misused.
 - `partialResults` distinguishes "all the matches" from "the first 50 we ranked", which is exactly what an agent deciding whether to broaden a query needs.
-- Sellers get feedback on automatic cataloging, closing the loop §3.2 describes. Rejection reasons are actionable sentences, not codes.
+- Sellers get truthful immediate queue status; operators can inspect eventual Bazaar rejection reasons and outbox metrics.
 - All eight discovery checks pass in the conformance harness against a live stack.
 
 **Costs accepted**
@@ -100,7 +109,7 @@ Percent-decode **before** traversal and scheme-injection checks, because `%2e%2e
 - **Cursor fingerprints make cursors brittle by design.** Adding a filter mid-pagination invalidates the cursor. Correct - the result set changed - and it will look like a bug to a client that does it. The error message says exactly what happened.
 - **The fingerprint is a 16-char SHA-256 prefix**, so collisions are possible in principle. A collision would allow a cursor from a *different* query to be accepted; the consequence is a wrong page, not a security breach, and the probability is negligible at catalog scale.
 - **Multi-page traversal is unexercised end to end.** The demo catalog holds one resource, so no conformance run has walked to a second page. Ten unit tests cover the logic and forged cursors are rejected at the wire, but that is not the same thing, and `testnet_docs.md` records it.
-- **`EXTENSION-RESPONSES` depends on the catalog being reachable.** If the Bazaar is down the header is absent, and absence is indistinguishable from "no discovery extension was declared".
+- **Immediate status is not eventual admission.** The durable outbox preserves work during Bazaar outage, but the seller-facing settle response does not synchronously contain the later rejection reason.
 - **`extensions` matches keys, not values.** `extensions=bazaar` finds resources declaring the bazaar extension; it cannot filter on anything inside it.
 
 **Deliberately not done**

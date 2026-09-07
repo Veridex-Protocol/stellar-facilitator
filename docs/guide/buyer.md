@@ -1,39 +1,23 @@
-# Buyer and agent path: pay for things you did not integrate with
+# Buyer path: discover and pay on Stellar testnet
 
-You are writing a client, or an agent, that needs to pay for a service. You have no account with the seller and no API key, and in the agent case you may not know the endpoint exists until you go looking for it.
+Start the reference stack with [the quickstart](../quickstart.md). It creates a
+funded buyer and writes `BUYER_SECRET_KEY` to `.env`.
 
-What you end up with is code that discovers a service and pays for it with no prior relationship of any kind.
+## 1. Install the focused buyer package
 
-## 1. An account holding the payment asset
-
-```bash
-npm run setup
-grep BUYER_SECRET_KEY .env
-```
-
-You need a buyer signing key and the payment asset. When a facilitator advertises `areFeesSponsored: true` it pays the network fee itself, so a buyer holding USDC and no XLM can still transact. Read the flag rather than assuming it:
-
-```bash
-curl -s http://localhost:3002/supported \
-  | jq '.kinds[] | select(.scheme=="exact") | .extra.areFeesSponsored'
-```
-
-## 2. Paying with `@veridex/stellar`
-
-This is the recommended Veridex buyer path:
-
-`@veridex/stellar` is prepared for publication but is not yet available on the
-public npm registry. For this release candidate, build and pack the SDK from
-the repository, then install the tarball in the buyer project:
+`@veridex/stellar` is not currently published to npm. Build and pack it from
+this repository:
 
 ```bash
 cd sdk-typescript
 npm pack
-cd ../path/to/your-project
-npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
 ```
 
-After publication, use `npm install @veridex/stellar` instead.
+Install the generated `veridex-stellar-0.1.0.tgz` in your buyer project. Do not
+replace this with `npm install @veridex/stellar` until registry publication is
+actually confirmed.
+
+## 2. Pay an exact resource
 
 ```ts
 import { createVeridexClient } from "@veridex/stellar";
@@ -43,18 +27,68 @@ const client = createVeridexClient({
   privateKey: process.env.BUYER_SECRET_KEY!,
 });
 
-// The 402, signature, payment header, and retry happen inside.
-const response = await client.fetch("http://localhost:3003/forecast");
+const response = await client.fetch("http://localhost:3003/paid-resource");
+if (!response.ok) throw new Error(`resource returned HTTP ${response.status}`);
 console.log(await response.json());
 ```
 
-That is the entire beginner buyer flow. The facade receives the 402, delegates signing to the official x402 packages, retries with the payment header, and returns the paid response.
+The same buyer path works for a gateway resource, for example
+`http://localhost:3005/hello`. The buyer validates the live terms and does not
+need to know whether the seller uses native middleware or the gateway.
 
-The official `@x402/fetch` plus `@x402/stellar` packages remain a supported advanced path when you need direct x402 policy or extension registration. The repository conformance harness uses that lower-level path independently of this source tree.
+The facade delegates the x402 v2 flow to the official packages:
 
-## 3. Bounding what you spend with the advanced x402 client
+1. Read HTTP 402 and decode `PAYMENT-REQUIRED` as `PaymentRequired`.
+2. Select `PaymentRequirements` with `scheme: "exact"` and
+   `network: "stellar:testnet"`.
+3. Create a signed `PaymentPayload` whose selected requirements are in
+   `accepted`.
+4. Retry with `PAYMENT-SIGNATURE`.
+5. Decode `PAYMENT-RESPONSE` after settlement.
 
-The high-level facade follows the payment option offered by the resource. For an explicit spend policy, use the official x402 client directly:
+The buyer signs the authorization. The facilitator submits the transaction and,
+when `extra.areFeesSponsored` is true, pays the network fee. The facilitator
+does not custody the payment value.
+
+Check sponsorship instead of assuming it:
+
+```bash
+curl -fsS http://localhost:3002/supported \
+  | jq '.kinds[] | select(.scheme=="exact" and .network=="stellar:testnet") | .extra.areFeesSponsored'
+```
+
+## 3. Discover a resource
+
+The focused Bazaar client defaults to pubnet unless configured, so current
+testnet code must set `defaultNetwork` or pass `network` on every call:
+
+```ts
+import { createBazaarClient } from "@veridex/stellar";
+
+const bazaar = createBazaarClient({
+  bazaarUrl: "http://localhost:3001",
+  defaultNetwork: "stellar:testnet",
+});
+
+const page = await bazaar.search({ query: "demo", limit: 5 });
+const resource = page.results[0];
+if (!resource) throw new Error("no resource matched");
+
+const response = await client.fetch(resource.resourceUrl);
+console.log(await response.json());
+```
+
+Discovery is advisory. Before signing, compare the live 402 terms with local
+policy for scheme, network, asset, `payTo`, atomic-unit amount, and timeout.
+
+The Veridex search endpoint supports `q`, `type`, `payTo`, `network`, `scheme`,
+`extensions`, `tags`, `minUptimeRatio`, `limit`, `offset`, and opaque `cursor`
+where documented by [Bazaar OpenAPI](../openapi/bazaar.yaml). Continue with
+`nextCursor`; a cursor is bound to the query and filters that created it.
+
+## 4. Advanced official client policy
+
+Use the official client directly when you need custom payment-option policy:
 
 ```ts
 import { x402Client } from "@x402/core/client";
@@ -62,158 +96,65 @@ import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 
 const network = "stellar:testnet";
-const client = new x402Client().register(
-  network,
-  new ExactStellarScheme(createEd25519Signer(process.env.BUYER_SECRET_KEY!, network)),
-);
-
-client.registerPolicy((version, requirements) =>
-  requirements.filter((r) => BigInt(r.amount) <= 1_000_000n)   // 0.1 XLM
-);
+const x402 = new x402Client()
+  .register(network, new ExactStellarScheme(
+    createEd25519Signer(process.env.BUYER_SECRET_KEY!, network),
+  ))
+  .registerPolicy((_version, requirements) =>
+    requirements.filter((requirement) => BigInt(requirement.amount) <= 1_000_000n),
+  );
 ```
 
-The policy runs against every offered payment option and filters them. If nothing survives the filter, no payment is made and the 402 stands.
+In x402 v2 the field is `amount`; `maxAmountRequired` belongs to v1.
 
-For a metered service, where the amount is not known up front, see the section on the [`upto` scheme](#metered-payments-with-upto) below.
+## 5. Metered payments with Veridex `upto`
 
-## 4. Discovery, for agents
-
-This is the part with no equivalent in a normal API integration, which is finding a service you were never told about.
-
-```bash
-curl -s "http://localhost:3001/discovery/search?q=weather+forecast&network=stellar:testnet&limit=5" | jq
-```
-
-```json
-{
-  "results": [
-    {
-      "resourceUrl": "http://localhost:3003/forecast",
-      "serviceName": "Acme forecasts",
-      "description": "Hourly weather forecast for a named city.",
-      "payTo": "GAJWHHLF…",
-      "network": "stellar:testnet",
-      "scheme": "exact",
-      "compositeScore": 0.82,
-      "telemetry": { "livenessStatus": "HEALTHY", "settlementCount": 3 }
-    }
-  ],
-  "total": 1,
-  "partialResults": false
-}
-```
-
-### Filtering
-
-| Parameter | Use |
-| --- | --- |
-| `type` | Either `http` or `mcp` |
-| `payTo` | Only this seller |
-| `network` | Either `stellar:testnet` or `stellar:pubnet` |
-| `extensions` | Comma-separated, matching resources that declare all of them |
-| `limit`, `offset` | Page size and start, where `limit` caps at 100 |
-| `cursor` | Continuation token, which supersedes `offset` |
-
-### Paging
-
-Page with `nextCursor` rather than by computing an offset yourself:
+Select the custom scheme explicitly:
 
 ```ts
-let cursor: string | undefined;
-do {
-  const url = new URL("http://localhost:3001/discovery/search");
-  url.searchParams.set("q", "weather");
-  if (cursor) url.searchParams.set("cursor", cursor);
+const meteredClient = createVeridexClient({
+  network: "stellar:testnet",
+  privateKey: process.env.BUYER_SECRET_KEY!,
+  scheme: "upto",
+});
 
-  const page = await (await fetch(url)).json();
-  handle(page.results);
-  cursor = page.nextCursor;
-} while (cursor);
+const response = await meteredClient.fetch(
+  "http://localhost:3003/paid-resource-upto",
+);
 ```
 
-A cursor is bound to the query that issued it. Changing the query or the filters part way through returns `400 invalid_cursor` rather than silently handing you the wrong page, because the same offset under different terms is a different set of rows.
+The 402 `PaymentRequirements.amount` is the maximum authorization. The seller
+reports actual usage through settlement overrides after executing the response:
 
-### Two response fields worth reading
+| Case | Result |
+|---|---|
+| `actual = 0` | Terminal on-chain settlement; full ceiling refunded |
+| `0 < actual < maximum` | Partial charge; remainder refunded atomically |
+| `actual = maximum` | Full authorized amount charged |
+| `actual > maximum` | Facilitator and contract reject settlement |
 
-The `partialResults` flag being true means a retrieval leg filled its candidate pool, so ranking saw a truncated set and this is not a complete answer. The accompanying `partialReason` says so in words. Narrow the query if completeness matters to you.
+The payer authorization binds `payTo`, token, maximum, validity window,
+facilitator, settlement ID, and request digest. The facilitator authorization
+binds actual amount and result digest. The contract records replay state.
 
-The `telemetry.livenessStatus` field reports Bazaar evidence from signed heartbeat telemetry and confirmed settlements. It is not an active HTTP probe. Ranking filters offline resources and demotes degraded ones, but callers should still handle request failure.
+This is Veridex-specific and testnet-proven but unaudited. Installed stock
+`@x402/stellar@2.21.0` exposes only `exact`; upstream Stellar `upto`
+interoperability is not implied.
 
-## 5. Discover and pay, end to end
+## 6. Handle errors by code
 
-This is the whole point, which is an agent paying for a service it found seconds ago:
+There are two layers:
 
-```ts
-const found = await (await fetch(
-  "http://localhost:3001/discovery/search?q=weather+forecast&limit=1"
-)).json();
+- x402 protocol responses use `invalidReason`/`invalidMessage` for verify and
+  `errorReason`/`errorMessage` for settle.
+- Veridex service/SDK/MCP wrappers use the canonical Veridex
+  `{code, reason, retryable, category}` metadata where applicable.
 
-const resource = found.results[0];
-if (!resource) throw new Error("nothing matched");
+Do not parse prose. Branch on the machine-readable field and use
+`retryable`/`Retry-After` where supplied. See the [error reference](../errors.md).
 
-const response = await client.fetch(resource.resourceUrl);
-console.log(await response.json());
-```
+## 7. Verify proof
 
-There is no prior integration, no API key, and no account with the seller.
-
-## 6. From inside a client runtime
-
-The MCP server exposes discovery and payment as tools, so a client or automated workflow can do all of the above without you writing any HTTP code.
-
-```bash
-docker compose --profile mcp run --rm mcp-server
-```
-
-| Tool | What it does |
-| --- | --- |
-| `discover_resources` | Searches the Bazaar and returns ranked resources with telemetry |
-| `pay_resource` | Performs the 402 challenge, the payment and the retry, then returns the result |
-
-Inputs and outputs are structured, and every failure carries a machine-readable reason code, so an agent can branch on `invalid_exact_stellar_payload_simulation_failed` without parsing prose.
-
-## Metered payments with upto
-
-For services whose cost is not known up front, such as token billing or compute time, the `upto` scheme lets you authorize a ceiling and have the facilitator settle actual usage.
-
-```bash
-curl -s http://localhost:3002/supported | jq '.kinds[] | select(.scheme=="upto")'
-```
-
-```json
-{
-  "x402Version": 2,
-  "scheme": "upto",
-  "network": "stellar:testnet",
-  "extra": {
-    "contractId": "CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2",
-    "facilitator": "the advertised facilitator signer",
-    "areFeesSponsored": true
-  }
-}
-```
-
-Read `extra.contractId` rather than hardcoding it, because every operator deploys their own instance and the address differs between facilitators.
-
-Your authorization commits you to a specific set of things and nothing beyond them. Your signature covers `max_amount`, so a settlement above the ceiling fails. It covers `pay_to`, so the payment cannot be redirected. It covers a request digest, so it cannot be reused for different work. The pair of payer and settlement id is recorded in the contract itself, so an authorization settles exactly once, including when you pay from a smart account. Finally, the unused remainder returns to you in the same transaction, atomically.
-
-The facilitator separately signs the amount it charged and a digest of what it delivered, which means the ledger records what you were charged and what for rather than only the facilitator's own log saying so.
-
-The scheme is advertised on testnet only and it is not audited, so treat it as experimental. Veridex's custom HTTP seller/client path is testnet-proven; upstream `@x402/stellar` still exposes exact only, so upstream stock `upto` interoperability is not implied. If `upto` is absent from `/supported`, that facilitator has no confirmed contract and you should not attempt it.
-
-## Handling failure
-
-Every rejection carries a reason code and a sentence.
-
-| Reason | What it means |
-| --- | --- |
-| `invalid_exact_stellar_payload_wrong_amount` | Terms changed between the 402 and your payment, so re-read and retry |
-| `invalid_exact_stellar_payload_simulation_failed` | Usually an insufficient balance or a missing trustline |
-| `invalid_exact_stellar_signature_expiration_too_far` | Soroban RPC ledger skew, which the facilitator already retried, so re-sign with a fresh ledger read |
-| `settlement_capacity_exceeded` | The facilitator's signers are all busy and no funds moved |
-
-The last of those returns HTTP 503 with a `Retry-After` header, and it is always safe to retry because it is refused before anything is submitted to the network.
-
-## Next
-
-The [seller path](./seller.md) covers selling something of your own. The [operator path](./operator.md) covers running the facilitator these examples point at.
+`PAYMENT-RESPONSE` is the x402 settlement result. Veridex may additionally add a
+signed `x402job/1` receipt. These are payment evidence; provider-quality outcome
+and aggregate records are separate. See [payment proof](../payment-proof.md).

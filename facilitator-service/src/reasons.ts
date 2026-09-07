@@ -64,6 +64,12 @@ export const REASON_MESSAGES: Readonly<Record<string, string>> = {
   unexpected_settle_error:
     "Settlement failed for an unexpected reason inside the Stellar scheme implementation.",
 
+  // ── Upto scheme ────────────────────────────────────────────────────────────
+  invalid_upto_stellar_authorization_already_settled:
+    "This upto authorization has already been consumed for this payer and settlement id; sign a new authorization instead.",
+  invalid_upto_stellar_replay_check_failed:
+    "The facilitator could not confirm the upto authorization replay guard from Soroban RPC, so it refused to accept the payment.",
+
   // ── Payload structure (@x402/stellar, exact) ───────────────────────────────
   invalid_exact_stellar_payload_malformed:
     "The 'transaction' field is not a decodable base64 Stellar transaction envelope for this network. Send it exactly as the client produced it - do not re-encode it.",

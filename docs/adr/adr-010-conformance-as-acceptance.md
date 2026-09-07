@@ -1,8 +1,15 @@
-# ADR-010: Conformance Is the Acceptance Artifact - A Stock Client, Real Money, Every Pull Request
+# ADR-010: Conformance Is the Acceptance Artifact - A Stock Client and Reproducible Testnet Payment
 
 ## Status
 
-Accepted (2026-08-23) - records why acceptance is a harness that imports nothing from this repository and settles a real testnet payment on every CI run, and why published reliability figures are derived from durable logs rather than from `/stats`.
+Accepted (2026-08-23) - records why acceptance is a harness that imports nothing
+from this repository, settles a real testnet payment, and derives reliability
+figures from logs rather than `/stats`.
+
+Reconciled 2026-09-06: the workflow defines a Friendbot-funded conformance job
+for pushes/PRs, but recorded hosted runs failed before runner execution. Current
+acceptance evidence is the reproducible local `36/36` artifact; hosted per-PR
+success is a CI infrastructure gap, not a current claim.
 
 ## Context
 
@@ -24,7 +31,7 @@ So the question we had to answer was not "does our facilitator work" but "what w
 
 ## Decision
 
-**Acceptance is a harness that imports nothing from this repository, pays with a stock client, and re-reads the result from Horizon. It runs on every pull request with accounts created during the run.**
+**Acceptance is a harness that imports nothing from this repository, pays with a stock client, and re-reads the result from Horizon. The same fresh-account path is encoded in CI and must become a reliable per-PR gate.**
 
 ### 1. The harness is adversarial toward us by construction
 
@@ -51,9 +58,12 @@ function assertUsableReason(reason, message, label) {
 
 The brief requires "a non null reason on every rejection". A non-null reason of `"error"` satisfies that literally and helps nobody, so the harness rejects generic codes too.
 
-### 3. CI settles real money with no secrets
+### 3. The CI design settles testnet value with no stored secrets
 
-The conformance job creates Friendbot-funded accounts **during the run**, brings the stack up with compose, and pays on `stellar:testnet`. No stored credentials, which is the point: **anyone can fork this repository and get the same green run.** A conformance property that depends on our secrets is not a property a reviewer can check.
+The conformance job is defined to create Friendbot-funded accounts during the
+run, bring the stack up with Compose, and pay on `stellar:testnet`. No stored
+credentials are required. The local `npm run demo` path proves reproducibility;
+hosted runner execution still needs to become reliable.
 
 ### 4. One command from a clean clone
 
@@ -75,7 +85,7 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 
 **Good**
 
-- Drift is caught on the pull request that causes it, which is the thing actually being screened for.
+- The harness can catch drift on the change that causes it once hosted execution is reliable; today it catches drift in local/reviewer runs.
 - Every published number is reproducible by a stranger from a clean clone, with no cooperation from us.
 - The harness has already earned its keep. It caught the liveness pruning defect ([ADR-003](./adr-003-settlement-liveness.md)) that unit tests could not, because that bug only appears when a real stack has been running long enough for a background sweep to fire.
 - It also caught two bugs in *itself* - a wrong `wrapFetchWithPayment` signature and a settle payload with no discovery extension - which is the harness working: it tests the contract, not our assumptions.
@@ -90,7 +100,7 @@ The conformance job creates Friendbot-funded accounts **during the run**, brings
 
 **Deliberately not done**
 
-- **No mainnet conformance.** `stellar:pubnet` is wired throughout but has never been exercised. Both networks are committed deliverables and this remains the largest outstanding gap, recorded in `testnet_docs.md`.
+- **No pubnet conformance.** `stellar:pubnet` is configurable but unexercised and approval-gated, as recorded in `testnet_docs.md`.
 - **No load or soak testing in CI.** [`concurrency-probe.mjs`](../../scripts/concurrency-probe.mjs) is run on demand ([ADR-007](./adr-007-settlement-throughput.md)); running it per-PR would spend meaningfully more testnet XLM for a property that changes rarely.
 - **No scheduled flakiness probe.** Sampling RPC skew frequency on a spread cron, from neutral infrastructure, would turn [ADR-008](./adr-008-ledger-skew-retry.md)'s untested mitigation into a measured one. Worth doing; not done.
 - **No published historical figures yet.** We have single-run evidence, not a corpus. Claiming a median across thousands of settlements requires having run thousands.

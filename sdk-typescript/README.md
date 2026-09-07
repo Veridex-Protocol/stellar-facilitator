@@ -17,11 +17,8 @@ cd ../path/to/your-project
 npm install /path/to/stellar-facilitator/sdk-typescript/veridex-stellar-0.1.0.tgz
 ```
 
-After publication, the install command becomes:
-
-```bash
-npm install @veridex/stellar
-```
+After registry publication is independently confirmed, the install command can
+become `npm install @veridex/stellar`. It is not an active installation claim.
 
 ```ts
 import { createVeridexClient } from "@veridex/stellar";
@@ -44,7 +41,10 @@ Prerequisites: Node 22+, a funded Stellar account, and a reachable x402 resource
 ```ts
 import { createBazaarClient, createFacilitatorClient } from "@veridex/stellar";
 
-const bazaar = createBazaarClient({ bazaarUrl: "http://localhost:3001" });
+const bazaar = createBazaarClient({
+  bazaarUrl: "http://localhost:3001",
+  defaultNetwork: "stellar:testnet",
+});
 const page = await bazaar.search({ query: "weather forecast", network: "stellar:testnet" });
 
 const facilitator = createFacilitatorClient({
@@ -65,7 +65,13 @@ const page = await bazaar.search({
 });
 ```
 
-The default retrieval vector is deterministic feature hashing, a lexical signal alongside BM25, not learned semantic search.
+The default retrieval vector is deterministic feature hashing, a lexical signal
+fused with PostgreSQL `ts_rank_cd` full-text ranking, not learned semantic
+search.
+
+The focused SDK throws `VeridexClientError` wrapper codes. Raw facilitator
+responses separately use x402 `invalidReason`/`errorReason`; see the
+[error reference](../docs/errors.md).
 
 ## Provider Quality
 

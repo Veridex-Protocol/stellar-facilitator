@@ -22,6 +22,7 @@ export interface ProviderQualityVerificationOptions {
   expectedIssuer?: string;
   authorizedSigners?: string[];
   authorizedIssuers?: string[];
+  allowSignerDifferentFromPayTo?: boolean;
 }
 
 export interface ProviderQualityVerification {
@@ -88,7 +89,11 @@ export function verifyProviderObservation(
   if (!StrKey.isValidEd25519PublicKey(observation.payTo) && !StrKey.isValidContract(observation.payTo)) {
     return { valid: false, error: "provider observation payTo is not a Stellar address" };
   }
-  if (StrKey.isValidEd25519PublicKey(observation.payTo) && observation.signer !== observation.payTo) {
+  if (
+    StrKey.isValidEd25519PublicKey(observation.payTo) &&
+    observation.signer !== observation.payTo &&
+    !options.allowSignerDifferentFromPayTo
+  ) {
     return { valid: false, error: "provider observation signer is not the payTo owner" };
   }
   if (StrKey.isValidContract(observation.payTo) && !options.authorizedSigners?.includes(observation.signer)) {

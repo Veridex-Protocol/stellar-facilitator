@@ -1,0 +1,28 @@
+{
+  "generatedAt": "2026-09-05",
+  "provider": "feature-hash",
+  "semanticClaim": false,
+  "dataset": "bazaar-service/src/search/eval/dataset.ts",
+  "queryCount": 6,
+  "metrics": {
+    "meanNDCG5": 0.8088811108665785,
+    "meanNDCG10": 0.87249904590562,
+    "meanMRR": 0.9166666666666666,
+    "meanRecall5": 0.861111111111111,
+    "meanPrecision5": 0.4
+  },
+  "regressionGates": {
+    "meanNDCG10": 0.8,
+    "meanMRR": 0.8,
+    "meanRecall5": 0.7,
+    "passed": true
+  },
+  "notableGap": {
+    "query": "translate spanish to english text",
+    "nDCG5": 0.08268058728704288,
+    "MRR": 0.5,
+    "recall5": 0.5,
+    "note": "The deterministic lexical/feature-hash baseline under-ranks the translation resource for this judged query; this is not claimed as semantic retrieval."
+  },
+  "method": "The runner evaluates the committed judged qrels with deterministic feature hashing plus lexical RRF. No learned embedding provider or network call is used."
+}

@@ -149,6 +149,9 @@ export interface StellarNetworkConfig {
   /** Soroban RPC URL */
   rpcUrl: string;
 
+  /** Ordered independent Soroban RPC providers. Multi-provider mode is testnet-only until the local coordinator has TLS. */
+  rpcUrls?: string[];
+
   /** Facilitator account public key */
   facilitatorPublicKey: string;
 

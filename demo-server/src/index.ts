@@ -131,6 +131,25 @@ const app = new Hono();
 
 app.get("/health", (c) => c.json({ status: "ok", network: NETWORK, payTo }));
 
+app.get("/demo-api/hello", (c) => c.json({
+  message: "Hello from the existing API behind Veridex Gateway.",
+  requestId: c.req.header("X-Request-Id") ?? null,
+  servedAt: new Date().toISOString(),
+}));
+
+app.get("/demo-api/weather", (c) => c.json({
+  location: c.req.query("location") || "San Francisco",
+  temperatureCelsius: 18,
+  conditions: "clear",
+  observedAt: new Date().toISOString(),
+}));
+
+app.post("/demo-api/data", async (c) => c.json({
+  accepted: true,
+  input: await c.req.json().catch(() => null),
+  processedAt: new Date().toISOString(),
+}));
+
 app.use(
   paymentMiddleware(
     {

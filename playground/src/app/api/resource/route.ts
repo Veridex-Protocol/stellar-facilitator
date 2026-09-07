@@ -17,6 +17,23 @@ function getAllowlist(): string[] {
   return [...origins];
 }
 
+function transportTarget(target: URL): URL {
+  const mappings = [
+    [process.env.DEMO_SERVER_URL, process.env.DEMO_SERVER_INTERNAL_URL],
+    [process.env.GATEWAY_URL, process.env.GATEWAY_INTERNAL_URL],
+  ] as const;
+  for (const [publicUrl, internalUrl] of mappings) {
+    if (!publicUrl || !internalUrl) continue;
+    const publicOrigin = new URL(publicUrl).origin;
+    if (target.origin !== publicOrigin) continue;
+    const transport = new URL(internalUrl);
+    transport.pathname = target.pathname;
+    transport.search = target.search;
+    return transport;
+  }
+  return target;
+}
+
 export async function POST(req: NextRequest) {
   let body: { url?: unknown; method?: unknown; headers?: unknown };
   try {
@@ -61,7 +78,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const response = await fetch(target.toString(), {
+    const response = await fetch(transportTarget(target).toString(), {
       method,
       headers,
       redirect: "error",

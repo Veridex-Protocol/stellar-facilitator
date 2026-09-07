@@ -69,6 +69,7 @@ export type ProviderAggregate = z.infer<typeof ProviderAggregateSchema>;
 
 export interface ProviderObservationWrite {
   observation: ProviderObservation;
+  source?: "in_band" | "independent";
   resourceType?: "http" | "mcp";
   toolName?: string;
   route?: string;

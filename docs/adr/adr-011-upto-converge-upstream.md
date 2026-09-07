@@ -4,6 +4,12 @@
 
 Accepted (2026-08-23) - records the design of our Soroban `upto` settlement contract: the constraints that shape it, the two properties our architecture requires, and what we do not yet claim.
 
+**Reconciled 2026-09-06:** the active contract now has a reproducible WASM/hash,
+a recorded testnet deployment, facilitator/client/server integration, and direct
+plus HTTP testnet evidence. Statements below saying no WASM, deployment, or
+integration existed are retained as historical decision context, not current
+status. Independent audit and upstream convergence remain open.
+
 Supersedes the `upto_escrow.rs` design in [spec-v2.md §4](../specifications/spec-v2.md).
 
 ## Context

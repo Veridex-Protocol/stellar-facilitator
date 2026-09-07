@@ -67,6 +67,7 @@ export class P2PNode {
     messagesReceived: 0,
     messagesPublished: 0,
     messagesSuppressed: 0,
+    replaysRejected: 0,
     uptime: 0,
   };
   private startTime: number = 0;
@@ -346,6 +347,7 @@ export class P2PNode {
           `[P2P Node] Duplicate message from ${validatedMessage.nodeId}:${validatedMessage.sequence}`
         );
         this.stats.messagesSuppressed++;
+        this.stats.replaysRejected++;
         return;
       }
 

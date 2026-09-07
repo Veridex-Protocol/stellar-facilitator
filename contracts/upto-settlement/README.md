@@ -20,12 +20,12 @@ The `upto` scheme allows a buyer to authorize a payment up to a designated spend
 
 ## Contract Methods
 
-### `settle(payer_auth, terms, attestation)`
+### `settle(payer, terms, attestation)`
 
 Settles a metered session. Transfers `attestation.actual` tokens from `terms.payer` to `terms.pay_to` and emits a structured indexable event.
 
+- **`payer`**: Address of the paying client.
 - **`terms`** (`PayerTerms`):
-  - `payer`: Address of the paying client.
   - `pay_to`: Recipient address.
   - `token`: SEP-41 token contract address (e.g. USDC).
   - `max_amount`: Maximum authorized spending ceiling in atomic units.
@@ -39,9 +39,10 @@ Settles a metered session. Transfers `attestation.actual` tokens from `terms.pay
   - `actual`: Exact amount billed (`actual <= terms.max_amount`).
   - `result_digest`: Hash of the server's output response.
 
-### `is_settled(settlement_id)`
+### `is_settled(payer, settlement_id)`
 
-Returns `bool` indicating whether a `settlement_id` has already been consumed.
+Returns `bool` indicating whether the payer/settlement-id pair has already been
+consumed. Replay state is persistent with TTL bounded by the signed deadline.
 
 ---
 
@@ -56,6 +57,6 @@ Returns `bool` indicating whether a `settlement_id` has already been consumed.
 
 ### Run Rust Invariant Tests
 ```bash
-cargo test
+cargo test --locked
 ```
 All 27 invariant and edge-case unit tests will execute against the Soroban Rust test environment.

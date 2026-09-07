@@ -13,17 +13,21 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { randomUUID } from "node:crypto";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { x402Client } from "@x402/core/client";
-import { x402HTTPClient } from "@x402/core/http";
-import { createEd25519Signer } from "@x402/stellar";
-import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  encodePaymentSignatureHeader,
+} from "@x402/core/http";
+import type { PaymentPayload, PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import { validateSafeResourceUrl } from "./security.js";
+import { publicError, type RegisteredErrorCode } from "./errors.js";
 
 /**
  * MCP Server configuration
@@ -38,9 +42,15 @@ export interface MCPServerConfig {
   // Stellar configuration
   stellar: {
     network: "pubnet" | "testnet";
-    clientSecretKey?: string;
     defaultMaxSpendAmount?: string;
   };
+}
+
+export interface MCPToolStats {
+  calls: number;
+  successes: number;
+  failures: number;
+  latencyMsTotal: number;
 }
 
 /**
@@ -56,7 +66,6 @@ export function getConfig(): MCPServerConfig {
     facilitatorUrl: process.env.FACILITATOR_URL || "http://localhost:3002",
     stellar: {
       network,
-      clientSecretKey: process.env.STELLAR_CLIENT_SECRET_KEY,
       defaultMaxSpendAmount: process.env.MCP_MAX_SPEND_AMOUNT_STROOPS || "10000000",
     },
   };
@@ -79,6 +88,21 @@ export const PayResourceSchema = z.object({
   method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
   params: z.record(z.any()).optional(),
   maxAmount: z.string().optional().describe("Maximum amount allowed in atomic token units"),
+  paymentPayload: z.object({
+    x402Version: z.number(),
+    resource: z.record(z.any()).optional(),
+    accepted: z.object({
+      scheme: z.string(),
+      network: z.string(),
+      asset: z.string(),
+      amount: z.string().regex(/^(0|[1-9][0-9]*)$/),
+      payTo: z.string(),
+      maxTimeoutSeconds: z.number(),
+      extra: z.record(z.any()),
+    }),
+    payload: z.record(z.any()),
+    extensions: z.record(z.any()).optional(),
+  }).optional().describe("Payment payload signed by the client wallet from the challenge returned by phase one"),
 });
 
 /**
@@ -87,6 +111,7 @@ export const PayResourceSchema = z.object({
 export class VeridexMCPServer {
   private server: Server;
   private config: MCPServerConfig;
+  private readonly toolStats = new Map<string, MCPToolStats>();
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -127,7 +152,7 @@ export class VeridexMCPServer {
               },
               network: {
                 type: "string",
-                description: "Network filter (default: 'stellar:pubnet')",
+                description: "CAIP-2 network filter (current deployment default: 'stellar:testnet')",
               },
               limit: {
                 type: "number",
@@ -140,8 +165,8 @@ export class VeridexMCPServer {
         {
           name: "pay_resource",
           description:
-            "Execute x402 Stellar payment to access a resource. " +
-            "Creates payment transaction, submits to facilitator, and returns access authorization.",
+            "Prepare or submit an x402 Stellar payment without giving this MCP server a signing key. " +
+            "First call returns a bounded challenge; the client wallet signs it and calls again with paymentPayload.",
           inputSchema: {
             type: "object",
             properties: {
@@ -161,6 +186,10 @@ export class VeridexMCPServer {
               maxAmount: {
                 type: "string",
                 description: "Maximum amount allowed in atomic token units",
+              },
+              paymentPayload: {
+                type: "object",
+                description: "Externally signed x402 payment payload returned by the client wallet",
               },
             },
             required: ["resourceUrl"],
@@ -187,11 +216,13 @@ export class VeridexMCPServer {
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error) {
+        const reason = error instanceof Error ? error.message : "Unknown error";
+        const code = classifyToolError(reason);
         return {
           content: [
             {
               type: "text",
-              text: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+              text: JSON.stringify({ ok: false, ...publicError(code, { reason }) }),
             },
           ],
           isError: true,
@@ -204,7 +235,8 @@ export class VeridexMCPServer {
    * Handle discover_resources tool
    */
   async handleDiscoverResources(args: unknown): Promise<any> {
-    const params = DiscoverResourcesSchema.parse(args);
+    return this.trackToolCall("discover_resources", undefined, async () => {
+      const params = DiscoverResourcesSchema.parse(args);
 
     // Query Bazaar service
     const url = new URL("/discovery/search", this.config.bazaarUrl);
@@ -224,50 +256,55 @@ export class VeridexMCPServer {
 
     const results = (await response.json()) as Record<string, any>;
 
-    // Format results for AI
-    const formatted = results.results
-      ?.map(
-        (r: any) =>
-          `• ${r.resourceUrl}\n` +
-          `  Service: ${r.serviceName || "N/A"}\n` +
-          `  Description: ${r.description}\n` +
-          `  Network: ${r.network}\n` +
-          `  Score: ${r.compositeScore?.toFixed(3) || "N/A"}\n` +
-          `  Uptime: ${((r.telemetry?.uptimeRatio || 0) * 100).toFixed(1)}%\n` +
-          `  Avg Latency: ${r.telemetry?.avgResponseTimeMs || "N/A"}ms\n` +
-          `  Reliability: ${((r.reliabilityScore || 0) * 100).toFixed(1)}%`
-      )
-      .join("\n\n");
+    const resources = Array.isArray(results.results)
+      ? results.results.map((resource: any) => ({
+          resourceUrl: resource.resourceUrl,
+          network: resource.network,
+          scheme: resource.scheme,
+          payTo: resource.payTo,
+          score: resource.compositeScore ?? null,
+          telemetry: resource.telemetry ?? null,
+          sellerData: {
+            trust: "untrusted_seller_data",
+            serviceName: resource.serviceName ?? null,
+            description: resource.description ?? null,
+            tags: resource.tags ?? [],
+            inputSpec: resource.inputSpec ?? null,
+            outputSpec: resource.outputSpec ?? null,
+          },
+        }))
+      : [];
 
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            `Found ${results.total || 0} resources:\n\n${formatted}\n\n` +
-            `Results are ranked by keyword match, feature-hash vector similarity, uptime, latency, and reliability signals.`,
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: true,
+              total: results.total ?? resources.length,
+              resources,
+            }),
+          },
+        ],
+      };
+    });
   }
 
   /**
    * Handle pay_resource tool
    */
   async handlePayResource(args: unknown): Promise<any> {
-    const params = PayResourceSchema.parse(args);
-
-    if (!this.config.stellar.clientSecretKey) {
-      throw new Error("STELLAR_CLIENT_SECRET_KEY not configured");
-    }
+    const unparsed = args && typeof args === "object" ? args as Record<string, unknown> : {};
+    return this.trackToolCall(
+      "pay_resource",
+      typeof unparsed.resourceUrl === "string" ? unparsed.resourceUrl : undefined,
+      async () => {
+        const params = PayResourceSchema.parse(args);
 
     // SSRF Validation: validate the resource URL before making any network calls
     const requestUrl = validateSafeResourceUrl(params.resourceUrl);
 
     const network = this.config.stellar.network === "pubnet" ? "stellar:pubnet" : "stellar:testnet";
-    const signer = createEd25519Signer(this.config.stellar.clientSecretKey, network);
-    const coreClient = new x402Client().register("stellar:*", new ExactStellarScheme(signer));
-    const httpClient = new x402HTTPClient(coreClient);
 
     const requestInit: RequestInit = { method: params.method };
     if (params.params) {
@@ -284,14 +321,22 @@ export class VeridexMCPServer {
     const initialResponse = await fetch(requestUrl, requestInit);
     if (initialResponse.status !== 402) {
       const body = await initialResponse.text();
-      return { content: [{ type: "text", text: body || `HTTP ${initialResponse.status}` }] };
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ok: initialResponse.ok,
+            status: initialResponse.status,
+            sellerResponse: {
+              trust: "untrusted_seller_data",
+              body,
+            },
+          }),
+        }],
+      };
     }
 
-    const challengeBody = await initialResponse.json().catch(() => undefined);
-    const paymentRequired = httpClient.getPaymentRequiredResponse(
-      (name) => initialResponse.headers.get(name),
-      challengeBody
-    );
+    const paymentRequired = readPaymentRequired(initialResponse);
 
     // Enforce robust spend ceiling: filter accepts down strictly to authorized requirements
     const effectiveMaxAmount = BigInt(
@@ -300,7 +345,10 @@ export class VeridexMCPServer {
 
     const qualifiedRequirements = paymentRequired.accepts.filter(
       (requirement) =>
-        requirement.network === network && BigInt(requirement.amount) <= effectiveMaxAmount
+        requirement.network === network &&
+        requirement.scheme === "exact" &&
+        /^(0|[1-9][0-9]*)$/.test(requirement.amount) &&
+        BigInt(requirement.amount) <= effectiveMaxAmount
     );
 
     if (qualifiedRequirements.length === 0) {
@@ -309,42 +357,140 @@ export class VeridexMCPServer {
       );
     }
 
-    // Filter paymentRequired so createPaymentPayload cannot select an expensive alternative requirement
-    const cappedPaymentRequired = {
-      ...paymentRequired,
-      accepts: qualifiedRequirements,
-    };
-
-    const paymentPayload = await httpClient.createPaymentPayload(cappedPaymentRequired);
-
-    // Final assert: ensure signed payment payload is strictly within ceiling
-    if (BigInt(paymentPayload.accepted.amount) > effectiveMaxAmount) {
-      throw new Error(
-        `Constructed payment payload amount (${paymentPayload.accepted.amount}) exceeds authorized ceiling (${effectiveMaxAmount})`
-      );
+    if (!params.paymentPayload) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ok: false,
+            action: "sign_payment",
+            ...publicError("mcp_signing_required"),
+            signingLocation: "client_wallet",
+            paymentRequired: {
+              ...paymentRequired,
+              accepts: qualifiedRequirements,
+            },
+          }),
+        }],
+      };
     }
+
+    const paymentPayload = params.paymentPayload as PaymentPayload;
+    if (paymentPayload.x402Version !== paymentRequired.x402Version) {
+      throw new Error("Externally signed payment payload uses a different x402 version than the current challenge");
+    }
+    if (paymentPayload.resource?.url && paymentPayload.resource.url !== paymentRequired.resource.url) {
+      throw new Error("Externally signed payment payload is bound to a different resource than the current challenge");
+    }
+    const accepted = qualifiedRequirements.find((requirement) => paymentTermsEqual(requirement, paymentPayload.accepted));
+    if (!accepted) throw new Error("Externally signed payment payload does not match the current bounded challenge");
+    if (BigInt(paymentPayload.accepted.amount) > effectiveMaxAmount) throw new Error("Externally signed payment exceeds the authorized spend ceiling");
 
     const paidResponse = await fetch(requestUrl, {
       ...requestInit,
       headers: {
         ...(requestInit.headers || {}),
-        ...httpClient.encodePaymentSignatureHeader(paymentPayload),
+        "PAYMENT-SIGNATURE": encodePaymentSignatureHeader(paymentPayload),
       },
     });
     const responseBody = await paidResponse.text();
     if (!paidResponse.ok) throw new Error(`Paid resource request failed (${paidResponse.status}): ${responseBody}`);
-    const result = httpClient.getPaymentSettleResponse((name) => paidResponse.headers.get(name));
+    const paymentResponse = paidResponse.headers.get("payment-response");
+    if (!paymentResponse) throw new Error("Paid resource response did not include PAYMENT-RESPONSE settlement evidence");
+    const result = decodePaymentResponseHeader(paymentResponse);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            `Payment successful.\nResource: ${params.resourceUrl}\n` +
-            `Transaction: ${result.transaction}\n\nResponse:\n${responseBody}`,
-        },
-      ],
-    };
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                ok: true,
+                resource: params.resourceUrl,
+                transaction: result.transaction,
+                network: result.network,
+                sellerResponse: {
+                  trust: "untrusted_seller_data",
+                  contentType: paidResponse.headers.get("content-type"),
+                  body: responseBody,
+                },
+              }),
+            },
+          ],
+        };
+      },
+    );
+  }
+
+  getStats(): Record<string, MCPToolStats> {
+    return Object.fromEntries([...this.toolStats].map(([tool, stats]) => [tool, { ...stats }]));
+  }
+
+  getMetricsText(): string {
+    const lines = [
+      "# HELP veridex_mcp_calls_total MCP tool calls accepted by this process.",
+      "# TYPE veridex_mcp_calls_total counter",
+      "# HELP veridex_mcp_failures_total MCP tool calls that raised an error.",
+      "# TYPE veridex_mcp_failures_total counter",
+      "# HELP veridex_mcp_latency_seconds_total Cumulative MCP tool call latency in seconds.",
+      "# TYPE veridex_mcp_latency_seconds_total counter",
+    ];
+    for (const [tool, stats] of [...this.toolStats].sort(([left], [right]) => left.localeCompare(right))) {
+      lines.push(
+        `veridex_mcp_calls_total{tool="${tool}"} ${stats.calls}`,
+        `veridex_mcp_failures_total{tool="${tool}"} ${stats.failures}`,
+        `veridex_mcp_latency_seconds_total{tool="${tool}"} ${stats.latencyMsTotal / 1000}`,
+      );
+    }
+    return `${lines.join("\n")}\n`;
+  }
+
+  private async trackToolCall<T>(
+    tool: string,
+    resource: string | undefined,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const requestId = randomUUID();
+    const startedAt = performance.now();
+    const stats = this.toolStats.get(tool) ?? { calls: 0, successes: 0, failures: 0, latencyMsTotal: 0 };
+    stats.calls++;
+    this.toolStats.set(tool, stats);
+    try {
+      const result = await operation();
+      stats.successes++;
+      this.logToolOutcome({ tool, requestId, resource, outcome: "success", latencyMs: performance.now() - startedAt });
+      return result;
+    } catch (error) {
+      stats.failures++;
+      this.logToolOutcome({
+        tool,
+        requestId,
+        resource,
+        outcome: "failure",
+        reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+        latencyMs: performance.now() - startedAt,
+      });
+      throw error;
+    } finally {
+      stats.latencyMsTotal += performance.now() - startedAt;
+    }
+  }
+
+  private logToolOutcome(entry: {
+    tool: string;
+    requestId: string;
+    resource?: string;
+    outcome: "success" | "failure";
+    reason?: string;
+    latencyMs: number;
+  }): void {
+    process.stderr.write(`${JSON.stringify({
+      time: new Date().toISOString(),
+      level: entry.outcome === "success" ? "info" : "warn",
+      service: "mcp-server",
+      kind: "mcp_tool_outcome",
+      ...entry,
+      latencyMs: Math.round(entry.latencyMs),
+    })}\n`);
   }
 
   /**
@@ -359,6 +505,34 @@ export class VeridexMCPServer {
     console.error(`Facilitator: ${this.config.facilitatorUrl}`);
     console.error(`Network: ${this.config.stellar.network}`);
   }
+}
+
+function readPaymentRequired(response: Response): PaymentRequired {
+  const encoded = response.headers.get("payment-required");
+  if (!encoded) throw new Error("Resource returned HTTP 402 without PAYMENT-REQUIRED");
+  try {
+    return decodePaymentRequiredHeader(encoded);
+  } catch {
+    throw new Error("Resource returned a malformed PAYMENT-REQUIRED header");
+  }
+}
+
+function paymentTermsEqual(left: PaymentRequirements, right: PaymentRequirements): boolean {
+  return left.scheme === right.scheme &&
+    left.network === right.network &&
+    left.asset === right.asset &&
+    left.amount === right.amount &&
+    left.payTo === right.payTo &&
+    left.maxTimeoutSeconds === right.maxTimeoutSeconds;
+}
+
+function classifyToolError(reason: string): RegisteredErrorCode {
+  const lower = reason.toLowerCase();
+  if (lower.includes("ssrf") || lower.includes("resource") && lower.includes("url")) return "invalid_request";
+  if (lower.includes("spend ceiling") || lower.includes("payment payload") || lower.includes("payment-response")) return "payment_rejected";
+  if (lower.includes("timeout") || lower.includes("fetch failed") || lower.includes("unavailable")) return "resource_unavailable";
+  if (lower.includes("bazaar search")) return "provider_quality_unavailable";
+  return "mcp_tool_failed";
 }
 
 // Start only when run as a program. Importing this module for tests or to

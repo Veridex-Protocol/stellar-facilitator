@@ -33,6 +33,8 @@ import { ProviderQualityStore } from "./provider-quality/store.js";
 import { ProviderAggregateSchema, ProviderObservationSchema } from "./provider-quality/types.js";
 import { verifyProviderAggregate, verifyProviderObservation } from "./provider-quality/crypto.js";
 import { buildProviderAggregate } from "./provider-quality/aggregator.js";
+import { createBazaarMetrics, type BazaarMetrics } from "./metrics.js";
+import { publicError, type RegisteredErrorCode } from "./errors.js";
 
 /**
  * Bazaar Service configuration
@@ -67,8 +69,16 @@ export interface BazaarServiceConfig {
   providerAggregatePublishedThreshold: number;
   providerAggregateProvisionalThreshold: number;
   providerQualityAuthorizedSigners?: string[];
+  providerObserverToken?: string;
+  providerObserverAuthorizedSigners?: string[];
   providerAggregateAuthorizedIssuers?: string[];
   providerAggregateRecomputeQueueLimit?: number;
+  catalogRevalidationIntervalMs: number;
+  catalogRevalidationStaleMs: number;
+  catalogRevalidationTimeoutMs: number;
+  catalogRevalidationBatchSize: number;
+  catalogRevalidationAllowedOrigins: string[];
+  catalogRevalidationTransportOriginMap: Record<string, string>;
 }
 
 /**
@@ -107,8 +117,16 @@ export function getDefaultConfig(): BazaarServiceConfig {
     providerAggregatePublishedThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PUBLISHED_THRESHOLD || "100", 10),
     providerAggregateProvisionalThreshold: parseInt(process.env.PROVIDER_AGGREGATE_PROVISIONAL_THRESHOLD || "20", 10),
     providerQualityAuthorizedSigners: parseCsv(process.env.PROVIDER_QUALITY_AUTHORIZED_SIGNERS),
+    providerObserverToken: optionalSecret(process.env.PROVIDER_OBSERVER_TOKEN, "PROVIDER_OBSERVER_TOKEN"),
+    providerObserverAuthorizedSigners: parseCsv(process.env.PROVIDER_OBSERVER_AUTHORIZED_SIGNERS),
     providerAggregateAuthorizedIssuers: parseCsv(process.env.PROVIDER_AGGREGATE_AUTHORIZED_ISSUERS),
     providerAggregateRecomputeQueueLimit: parseInt(process.env.PROVIDER_AGGREGATE_RECOMPUTE_QUEUE_LIMIT || "256", 10),
+    catalogRevalidationIntervalMs: parseInt(process.env.CATALOG_REVALIDATION_INTERVAL_MS || "300000", 10),
+    catalogRevalidationStaleMs: parseInt(process.env.CATALOG_REVALIDATION_STALE_MS || "3600000", 10),
+    catalogRevalidationTimeoutMs: parseInt(process.env.CATALOG_REVALIDATION_TIMEOUT_MS || "5000", 10),
+    catalogRevalidationBatchSize: parseInt(process.env.CATALOG_REVALIDATION_BATCH_SIZE || "20", 10),
+    catalogRevalidationAllowedOrigins: parseCsv(process.env.CATALOG_REVALIDATION_ALLOWED_ORIGINS) ?? [],
+    catalogRevalidationTransportOriginMap: parseStringMap(process.env.CATALOG_REVALIDATION_TRANSPORT_ORIGIN_MAP),
     horizonUrl: process.env.HORIZON_URL || "https://horizon-testnet.stellar.org",
     sorobanRpcUrl: process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org",
     // Required, not optional. The previous guard read
@@ -136,6 +154,13 @@ function requireInternalToken(): string {
   return token;
 }
 
+function optionalSecret(value: string | undefined, name: string): string | undefined {
+  const token = value?.trim();
+  if (!token) return undefined;
+  if (token.length < 24) throw new Error(`${name} must be at least 24 characters when configured.`);
+  return token;
+}
+
 function parseAuthorizationMap(value?: string): Record<string, string[]> | undefined {
   if (!value) return undefined;
   const parsed = JSON.parse(value);
@@ -154,6 +179,20 @@ function parseCsv(value?: string): string[] | undefined {
   if (!value) return undefined;
   const values = value.split(",").map((item) => item.trim()).filter(Boolean);
   return values.length > 0 ? values : undefined;
+}
+
+function parseStringMap(value?: string): Record<string, string> {
+  if (!value) return {};
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("catalog revalidation transport origin map must be a JSON object");
+  }
+  for (const [key, entry] of Object.entries(parsed)) {
+    if (typeof entry !== "string") {
+      throw new Error(`catalog revalidation transport mapping '${key}' must be a string`);
+    }
+  }
+  return parsed as Record<string, string>;
 }
 
 /**
@@ -222,6 +261,14 @@ function parseAnnouncedResources(value?: string): ResourceMetadata[] {
   return parsed;
 }
 
+function errorResponse(
+  code: RegisteredErrorCode,
+  reason?: string,
+  details?: Record<string, unknown>,
+) {
+  return publicError(code, { reason, details });
+}
+
 /**
  * Bazaar Discovery Service
  *
@@ -241,9 +288,11 @@ export class BazaarService {
   private searchEngine: BazaarSearchEngine;
   private ingestionWorker: CatalogIngestionWorker;
   private providerQualityStore: ProviderQualityStore;
+  private metrics: BazaarMetrics;
   private httpServer?: ServerType;
   private livenessInterval?: NodeJS.Timeout;
   private heartbeatInterval?: NodeJS.Timeout;
+  private catalogRevalidationInterval?: NodeJS.Timeout;
   private serviceReady = false;
   private stopping = false;
   private providerAggregateRecomputeScheduled = false;
@@ -261,8 +310,14 @@ export class BazaarService {
     this.ingestionWorker = new CatalogIngestionWorker(config.database, {
       horizonUrl: config.horizonUrl,
       sorobanRpcUrl: config.sorobanRpcUrl,
+      livePaymentTerms: {
+        timeoutMs: config.catalogRevalidationTimeoutMs,
+        allowedOrigins: config.catalogRevalidationAllowedOrigins,
+        transportOriginMap: config.catalogRevalidationTransportOriginMap,
+      },
     });
     this.providerQualityStore = new ProviderQualityStore(this.db);
+    this.metrics = createBazaarMetrics();
 
     // Initialize announcer if secret key provided
     if (config.stellarSecretKey) {
@@ -311,11 +366,7 @@ export class BazaarService {
       const baseUrl = process.env.BAZAAR_BASE_URL;
       if (!baseUrl) {
         return c.json(
-          {
-            error: "not_configured",
-            message:
-              "BAZAAR_BASE_URL is not set, so this service cannot state the origin clients reach it at.",
-          },
+          errorResponse("internal_error", "BAZAAR_BASE_URL is not set, so this service cannot state the origin clients reach it at."),
           503,
         );
       }
@@ -386,12 +437,44 @@ export class BazaarService {
       });
     });
 
+    this.app.get("/metrics", async (c) => {
+      const p2pStats = this.p2pNode.getStats();
+      this.metrics.set("veridex_p2p_messages_total", p2pStats.messagesReceived);
+      this.metrics.set("veridex_p2p_invalid_total", Math.max(0, p2pStats.messagesSuppressed - p2pStats.replaysRejected));
+      this.metrics.set("veridex_p2p_replays_total", p2pStats.replaysRejected);
+      try {
+        const result = await this.db.query<{
+          searchable: string;
+          embedding_backlog: string;
+          oldest_pending_seconds: string;
+        }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE soft_dropped = false) AS searchable,
+             COUNT(*) FILTER (WHERE soft_dropped = false AND embedding IS NULL) AS embedding_backlog,
+             COALESCE(EXTRACT(EPOCH FROM now() - MIN(created_at) FILTER (WHERE verification_status = 'pending')), 0) AS oldest_pending_seconds
+           FROM catalog_resources`,
+        );
+        const row = result.rows[0];
+        this.metrics.set("veridex_catalog_resources_total", Number(row?.searchable ?? 0));
+        this.metrics.set("veridex_embedding_backlog", Number(row?.embedding_backlog ?? 0));
+        this.metrics.set("veridex_catalog_ingestion_lag", Number(row?.oldest_pending_seconds ?? 0));
+      } catch {
+        this.metrics.set("veridex_catalog_resources_total", 0);
+        this.metrics.set("veridex_embedding_backlog", 0);
+        this.metrics.set("veridex_catalog_ingestion_lag", 0);
+      }
+      c.header("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+      return c.body(this.metrics.render());
+    });
+
     // Hybrid search: BM25 keywords, feature-hash vectors, and telemetry, fused by RRF
     this.app.get("/discovery/search", async (c) => {
+      const startedAt = performance.now();
+      this.metrics.increment("veridex_search_requests_total");
       try {
         const query = c.req.query("q") || c.req.query("query");
         if (!query) {
-          return c.json({ error: "Missing query parameter 'q'" }, 400);
+          return c.json(errorResponse("invalid_request", "Missing query parameter 'q'."), 400);
         }
 
         const results = await this.searchEngine.search({
@@ -408,17 +491,17 @@ export class BazaarService {
           offset: clampOffset(c.req.query("offset")),
           cursor: c.req.query("cursor"),
         });
+        if (results.total === 0) this.metrics.increment("veridex_search_zero_results_total");
         return c.json(results);
       } catch (error) {
         // A bad cursor is the client's mistake, and saying so beats a 500.
         if (error instanceof InvalidCursorError) {
-          return c.json({ error: "invalid_cursor", message: error.message }, 400);
+          return c.json(errorResponse("invalid_request", error.message, { field: "cursor" }), 400);
         }
         console.error("[Bazaar Service] Search error:", error);
-        return c.json({
-          error: "Search failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 500);
+        return c.json(errorResponse("internal_error", "Catalog search could not be completed."), 500);
+      } finally {
+        this.metrics.observe("veridex_search_latency", (performance.now() - startedAt) / 1000);
       }
     });
 
@@ -441,13 +524,10 @@ export class BazaarService {
         return c.json(results);
       } catch (error) {
         if (error instanceof InvalidCursorError) {
-          return c.json({ error: "invalid_cursor", message: error.message }, 400);
+          return c.json(errorResponse("invalid_request", error.message, { field: "cursor" }), 400);
         }
         console.error("[Bazaar Service] List error:", error);
-        return c.json({
-          error: "List failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 500);
+        return c.json(errorResponse("internal_error", "Catalog listing could not be completed."), 500);
       }
     });
 
@@ -455,7 +535,7 @@ export class BazaarService {
     // separate from heartbeat liveness and settlement counters.
     this.app.get("/v1/provider", async (c) => {
       const endpoint = c.req.query("endpoint");
-      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
       const payTo = c.req.query("payTo");
       try {
         const aggregate = await this.providerQualityStore.getAggregate(endpoint, payTo);
@@ -479,18 +559,18 @@ export class BazaarService {
           maxAgeSeconds: 30 * 24 * 60 * 60,
         });
         if (!verification.valid) {
-          return c.json({ error: "provider_quality_unavailable", message: verification.error }, 503);
+          return c.json(errorResponse("provider_quality_unavailable", verification.error), 503);
         }
         return c.json(aggregate);
       } catch (error) {
         console.error("[Bazaar Service] Provider aggregate read error:", error);
-        return c.json({ error: "provider_quality_unavailable" }, 503);
+        return c.json(errorResponse("provider_quality_unavailable"), 503);
       }
     });
 
     this.app.get("/v1/provider/observations", async (c) => {
       const endpoint = c.req.query("endpoint");
-      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
       try {
         const observations = await this.providerQualityStore.listObservations(
           endpoint,
@@ -500,19 +580,34 @@ export class BazaarService {
         return c.json({ endpoint, observations });
       } catch (error) {
         console.error("[Bazaar Service] Provider observation read error:", error);
-        return c.json({ error: "provider_quality_unavailable" }, 503);
+        return c.json(errorResponse("provider_quality_unavailable"), 503);
+      }
+    });
+
+    this.app.get("/v1/provider/disagreements", async (c) => {
+      const endpoint = c.req.query("endpoint");
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
+      try {
+        const disagreements = await this.providerQualityStore.listDisagreements(
+          endpoint,
+          c.req.query("payTo"),
+          clampLimit(c.req.query("limit")),
+        );
+        return c.json({ endpoint, disagreements });
+      } catch {
+        return c.json(errorResponse("provider_quality_unavailable"), 503);
       }
     });
 
     this.app.post("/provider-quality/aggregates/recompute", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       if (!this.config.providerAggregateIssuerSecretKey) {
-        return c.json({ error: "aggregate_issuer_not_configured" }, 503);
+        return c.json(errorResponse("provider_quality_unavailable", "Provider aggregate signing is not configured."), 503);
       }
       const endpoint = c.req.query("endpoint");
-      if (!endpoint) return c.json({ error: "missing_endpoint" }, 400);
+      if (!endpoint) return c.json(errorResponse("invalid_request", "The endpoint query parameter is required."), 400);
       const payTo = c.req.query("payTo") || undefined;
       try {
         const observations = await this.providerQualityStore.listObservationsForAggregate(endpoint, payTo);
@@ -529,7 +624,7 @@ export class BazaarService {
         await this.providerQualityStore.saveAggregate(aggregate);
         return c.json(aggregate, 200);
       } catch (error) {
-        return c.json({ error: "aggregate_recompute_failed", message: error instanceof Error ? error.message : String(error) }, 500);
+        return c.json(errorResponse("internal_error", "Provider aggregate recomputation failed."), 500);
       }
     });
 
@@ -538,10 +633,7 @@ export class BazaarService {
       try {
         if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
           return c.json(
-            {
-              error: "unauthorized",
-              message: "/announce requires the internal bearer token to publish gossip announcements",
-            },
+            errorResponse("unauthorized", "/announce requires the internal bearer token to publish gossip announcements."),
             401,
           );
         }
@@ -558,16 +650,13 @@ export class BazaarService {
         });
       } catch (error) {
         console.error("[Bazaar Service] Announce error:", error);
-        return c.json({
-          error: "Announcement failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 400);
+        return c.json(errorResponse("invalid_request", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
     this.app.post("/catalog/delta", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const delta = CatalogDeltaSchema.parse(await c.req.json());
@@ -576,12 +665,10 @@ export class BazaarService {
         const result = await this.ingestionWorker.applyCatalogDelta(delta, {
           authorizedSigners: allowed,
         });
+        if (result.status === "applied") await this.p2pNode.publishCatalogDelta(delta);
         return c.json({ ...result, key: catalogDeltaKey(delta) }, result.status === "rejected" ? 400 : 202);
       } catch (error) {
-        return c.json({
-          error: "invalid_catalog_delta",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_catalog_delta", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
@@ -590,11 +677,7 @@ export class BazaarService {
       try {
         if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
           return c.json(
-            {
-              error: "unauthorized",
-              message:
-                "/catalog/ingest requires the facilitator's bearer token. This endpoint writes to the public catalog.",
-            },
+            errorResponse("unauthorized", "/catalog/ingest requires the facilitator's bearer token. This endpoint writes to the public catalog."),
             401,
           );
         }
@@ -629,18 +712,21 @@ export class BazaarService {
         }, 400);
       } catch (error) {
         console.error("[Bazaar Service] Ingestion error:", error);
-        return c.json({
-          error: "Ingestion failed",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }, 500);
+        return c.json(errorResponse("catalog_ingestion_failed"), 500);
       }
     });
 
     // Internal asynchronous observation ingestion. It is never called by the
     // facilitator before settlement and contains hashes, not raw payloads.
     this.app.post("/provider-quality/observations", async (c) => {
-      if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+      const authorization = c.req.header("Authorization");
+      const source = authorization === `Bearer ${this.config.internalToken}`
+        ? "in_band"
+        : this.config.providerObserverToken && authorization === `Bearer ${this.config.providerObserverToken}`
+          ? "independent"
+          : undefined;
+      if (!source) {
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const body = await c.req.json();
@@ -648,20 +734,23 @@ export class BazaarService {
         const verification = verifyProviderObservation(observation, {
           expectedResource: observation.resource,
           expectedPayTo: observation.payTo,
-          authorizedSigners: this.config.providerQualityAuthorizedSigners,
+          authorizedSigners: source === "independent"
+            ? this.config.providerObserverAuthorizedSigners ?? []
+            : this.config.providerQualityAuthorizedSigners,
+          allowSignerDifferentFromPayTo: source === "independent",
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {
-          return c.json({ error: "invalid_provider_observation", message: verification.error }, 400);
+          return c.json(errorResponse("invalid_provider_observation", verification.error), 400);
         }
-        const record = await this.providerQualityStore.recordObservation({ observation });
+        const record = await this.providerQualityStore.recordObservation({ observation, source });
+        this.metrics.increment("veridex_provider_observations_total");
+        if (observation.providerAtFault) this.metrics.increment("veridex_provider_faults_total");
+        if (record.disagreementRecorded) this.metrics.increment("veridex_provider_disagreements_total");
         this.enqueueProviderAggregateRecompute(observation.resource, observation.payTo);
         return c.json({ status: "accepted", id: record.id }, 202);
       } catch (error) {
-        return c.json({
-          error: "invalid_provider_observation",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_provider_observation", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
@@ -669,7 +758,7 @@ export class BazaarService {
     // signature, timestamp, endpoint, and payee checks succeed.
     this.app.post("/provider-quality/aggregates", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const aggregate = ProviderAggregateSchema.parse(await c.req.json());
@@ -680,21 +769,18 @@ export class BazaarService {
           maxAgeSeconds: 15 * 60,
         });
         if (!verification.valid) {
-          return c.json({ error: "invalid_provider_aggregate", message: verification.error }, 400);
+          return c.json(errorResponse("invalid_provider_aggregate", verification.error), 400);
         }
         await this.providerQualityStore.saveAggregate(aggregate);
         return c.json({ status: "accepted" }, 202);
       } catch (error) {
-        return c.json({
-          error: "invalid_provider_aggregate",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_provider_aggregate", error instanceof Error ? error.message : undefined), 400);
       }
     });
 
     this.app.post("/provider-quality/observations/settlement", async (c) => {
       if (c.req.header("Authorization") !== `Bearer ${this.config.internalToken}`) {
-        return c.json({ error: "unauthorized" }, 401);
+        return c.json(errorResponse("unauthorized"), 401);
       }
       try {
         const body = await c.req.json();
@@ -703,7 +789,7 @@ export class BazaarService {
           typeof body?.signature !== "string" ||
           !/^[0-9a-f]{64}$/i.test(body?.settlementTx || "")
         ) {
-          return c.json({ error: "invalid_settlement_correlation" }, 400);
+          return c.json(errorResponse("invalid_request", "Settlement correlation requires signer, signature, and a transaction hash."), 400);
         }
         const attached = await this.providerQualityStore.attachSettlement(
           body.signer,
@@ -712,12 +798,9 @@ export class BazaarService {
         );
         return attached
           ? c.json({ status: "attached" }, 202)
-          : c.json({ error: "provider_observation_not_found" }, 404);
+          : c.json(errorResponse("not_found", "The provider observation was not found."), 404);
       } catch (error) {
-        return c.json({
-          error: "settlement_correlation_failed",
-          message: error instanceof Error ? error.message : String(error),
-        }, 400);
+        return c.json(errorResponse("invalid_request", error instanceof Error ? error.message : undefined), 400);
       }
     });
   }
@@ -836,10 +919,25 @@ export class BazaarService {
     this.serviceReady = true;
 
     this.livenessInterval = setInterval(() => {
-      this.telemetryTracker.pruneOfflineNodes().catch((error) =>
-        console.error("[Bazaar Service] Liveness evaluation failed:", error)
-      );
+      this.telemetryTracker.pruneOfflineNodes()
+        .then((changed) => this.metrics.increment("veridex_liveness_changes_total", changed))
+        .catch((error) => console.error("[Bazaar Service] Liveness evaluation failed:", error));
     }, 30_000);
+
+    if (this.config.catalogRevalidationIntervalMs > 0) {
+      this.catalogRevalidationInterval = setInterval(() => {
+        this.ingestionWorker.revalidateStale({
+          staleAfterMs: this.config.catalogRevalidationStaleMs,
+          limit: this.config.catalogRevalidationBatchSize,
+        }).then((summary) => {
+          this.metrics.increment("veridex_catalog_revalidation_failures_total", summary.quarantined);
+          this.metrics.increment("veridex_catalog_revalidation_retained_total", summary.retained);
+          if (summary.checked > 0) console.log("[Bazaar Service] Catalog revalidation", summary);
+        }).catch((error) =>
+          console.error("[Bazaar Service] Catalog revalidation failed:", error)
+        );
+      }, this.config.catalogRevalidationIntervalMs);
+    }
 
     console.log(`[Bazaar Service] ✓ Service ready at http://${this.config.host}:${this.config.port}`);
     console.log("[Bazaar Service] Endpoints:");
@@ -867,6 +965,10 @@ export class BazaarService {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = undefined;
+    }
+    if (this.catalogRevalidationInterval) {
+      clearInterval(this.catalogRevalidationInterval);
+      this.catalogRevalidationInterval = undefined;
     }
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) =>

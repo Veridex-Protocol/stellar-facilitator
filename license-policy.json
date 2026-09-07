@@ -1,0 +1,24 @@
+{
+  "allowed": [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 OR MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC-BY-4.0",
+    "ISC",
+    "MIT",
+    "(MIT AND BSD-3-Clause)",
+    "MPL-2.0",
+    "Python-2.0",
+    "Unlicense"
+  ],
+  "reviewedExceptions": [
+    {
+      "lockfile": "playground/package-lock.json",
+      "packagePattern": "^node_modules/@img/(sharp|sharp-libvips)-",
+      "licensePattern": "LGPL-3.0-or-later",
+      "reason": "Next.js standalone runtime image optimizer binaries. Legal/distribution review remains required; this exception makes the dependency visible and prevents broader LGPL drift."
+    }
+  ]
+}

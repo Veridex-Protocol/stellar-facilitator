@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS catalog_resources (
     -- Primary key and unique identification
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     resource_url TEXT NOT NULL,
+    validation_url TEXT NOT NULL,
     tool_name TEXT,  -- NULL for HTTP resources, populated for MCP tools
     tool_name_key TEXT GENERATED ALWAYS AS (COALESCE(tool_name, '')) STORED,
     resource_type TEXT NOT NULL DEFAULT 'http' CHECK (resource_type IN ('http', 'mcp')),
@@ -35,10 +36,16 @@ CREATE TABLE IF NOT EXISTS catalog_resources (
     pay_to TEXT NOT NULL,  -- Stellar G-address
     network TEXT NOT NULL DEFAULT 'stellar:pubnet',  -- e.g., stellar:pubnet, stellar:testnet
     scheme TEXT NOT NULL DEFAULT 'exact',  -- e.g., exact, upto
+    asset TEXT,
+    amount TEXT,
 
     -- Telemetry and status
     last_seen TIMESTAMPTZ DEFAULT now(),  -- Last heartbeat or settlement
     soft_dropped BOOLEAN DEFAULT false,  -- True if validation fails
+    last_verified_at TIMESTAMPTZ,
+    verification_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (verification_status IN ('pending', 'verified', 'quarantined')),
+    verification_reason TEXT,
 
     -- Feature-hash embedding (384 dimensions), generated from
     -- service_name + description + tags. Lexical, not semantic.
@@ -140,6 +147,8 @@ CREATE TABLE IF NOT EXISTS provider_observations (
     settlement_tx TEXT,
     signer TEXT NOT NULL,
     signature TEXT NOT NULL,
+    observation_source TEXT NOT NULL DEFAULT 'in_band'
+        CHECK (observation_source IN ('in_band', 'independent')),
     outcome JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT provider_observations_unique_signature UNIQUE (signer, signature)
@@ -149,6 +158,21 @@ CREATE INDEX IF NOT EXISTS idx_provider_observations_resource_time
     ON provider_observations (resource, pay_to, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_observations_settlement
     ON provider_observations (settlement_tx) WHERE settlement_tx IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS provider_observation_disagreements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    resource TEXT NOT NULL,
+    pay_to TEXT NOT NULL,
+    request_digest TEXT NOT NULL,
+    in_band_observation_id UUID NOT NULL REFERENCES provider_observations(id),
+    independent_observation_id UUID NOT NULL REFERENCES provider_observations(id),
+    fields TEXT[] NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT provider_observation_disagreement_pair UNIQUE (in_band_observation_id, independent_observation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_disagreements_resource_time
+    ON provider_observation_disagreements (resource, pay_to, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS provider_quality_aggregates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -215,6 +239,10 @@ CREATE INDEX IF NOT EXISTS idx_catalog_tags
 CREATE INDEX IF NOT EXISTS idx_catalog_filter
     ON catalog_resources (network, soft_dropped, last_seen DESC);
 
+CREATE INDEX IF NOT EXISTS idx_catalog_revalidation_due
+    ON catalog_resources (last_verified_at ASC NULLS FIRST)
+    WHERE resource_type = 'http' AND soft_dropped = false;
+
 -- 5. Index for telemetry joins
 CREATE INDEX IF NOT EXISTS idx_telemetry_heartbeat
     ON resource_telemetry (last_heartbeat_at DESC);
@@ -249,5 +277,6 @@ CREATE TRIGGER update_resource_telemetry_updated_at
 COMMENT ON TABLE catalog_resources IS 'Primary catalog of x402-protected resources discovered via P2P mesh and settlement events';
 COMMENT ON COLUMN catalog_resources.embedding IS '384-dimensional feature-hash embedding (lexical, not semantic; see search/embeddings.ts)';
 COMMENT ON COLUMN catalog_resources.soft_dropped IS 'True if resource failed soft-drop validation rules';
+COMMENT ON COLUMN catalog_resources.last_verified_at IS 'Last successful live HTTP 402 payment-term validation';
 COMMENT ON TABLE resource_telemetry IS 'Real-time performance and liveness metrics for each cataloged resource';
 COMMENT ON TABLE node_heartbeats IS 'Audit log of P2P heartbeat messages with Ed25519 signature verification';

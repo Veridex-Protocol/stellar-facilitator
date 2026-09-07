@@ -1,7 +1,8 @@
 # Stellar `upto` payment scheme for x402 v2
 
-**Status:** Draft for the x402 Technical Steering Committee
-**Networks:** `stellar:testnet`, `stellar:pubnet`
+**Status:** Veridex custom scheme draft; implemented and proven on testnet,
+experimental and unaudited; upstream submission/alignment remains open
+**Networks:** `stellar:testnet` active evidence; `stellar:pubnet` approval-gated target
 **Scheme identifier:** `upto`
 **Reference implementation:** [`contracts/upto-settlement`](../../contracts/upto-settlement)
 **Reference deployment:** [`CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2`](https://stellar.expert/explorer/testnet/contract/CAHV6TIAOVSICUJHI6OBZSW2N5ZKRPGKHE2SH6OAEJHPHCLF5DXWAGG2) on `stellar:testnet`, wasm SHA-256 `c157c24c6d8e90267230932a6d1f88e04e0343e6e8d3df6836ad60c8c9972959`
@@ -135,6 +136,83 @@ facilitator → settle(settlement_id, actual, result_digest)
 Nesting the approval under the payer's authorization means that signature cannot
 authorize a standalone allowance.
 
+## x402 v2 HTTP wire profile
+
+The Soroban contract ABI above is the settlement core. The HTTP profile below
+defines how a resource server carries that authorization through x402 v2.
+
+### Payment requirements
+
+The facilitator advertises a network-specific kind with at least:
+
+```json
+{
+   "x402Version": 2,
+   "scheme": "upto",
+   "network": "stellar:testnet",
+   "extra": {
+      "contractId": "C...",
+      "facilitator": "G...",
+      "areFeesSponsored": true
+   }
+}
+```
+
+The resource server merges that metadata into its `PaymentRequirements` and adds
+`extra.requestDigest`, computed from the canonical HTTP method and resource URL.
+The buyer reads the advertised contract and facilitator rather than assuming a
+shared deployment constant.
+
+### Payment payload
+
+The buyer's v2 `PaymentPayload.payload` is:
+
+```json
+{
+   "transaction": "<base64 facilitator-sourced Stellar transaction XDR>"
+}
+```
+
+The transaction source is the advertised facilitator account. Its Soroban
+invocation calls `settle(payer, terms, placeholderAttestation)`, and the payer
+signs only its own auth entry before the resource is executed. The facilitator
+auth entry is intentionally absent from the HTTP payload because its signature
+must cover the result and actual amount, which do not exist before execution.
+
+### Response-dependent settlement
+
+After the seller has produced the response, it signs a provider outcome carrying
+the response digest and atomic usage. For `upto`, it exposes the usage through
+the x402 transport override:
+
+```http
+Settlement-Overrides: {"amount":"25000"}
+```
+
+The x402 resource server converts that override into the effective settlement
+amount while preserving the payer's original ceiling in `accepted.amount`. The
+scheme's `enrichSettlementPayload` adds:
+
+```json
+{"resultDigest":"sha256:<64 hex characters>"}
+```
+
+The facilitator then reconstructs the invocation with the actual amount and
+result digest, preserves the payer auth, signs the facilitator attestation,
+re-simulates the signed auth tree, assembles the Soroban footprint, and submits
+the transaction. A failed submission or failed contract execution is not a
+successful payment.
+
+### Upstream interoperability boundary
+
+This HTTP profile uses stable x402 v2 client/server extension points, but the
+current upstream `@x402/stellar@2.21.0` package exports only exact Stellar
+client/server/facilitator schemes. The reference implementation therefore ships
+an isolated Veridex `upto` adapter and does not claim stock upstream
+interoperability. The proposed contribution is recorded in
+[`docs/rfp/upstream-contribution/README.md`](../rfp/upstream-contribution/README.md)
+and remains **not submitted**.
+
 ## Contract invariants
 
 A conforming contract MUST enforce all of the following, and MUST fail the whole
@@ -236,8 +314,11 @@ contract address:
 ```
 
 Clients MUST read `extra.contractId` rather than assuming one. Each operator
-deploys their own instance, and because the contract is stateless with no
-privileged party, instances of the same wasm are behaviourally identical.
+deploys their own instance. The contract has no privileged party or mutable
+configuration; its only persistent state is the bounded
+`(payer, settlement_id)` replay guard. Instances of the same audited/reproducible
+WASM are intended to behave identically, but address existence alone does not
+prove the deployed code hash.
 
 A facilitator SHOULD confirm the contract exists on-chain at the configured
 address before advertising the scheme, and SHOULD additionally verify that the
@@ -290,9 +371,9 @@ reference implementation covers each in
 ## Composition with smart account policies
 
 Because the payer's authorization is taken over explicit argument values, a
-Stellar smart account implementing `__check_auth` can apply a policy to those
-arguments directly: a per-recipient ceiling, a rolling budget, an allowlist of
-tokens, or a cap on `max_amount` per settlement.
+Stellar smart account implementing `__check_auth` can in principle apply a
+policy to those arguments directly: a per-recipient ceiling, a rolling budget,
+an allowlist of tokens, or a cap on `max_amount` per settlement.
 
 The account sees the terms it is being asked to authorize, not merely that a call
 is being made. This is the composition that makes bounded pull payments possible on Soroban, and it is a further
@@ -302,6 +383,10 @@ than recommended.
 Note that a policy which reserves `max_amount` at authorization time should
 reconcile against `actual` when the settlement event is observed, since the
 difference is refunded.
+
+This composition is not yet testnet-proven. Veridex has custom signer hooks and
+an off-chain `$10/$2/$12` policy artifact, but no deployed smart-account/
+stablecoin fixture has exercised the complete signed `__check_auth` path.
 
 ## Deployment gate
 

@@ -7,13 +7,17 @@ What you end up with is a running facilitator and catalog, together with the che
 ## 1. Run it
 
 ```bash
-git clone https://github.com/Veridex-Protocol/stellar.git && cd stellar
+git clone https://github.com/Veridex-Protocol/stellar-facilitator.git
+cd stellar-facilitator
 npm run setup                    # Friendbot accounts, channel accounts, .env
 docker compose up --build -d postgres bazaar facilitator demo-server
 npm run conformance              # exact-payment checks against your own stack
 ```
 
-Nothing here depends on us. There is no hosted service, no API key, and no shipped contract id. Every dependency is permissively licensed, which we verified across all six package trees with no AGPL, GPL, SSPL or BUSL anywhere in a runtime path.
+The testnet bootstrap is self-hosted and needs no Veridex credential. The active
+testnet `upto` contract ID is configured by the bootstrap and verified at
+startup. Core runtime dependencies are permissive; optional Playground libvips
+artifacts remain explicit legal-review exceptions.
 
 ## 2. What the process refuses to do
 
@@ -86,6 +90,37 @@ LEDGER_SKEW_RETRY_DELAY_MS=6000     # must exceed ~5s, or every attempt sees the
 
 It never retries a failure carrying a transaction hash, because that transaction reached the network and retrying it risks settling twice.
 
+For independent-provider failover on testnet, configure an ordered list:
+
+```bash
+SOROBAN_RPC_URLS=https://rpc-primary.example,https://rpc-secondary.example
+RPC_REQUEST_TIMEOUT_MS=5000
+```
+
+Read calls fail over after a bounded transport failure. Before submission, the
+coordinator health-checks providers and chooses one healthy target. It submits a
+signed envelope to exactly one provider. If that call times out, it computes the
+same envelope hash locally and reconciles `getTransaction` across every provider;
+it never sends the envelope a second time. Conflicting final `SUCCESS`/`FAILED`
+states fail safely and increment `veridex_rpc_disagreements_total`. Every
+cross-provider status reconciliation increments
+`veridex_rpc_reconciliation_total`.
+
+Provider health is visible under `rpcProviders` on `/stats`. The local coordinator
+is testnet-only in this release because the pinned Stellar scheme permits its
+loopback HTTP transport only on testnet; pubnet remains approval-gated.
+
+The scheduler pins the exact signer through async context. An unsuccessful
+result with a transaction hash quarantines that signer until authenticated
+explicit recovery. A real ambiguous-submission recovery drill and durable
+multi-instance quarantine state remain release gaps.
+
+Facilitator outcome logs carry safe `requestId`, `paymentId`, `resource`, and
+`transactionHash` fields when those values exist. MCP tool outcomes are also
+structured, and `get_metrics` exposes per-tool call, failure, and latency
+counters for the running MCP process. External collection, retention, alerts,
+and incident-routing exercises remain deployment work.
+
 Do not attempt to fix this by widening the expiration tolerance. That check bounds how long a signed authorization stays live, so it is a security property rather than the bug.
 
 ## 5. Catalog integrity
@@ -93,6 +128,16 @@ Do not attempt to fix this by widening the expiration tolerance. That check boun
 The Bazaar accepts a listing only when it can confirm the settlement behind it on Horizon, itself, rather than taking the caller's word for it. There are four checks. The `settlementTx` field must be a 64-character hex transaction hash, it must exist on the configured network, it must have succeeded, and an effect on it must credit the entry's `payTo` address. On top of that, a unique constraint on `settlement_tx` means one settlement lists one resource.
 
 Two configuration consequences follow. `BAZAAR_INTERNAL_TOKEN` is mandatory and must be at least 24 characters, because it guards a write endpoint on a public catalog, and the process will not start without it. `HORIZON_URL` must be reachable, because verification fails closed: during a Horizon outage the catalog stops listing rather than starts trusting.
+
+Provider observation source is credential-derived. `BAZAAR_INTERNAL_TOKEN`
+always produces `in_band` evidence even if a request body claims otherwise.
+Independent observations are disabled unless both `PROVIDER_OBSERVER_TOKEN`
+and `PROVIDER_OBSERVER_AUTHORIZED_SIGNERS` are configured with a genuinely
+separate observer credential and signer identity.
+
+Temporary live-term validation failures retain a stale row for retry and
+increment `veridex_catalog_revalidation_retained_total`; terminal term or
+integrity mismatches quarantine and soft-drop it.
 
 Confirm both halves work:
 
@@ -124,7 +169,10 @@ Set `UPTO_ESCROW_CONTRACT_ID_TESTNET` to the id printed and restart. The facilit
 
 `UPTO_ESCROW_CONTRACT_ID_PUBNET` is read separately and is never inherited from the testnet variable, so a mainnet deployment cannot silently advertise a testnet contract.
 
-The contract is stateless and has no admin, so every instance of the same wasm behaves identically. Details and the current testnet artifact are recorded in [`contracts/upto-settlement/deployment.md`](../../contracts/upto-settlement/deployment.md).
+The contract has no admin or upgrade path. Its only persistent state is the
+bounded `(payer, settlement_id)` replay guard. Details and the current testnet
+artifact are recorded in
+[`contracts/upto-settlement/deployment.md`](../../contracts/upto-settlement/deployment.md).
 
 The contract is not audited, so advertise it on testnet only.
 

@@ -14,6 +14,7 @@ import {
   Account,
   Address,
   BASE_FEE,
+  Contract,
   FeeBumpTransaction,
   Operation,
   SignerKey,
@@ -668,6 +669,31 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
         };
       }
 
+      // The contract owns replay state for every payer, including custom
+      // accounts whose own __check_auth implementation may not deduplicate.
+      // Check it explicitly during verification so a replay is rejected with
+      // a stable reason before the facilitator builds a settlement transaction.
+      const replayReader = [...this.signingAddresses][0];
+      const replayState = await this.readSettledState(server, replayReader, parsedTerms, networkPassphrase);
+      if (replayState === undefined) {
+        return {
+          response: {
+            isValid: false,
+            invalidReason: "invalid_upto_stellar_replay_check_failed",
+            payer: fromAddress,
+          },
+        };
+      }
+      if (replayState) {
+        return {
+          response: {
+            isValid: false,
+            invalidReason: "invalid_upto_stellar_authorization_already_settled",
+            payer: fromAddress,
+          },
+        };
+      }
+
       // 6. Simulation & auth entry verification
       // Soroban treats a partially authorized transaction as an attempted
       // invocation and can return InvalidAction instead of describing the
@@ -802,6 +828,35 @@ export class UptoStellarScheme implements SchemeNetworkFacilitator {
     const envelope = transaction.toEnvelope();
     envelope.v1().tx().operations()[0].body().invokeHostFunctionOp().auth(auth);
     return TransactionBuilder.fromXDR(envelope.toXDR("base64"), networkPassphrase) as Transaction;
+  }
+
+  private async readSettledState(
+    server: rpc.Server,
+    readerAddress: string,
+    terms: ParsedUptoTerms,
+    networkPassphrase: string,
+  ): Promise<boolean | undefined> {
+    try {
+      const account = await server.getAccount(readerAddress);
+      const transaction = new TransactionBuilder(
+        new Account(readerAddress, account.sequenceNumber()),
+        { fee: BASE_FEE, networkPassphrase },
+      )
+        .addOperation(
+          new Contract(this.contractId).call(
+            "is_settled",
+            addrVal(terms.payer),
+            bytes32Val(terms.settlementId),
+          ),
+        )
+        .setTimeout(DEFAULT_TIMEOUT_SECONDS)
+        .build();
+      const simulated = await server.simulateTransaction(transaction);
+      if (!rpc.Api.isSimulationSuccess(simulated) || !simulated.result?.retval) return undefined;
+      return Boolean(scValToNative(simulated.result.retval));
+    } catch {
+      return undefined;
+    }
   }
 
   private async pollForTransaction(

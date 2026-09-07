@@ -26,6 +26,8 @@ export interface ProviderObservationRecord {
   settlementTx?: string;
   signer: string;
   signature: string;
+  source: "in_band" | "independent";
+  disagreementRecorded?: boolean;
   createdAt: Date;
 }
 
@@ -45,9 +47,9 @@ export class ProviderQualityStore {
          resource, pay_to, request_digest, response_digest, observed_at,
          usable, provider_at_fault, attributable, reason_code, usage_atomic,
          response_status, tool_name, route, call_id, settlement_tx,
-         signer, signature, outcome
+         signer, signature, observation_source, outcome
        ) VALUES ($1, $2, $3, $4, to_timestamp($5), $6, $7, $8, $9, $10,
-                 $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
+           $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)
        ON CONFLICT (signer, signature) DO UPDATE SET
          settlement_tx = COALESCE(EXCLUDED.settlement_tx, provider_observations.settlement_tx)
        RETURNING *`,
@@ -69,10 +71,13 @@ export class ProviderQualityStore {
         observation.settlementTx ?? null,
         observation.signer,
         observation.signature,
+        input.source ?? "in_band",
         JSON.stringify(observation),
       ],
     );
-    return mapObservation(result.rows[0]);
+    const record = mapObservation(result.rows[0]);
+    const disagreementRecorded = await this.recordDisagreements(record);
+    return { ...record, disagreementRecorded };
   }
 
   async listObservations(resource: string, payTo?: string, limit = 100): Promise<ProviderObservationRecord[]> {
@@ -107,11 +112,21 @@ export class ProviderQualityStore {
     nowSeconds = Math.floor(Date.now() / 1000),
   ): Promise<ProviderObservationRecord[]> {
     const result = await this.db.query<ProviderObservationRow>(
-      `SELECT * FROM provider_observations
-       WHERE resource = $1
-         AND ($2::text IS NULL OR pay_to = $2)
-         AND observed_at >= to_timestamp($3)
-         AND observed_at <= to_timestamp($4)
+      `WITH ranked AS (
+         SELECT provider_observations.*,
+                row_number() OVER (
+                  PARTITION BY resource, pay_to, request_digest,
+                    COALESCE('call:' || call_id, 'row:' || id::text)
+                  ORDER BY CASE observation_source WHEN 'independent' THEN 0 ELSE 1 END,
+                           observed_at DESC, created_at DESC
+                ) AS aggregate_rank
+         FROM provider_observations
+         WHERE resource = $1
+           AND ($2::text IS NULL OR pay_to = $2)
+           AND observed_at >= to_timestamp($3)
+           AND observed_at <= to_timestamp($4)
+       )
+       SELECT * FROM ranked WHERE aggregate_rank = 1
        ORDER BY observed_at DESC`,
       [resource, payTo ?? null, nowSeconds - windowSeconds, nowSeconds],
     );
@@ -167,6 +182,53 @@ export class ProviderQualityStore {
       ],
     );
   }
+
+  private async recordDisagreements(record: ProviderObservationRecord): Promise<boolean> {
+    if (!record.callId) return false;
+    const opposite = record.source === "in_band" ? "independent" : "in_band";
+    const result = await this.db.query<ProviderObservationRow>(
+      `SELECT * FROM provider_observations
+       WHERE resource = $1 AND pay_to = $2 AND request_digest = $3
+         AND call_id = $4 AND observation_source = $5
+       ORDER BY observed_at DESC LIMIT 1`,
+      [record.resource, record.payTo, record.requestDigest, record.callId, opposite],
+    );
+    const otherRow = result.rows[0];
+    if (!otherRow) return false;
+    const other = mapObservation(otherRow);
+    const fields = [
+      record.responseDigest !== other.responseDigest ? "responseDigest" : undefined,
+      record.usable !== other.usable ? "usable" : undefined,
+      record.providerAtFault !== other.providerAtFault ? "providerAtFault" : undefined,
+      record.attributable !== other.attributable ? "attributable" : undefined,
+      record.reasonCode !== other.reasonCode ? "reasonCode" : undefined,
+      record.usageAtomic !== other.usageAtomic ? "usageAtomic" : undefined,
+    ].filter((field): field is string => Boolean(field));
+    if (fields.length === 0) return false;
+    const inBand = record.source === "in_band" ? record : other;
+    const independent = record.source === "independent" ? record : other;
+    await this.db.query(
+      `INSERT INTO provider_observation_disagreements (
+         resource, pay_to, request_digest, in_band_observation_id,
+         independent_observation_id, fields
+       ) VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (in_band_observation_id, independent_observation_id) DO NOTHING`,
+      [record.resource, record.payTo, record.requestDigest, inBand.id, independent.id, fields],
+    );
+    return true;
+  }
+
+  async listDisagreements(resource: string, payTo?: string, limit = 100): Promise<QueryResultRow[]> {
+    const result = await this.db.query(
+      `SELECT resource, pay_to, request_digest, in_band_observation_id,
+              independent_observation_id, fields, created_at
+       FROM provider_observation_disagreements
+       WHERE resource = $1 AND ($2::text IS NULL OR pay_to = $2)
+       ORDER BY created_at DESC LIMIT $3`,
+      [resource, payTo ?? null, Math.min(500, Math.max(1, limit))],
+    );
+    return result.rows;
+  }
 }
 
 interface ProviderObservationRow extends QueryResultRow {
@@ -188,6 +250,7 @@ interface ProviderObservationRow extends QueryResultRow {
   settlement_tx: string | null;
   signer: string;
   signature: string;
+  observation_source: "in_band" | "independent";
   created_at: Date;
 }
 
@@ -224,6 +287,7 @@ function mapObservation(row: ProviderObservationRow): ProviderObservationRecord 
     ...(row.settlement_tx !== null ? { settlementTx: row.settlement_tx } : {}),
     signer: row.signer,
     signature: row.signature,
+    source: row.observation_source,
     createdAt: row.created_at,
   };
 }
