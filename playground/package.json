@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "description": "Veridex x402 Interactive Playground - Next.js & Tailwind testnet sandbox",
   "scripts": {
-    "dev": "next dev -p 3004",
+    "dev": "next dev -p 3004 --webpack",
     "build": "next build --webpack",
     "start": "next start -p 3004",
     "typecheck": "tsc --noEmit",
