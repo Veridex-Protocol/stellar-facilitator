@@ -32,6 +32,7 @@ serve({ fetch: app.fetch, port, hostname: host });
 process.stdout.write(`Veridex gateway '${config.id}' listening on http://${host}:${port}\n`);
 
 export { createGatewayApp } from "./app.js";
+export { createGatewayProviderPolicyController } from "./provider-policy.js";
 export { validateGatewayConfig } from "./config.js";
 export { InMemoryGatewayEventStore, JsonlGatewayEventStore } from "./store.js";
 export type * from "./types.js";

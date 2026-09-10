@@ -48,6 +48,15 @@ export interface GatewayConfig {
   allowHttpForDevelopment?: boolean;
   allowedUpstreamOrigins?: string[];
   bazaarUrl?: string;
+  providerPolicy?: {
+    enabled: boolean;
+    authorizedIssuers?: string[];
+    refreshIntervalMs?: number;
+    warnMax?: number;
+    holdMax?: number;
+    insufficientData?: "sell" | "sell-and-warn" | "hold";
+    provisional?: "sell" | "sell-and-warn" | "hold";
+  };
   expiresAt?: string;
   developerId?: string;
 }
@@ -79,6 +88,7 @@ export interface VeridexPaymentEvent {
   createdAt: string;
   settledAt?: string;
   failureCode?: string;
+  providerPolicy?: GatewayProviderPolicyDecision;
 }
 
 export interface ProviderOutcomeRecord {
@@ -129,6 +139,19 @@ export interface GatewayDependencies {
   providerOutcomeSecretKey?: string;
   providerObserverToken?: string;
   managementToken?: string;
+  providerPolicyController?: GatewayProviderPolicyController;
+}
+
+export interface GatewayProviderPolicyDecision {
+  action: "sell" | "sell-and-warn" | "hold";
+  reason: string;
+  warning?: string;
+  evaluatedAt: string;
+}
+
+export interface GatewayProviderPolicyController {
+  decision(resourceUrl: string): GatewayProviderPolicyDecision;
+  stop(): void;
 }
 
 export interface GatewayPortalSnapshotV1 {

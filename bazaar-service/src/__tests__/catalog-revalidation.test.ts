@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 import { CatalogIngestionWorker } from "../catalog/ingestion.js";
 import type { LivePaymentTermsResult } from "../catalog/live-payment-terms.js";
+import { scheduleCatalogRevalidation } from "../server.js";
 
 const row = {
   id: "00000000-0000-0000-0000-000000000001",
@@ -42,6 +43,11 @@ function workerFor(validation: LivePaymentTermsResult | LivePaymentTermsResult[]
 }
 
 describe("periodic catalog revalidation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it("refreshes a valid listing without removing it from search", async () => {
     const { worker, queries } = workerFor({ valid: true });
 
@@ -110,5 +116,98 @@ describe("periodic catalog revalidation", () => {
     expect(queries.some(({ text }) => text.includes("verification_status = 'pending'"))).toBe(true);
     expect(queries.some(({ text }) => text.includes("verification_status = 'verified'"))).toBe(true);
     expect(queries.some(({ text }) => text.includes("soft_dropped = true"))).toBe(false);
+  });
+
+  it("runs the production scheduler with configured thresholds and records outcomes", async () => {
+    vi.useFakeTimers();
+    const revalidateStale = vi.fn().mockResolvedValue({
+      checked: 3,
+      refreshed: 1,
+      retained: 1,
+      quarantined: 1,
+      failures: { catalog_live_payment_timeout: 1, catalog_live_payment_terms_changed: 1 },
+    });
+    const increment = vi.fn();
+    const log = vi.fn();
+
+    const interval = scheduleCatalogRevalidation({
+      intervalMs: 5_000,
+      staleAfterMs: 60_000,
+      batchSize: 17,
+      worker: { revalidateStale },
+      metrics: { increment },
+      log,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(revalidateStale).toHaveBeenCalledOnce();
+    expect(revalidateStale).toHaveBeenCalledWith({ staleAfterMs: 60_000, limit: 17 });
+    expect(increment).toHaveBeenCalledWith("veridex_catalog_revalidation_failures_total", 1);
+    expect(increment).toHaveBeenCalledWith("veridex_catalog_revalidation_retained_total", 1);
+    expect(log).toHaveBeenCalledWith("[Bazaar Service] Catalog revalidation", expect.objectContaining({ checked: 3 }));
+    clearInterval(interval);
+  });
+
+  it("isolates worker failures and continues on the next interval", async () => {
+    vi.useFakeTimers();
+    const revalidateStale = vi.fn()
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValueOnce({ checked: 0, refreshed: 0, retained: 0, quarantined: 0, failures: {} });
+    const logError = vi.fn();
+
+    const interval = scheduleCatalogRevalidation({
+      intervalMs: 1_000,
+      staleAfterMs: 60_000,
+      batchSize: 10,
+      worker: { revalidateStale },
+      metrics: { increment: vi.fn() },
+      logError,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(revalidateStale).toHaveBeenCalledTimes(2);
+    expect(logError).toHaveBeenCalledWith(
+      "[Bazaar Service] Catalog revalidation failed:",
+      expect.objectContaining({ message: "database unavailable" }),
+    );
+    clearInterval(interval);
+  });
+
+  it("does not overlap duplicate timer ticks", async () => {
+    vi.useFakeTimers();
+    let resolveRun!: (value: any) => void;
+    const revalidateStale = vi.fn().mockImplementation(() => new Promise((resolve) => {
+      resolveRun = resolve;
+    }));
+    const interval = scheduleCatalogRevalidation({
+      intervalMs: 1_000,
+      staleAfterMs: 60_000,
+      batchSize: 10,
+      worker: { revalidateStale },
+      metrics: { increment: vi.fn() },
+    });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(revalidateStale).toHaveBeenCalledOnce();
+    resolveRun({ checked: 0, refreshed: 0, retained: 0, quarantined: 0, failures: {} });
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(revalidateStale).toHaveBeenCalledTimes(2);
+    clearInterval(interval);
+  });
+
+  it("does not schedule revalidation when disabled", () => {
+    vi.useFakeTimers();
+    const revalidateStale = vi.fn();
+    const interval = scheduleCatalogRevalidation({
+      intervalMs: 0,
+      staleAfterMs: 60_000,
+      batchSize: 10,
+      worker: { revalidateStale },
+      metrics: { increment: vi.fn() },
+    });
+
+    expect(interval).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

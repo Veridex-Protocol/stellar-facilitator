@@ -37,6 +37,17 @@ describe("gateway configuration", () => {
     ["decimal price", { price: "0.05" }],
     ["unlisted origin", { allowedUpstreamOrigins: ["https://other.example.com"] }],
     ["traversal route", { routes: [{ path: "/../admin" }] }],
+    ["policy without Bazaar", { providerPolicy: { enabled: true, authorizedIssuers: [Keypair.random().publicKey()] } }],
+    ["policy without trusted issuer", { bazaarUrl: "https://bazaar.example.com", providerPolicy: { enabled: true } }],
+    ["inverted policy thresholds", {
+      bazaarUrl: "https://bazaar.example.com",
+      providerPolicy: {
+        enabled: true,
+        authorizedIssuers: [Keypair.random().publicKey()],
+        warnMax: 0.2,
+        holdMax: 0.1,
+      },
+    }],
   ])("rejects %s", (_label, override) => {
     expect(() => validateGatewayConfig({ ...validConfig(), ...override })).toThrow();
   });

@@ -367,4 +367,55 @@ describe("gateway payment gate", () => {
       "/provider-quality/observations/settlement",
     ]));
   });
+
+  it("holds a resource before challenge, verification, settlement, or upstream work", async () => {
+    calls.length = 0;
+    const upstreamFetch = vi.fn<typeof fetch>();
+    const app = await createGatewayApp(gatewayConfig(), {
+      fetch: upstreamFetch,
+      resolveHostname: publicDns,
+      providerPolicyController: {
+        decision: () => ({
+          action: "hold",
+          reason: "published: faultRateUpperBound=0.2000, n=100",
+          evaluatedAt: new Date().toISOString(),
+        }),
+        stop: () => undefined,
+      },
+    });
+
+    const response = await app.request("https://gateway.example.com/demo");
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      code: "resource_unavailable",
+      providerPolicy: { action: "hold" },
+    });
+    expect(calls).toEqual([]);
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps sell-and-warn payable and records the structured decision", async () => {
+    const store = new InMemoryGatewayEventStore();
+    const app = await createGatewayApp(gatewayConfig(), {
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: true })),
+      eventStore: store,
+      resolveHostname: publicDns,
+      providerPolicyController: {
+        decision: () => ({
+          action: "sell-and-warn",
+          reason: "published: faultRateUpperBound=0.1000, n=100",
+          warning: "provider quality evidence is not sufficient for an unconditional sale",
+          evaluatedAt: new Date().toISOString(),
+        }),
+        stop: () => undefined,
+      },
+    });
+    const challenge = await app.request("https://gateway.example.com/demo");
+
+    expect(challenge.status).toBe(402);
+    expect(challenge.headers.get("X-Veridex-Provider-Policy")).toBe("sell-and-warn");
+    expect(challenge.headers.get("X-Veridex-Provider-Warning")).toContain("not sufficient");
+    expect(store.paymentEvents.at(-1)?.providerPolicy?.action).toBe("sell-and-warn");
+  });
 });

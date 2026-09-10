@@ -72,6 +72,7 @@ export interface ProviderAggregateClientOptions {
   maxStaleMs?: number;
   timeoutMs?: number;
   backoffBaseMs?: number;
+  authorizedIssuers?: string[];
   fetchImpl?: typeof fetch;
   now?: () => number;
 }
@@ -207,6 +208,7 @@ export class ProviderAggregateClient {
       maxStaleMs: options.maxStaleMs ?? 15 * 60_000,
       timeoutMs: options.timeoutMs ?? 5_000,
       backoffBaseMs: options.backoffBaseMs ?? 1_000,
+      authorizedIssuers: options.authorizedIssuers ?? [],
       fetchImpl: options.fetchImpl ?? fetch,
       now: options.now ?? (() => Date.now()),
     };
@@ -245,6 +247,9 @@ export class ProviderAggregateClient {
       const validation = verifyProviderAggregate(aggregate, {
         expectedEndpoint: endpoint,
         expectedPayTo: payTo,
+        ...(this.options.authorizedIssuers.length > 0
+          ? { authorizedIssuers: this.options.authorizedIssuers }
+          : {}),
         maxAgeSeconds: this.options.maxAgeSeconds,
         nowSeconds: Math.floor(now / 1000),
       });

@@ -29,6 +29,7 @@ loadDotenv({ path: [".env"], quiet: true });
 import { Keypair } from "@stellar/stellar-sdk";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { assessConcurrencyReport } from "./concurrency-assessment.mjs";
 
 const NETWORK = "stellar:testnet";
 const HORIZON = "https://horizon-testnet.stellar.org";
@@ -36,6 +37,7 @@ const FACILITATOR_URL = (process.env.FACILITATOR_URL ?? "http://localhost:3002")
 
 const args = process.argv.slice(2);
 const asJson = args.includes("--json");
+const allowCapacityRejection = args.includes("--allow-capacity-rejection");
 const nIndex = args.indexOf("--n");
 const CONCURRENCY = nIndex !== -1 ? Number(args[nIndex + 1]) : 6;
 
@@ -198,10 +200,11 @@ const report = {
   channelsAfter: after.channels,
   results,
 };
+report.assessment = assessConcurrencyReport(report, { allowCapacityRejection });
 
 if (asJson) {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  process.exit(report.failed === 0 ? 0 : 1);
+  process.exit(report.assessment.safetyPassed ? 0 : 1);
 }
 
 for (const result of results) {
@@ -233,4 +236,9 @@ if (report.failed > 0) {
   }
 }
 
-process.exit(report.failed === 0 ? 0 : 1);
+process.stdout.write(
+  `  assessment          ${report.assessment.safetyPassed ? "PASS" : "FAIL"}` +
+    ` (${report.assessment.expectedCapacityRejections} expected capacity rejection(s), ` +
+    `${report.assessment.unexpectedFailures} unexpected failure(s))\n`,
+);
+process.exit(report.assessment.safetyPassed ? 0 : 1);

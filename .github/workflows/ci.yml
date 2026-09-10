@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [facilitator-service, bazaar-service, demo-server, mcp-server, sdk-typescript, playground]
+        package: [facilitator-service, bazaar-service, demo-server, gateway-service, mcp-server, sdk-typescript, playground]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -120,7 +120,7 @@ jobs:
           SELLER_ADDRESS: GCNNJJV3XUXWCVV3WBKILBCUUGKSDZ2BL4HHNV7AISYMW6PJQX47DZYU
           PAYMENT_ASSET: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
         run: docker compose config --quiet
-      - run: docker compose build facilitator bazaar demo-server mcp-server
+      - run: docker compose build facilitator bazaar demo-server gateway mcp-server playground
 
   conformance:
     name: stock client pays on testnet
@@ -139,14 +139,16 @@ jobs:
         run: npm run setup
 
       - name: Start the stack
-        run: docker compose up --build -d postgres bazaar facilitator demo-server
+        run: docker compose up --build -d postgres bazaar facilitator demo-server gateway playground
 
       - name: Wait for health
         run: |
           for i in $(seq 1 90); do
             if curl -fsS http://localhost:3001/health >/dev/null 2>&1 \
                && curl -fsS http://localhost:3002/health >/dev/null 2>&1 \
-               && curl -fsS http://localhost:3003/health >/dev/null 2>&1; then
+               && curl -fsS http://localhost:3003/health >/dev/null 2>&1 \
+               && curl -fsS http://localhost:3005/health >/dev/null 2>&1 \
+               && curl -fsS http://localhost:3004/api/config >/dev/null 2>&1; then
               echo "all services healthy"
               exit 0
             fi

@@ -52,6 +52,18 @@ const ConfigSchema = z.object({
   allowHttpForDevelopment: z.boolean().optional(),
   allowedUpstreamOrigins: z.array(z.string().url()).max(50).optional(),
   bazaarUrl: z.string().url().optional(),
+  providerPolicy: z.object({
+    enabled: z.boolean(),
+    authorizedIssuers: z.array(z.string().refine(
+      (value) => StrKey.isValidEd25519PublicKey(value),
+      "provider policy issuers must be Stellar G... addresses",
+    )).min(1).optional(),
+    refreshIntervalMs: z.number().int().min(1_000).max(60 * 60 * 1_000).optional(),
+    warnMax: z.number().min(0).max(1).optional(),
+    holdMax: z.number().min(0).max(1).optional(),
+    insufficientData: z.enum(["sell", "sell-and-warn", "hold"]).optional(),
+    provisional: z.enum(["sell", "sell-and-warn", "hold"]).optional(),
+  }).optional(),
   expiresAt: z.string().datetime().optional(),
   developerId: z.string().min(1).max(128).optional(),
 });
@@ -76,6 +88,19 @@ export function validateGatewayConfig(input: unknown): GatewayConfig {
   const allowedOrigins = config.allowedUpstreamOrigins?.map((entry) => new URL(entry).origin);
   if (allowedOrigins && !allowedOrigins.includes(upstream.origin)) {
     throw new Error("upstream origin is not allowlisted");
+  }
+  if (config.providerPolicy?.enabled && !config.bazaarUrl) {
+    throw new Error("bazaarUrl is required when provider policy is enabled");
+  }
+  if (config.providerPolicy?.enabled && !config.providerPolicy.authorizedIssuers?.length) {
+    throw new Error("providerPolicy.authorizedIssuers is required when provider policy is enabled");
+  }
+  if (
+    config.providerPolicy?.warnMax !== undefined &&
+    config.providerPolicy?.holdMax !== undefined &&
+    config.providerPolicy.warnMax > config.providerPolicy.holdMax
+  ) {
+    throw new Error("provider policy requires warnMax <= holdMax");
   }
 
   return {

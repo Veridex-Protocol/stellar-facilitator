@@ -21,6 +21,7 @@ import {
 import { Hono, type Context } from "hono";
 import { assertPublicAddress, validateGatewayConfig } from "./config.js";
 import { GatewayMetrics } from "./metrics.js";
+import { createGatewayProviderPolicyController } from "./provider-policy.js";
 import { InMemoryGatewayEventStore } from "./store.js";
 import type {
   GatewayConfig,
@@ -54,6 +55,8 @@ export async function createGatewayApp(
   const fetchImplementation = dependencies.fetch ?? fetch;
   const resolveHostname = dependencies.resolveHostname ?? defaultResolveHostname;
   const metrics = new GatewayMetrics();
+  const providerPolicy = dependencies.providerPolicyController ??
+    createGatewayProviderPolicyController(config, { fetchImpl: fetchImplementation });
   await assertSafeDns(config, resolveHostname);
 
   const resourceServer = new x402ResourceServer(
@@ -141,6 +144,7 @@ export async function createGatewayApp(
           resolveHostname,
           providerOutcomeSecretKey: dependencies.providerOutcomeSecretKey,
           providerObserverToken: dependencies.providerObserverToken,
+          providerPolicy,
         });
       });
     }
@@ -160,6 +164,7 @@ interface RequestHandlerOptions {
   resolveHostname: (hostname: string) => Promise<string[]>;
   providerOutcomeSecretKey?: string;
   providerObserverToken?: string;
+  providerPolicy?: import("./types.js").GatewayProviderPolicyController;
 }
 
 async function handleProtectedRequest(options: RequestHandlerOptions): Promise<Response> {
@@ -169,6 +174,15 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
   const resourceId = stableId(
     `${config.publicBaseUrl}|${route.routeTemplate ?? route.path}|exact|${config.network}`,
   );
+  const policyDecision = options.providerPolicy?.decision(resourceUrl);
+  if (policyDecision?.action === "hold") {
+    return context.json({
+      code: "resource_unavailable",
+      reason: "Provider policy is holding new sales for this resource.",
+      retryable: true,
+      providerPolicy: policyDecision,
+    }, 503);
+  }
   const declaredExtensions = route.bazaar?.enabled === false
     ? undefined
     : declareDiscoveryExtension({ output: route.bazaar?.output ?? { example: {} } });
@@ -221,8 +235,9 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
       resourceUrl,
       requestId,
       status: "challenged",
+      providerPolicy: policyDecision,
     }));
-    return encodedPaymentRequired(paymentRequired);
+    return withProviderPolicy(encodedPaymentRequired(paymentRequired), policyDecision);
   }
 
   let body: ArrayBuffer | undefined;
@@ -261,15 +276,16 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
       requestId,
       status: "rejected",
       failureCode,
+      providerPolicy: policyDecision,
     }));
-    return encodedPaymentRequired(await resourceServer.createPaymentRequiredResponse(
+    return withProviderPolicy(encodedPaymentRequired(await resourceServer.createPaymentRequiredResponse(
       requirements,
       resourceInfo(config, route, resourceUrl),
       failureCode,
       extensions,
       { request: context.req.raw },
       paymentPayload,
-    ));
+    )), policyDecision);
   }
 
   let settlement = await eventStore.findSettlement(paymentId);
@@ -296,15 +312,16 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
           status: "rejected",
           payer: verifyResult.payer,
           failureCode: verifyResult.invalidReason,
+          providerPolicy: policyDecision,
         }));
-        return encodedPaymentRequired(await resourceServer.createPaymentRequiredResponse(
+        return withProviderPolicy(encodedPaymentRequired(await resourceServer.createPaymentRequiredResponse(
           requirements,
           resourceInfo(config, route, resourceUrl),
           verifyResult.invalidReason ?? "Payment verification failed",
           extensions,
           { request: context.req.raw },
           paymentPayload,
-        ));
+        )), policyDecision);
       }
       await eventStore.appendPaymentEvent(paymentEvent({
         config,
@@ -315,6 +332,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
         requestId,
         status: "verified",
         payer: verifyResult.payer,
+        providerPolicy: policyDecision,
       }));
 
       const settlementStartedAt = Date.now();
@@ -336,6 +354,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
           status: "failed",
           payer: verifyResult.payer,
           failureCode: settleResult.errorReason,
+          providerPolicy: policyDecision,
         }));
         return context.json({
           code: "settlement_failed",
@@ -356,6 +375,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
         transactionHash: settleResult.transaction,
         settlementLatencyMs: Date.now() - settlementStartedAt,
         settledAt: new Date().toISOString(),
+        providerPolicy: policyDecision,
       });
       await eventStore.appendPaymentEvent(settlement);
     } catch (error) {
@@ -369,6 +389,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
         requestId,
         status: "failed",
         failureCode: "facilitator_unavailable",
+        providerPolicy: policyDecision,
       }));
       return context.json({
         code: "facilitator_unavailable",
@@ -378,7 +399,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
     }
   }
 
-  return forwardSettledRequest({
+  const response = await forwardSettledRequest({
     ...options,
     paymentId,
     resourceId,
@@ -387,6 +408,7 @@ async function handleProtectedRequest(options: RequestHandlerOptions): Promise<R
     settleResult,
     body,
   });
+  return withProviderPolicy(response, policyDecision);
 }
 
 async function forwardSettledRequest(
@@ -592,6 +614,7 @@ function paymentEvent(input: {
   settlementLatencyMs?: number;
   settledAt?: string;
   failureCode?: string;
+  providerPolicy?: import("./types.js").GatewayProviderPolicyDecision;
 }): VeridexPaymentEvent {
   const amount = input.route.price ?? input.config.price;
   return {
@@ -619,6 +642,7 @@ function paymentEvent(input: {
     createdAt: new Date().toISOString(),
     settledAt: input.settledAt,
     failureCode: input.failureCode,
+    providerPolicy: input.providerPolicy,
   };
 }
 
@@ -895,4 +919,14 @@ class GatewayHttpError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
   }
+}
+
+function withProviderPolicy(
+  response: Response,
+  decision: import("./types.js").GatewayProviderPolicyDecision | undefined,
+): Response {
+  if (!decision) return response;
+  response.headers.set("X-Veridex-Provider-Policy", decision.action);
+  if (decision.warning) response.headers.set("X-Veridex-Provider-Warning", decision.warning);
+  return response;
 }
