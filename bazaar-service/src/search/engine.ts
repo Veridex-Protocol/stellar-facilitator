@@ -3,7 +3,7 @@
  * License: Apache-2.0
  *
  * Implements Reciprocal Rank Fusion (RRF) combining:
- * - BM25 full-text keyword search (PostgreSQL ts_rank_cd)
+ * - PostgreSQL full-text cover-density ranking (ts_rank_cd)
  * - Feature-hash vector similarity (pgvector cosine distance)
  * - Real-time telemetry ranking (uptime, latency, reliability)
  *
@@ -55,7 +55,7 @@ export class BazaarSearchEngine {
   }
 
   /**
-   * Execute hybrid RRF search combining vector similarity, BM25 text match, and telemetry ranking
+   * Execute hybrid RRF search combining vector similarity, cover-density text match (ts_rank_cd), and telemetry ranking
    */
   async search(query: SearchQuery): Promise<SearchResponse> {
     const { query: searchText, limit } = query;

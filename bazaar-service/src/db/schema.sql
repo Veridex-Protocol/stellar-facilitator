@@ -225,7 +225,7 @@ CREATE INDEX IF NOT EXISTS idx_catalog_embedding
     USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
 
--- 2. GIN index for full-text search (BM25 ranking)
+-- 2. GIN index for full-text search (ts_rank_cd cover-density ranking)
 CREATE INDEX IF NOT EXISTS idx_catalog_text
     ON catalog_resources
     USING gin (to_tsvector('english', coalesce(service_name,'') || ' ' || coalesce(description,'')));
