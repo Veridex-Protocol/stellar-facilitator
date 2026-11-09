@@ -3,7 +3,7 @@
  * License: Apache-2.0
  *
  * Exposes REST endpoints for:
- * - GET /discovery/search - Hybrid search (BM25 + feature-hash vector + telemetry)
+ * - GET /discovery/search - Hybrid search (PostgreSQL ts_rank_cd cover-density + feature-hash vector + telemetry)
  * - GET /discovery/resources - List catalog
  * - POST /announce - Accept P2P announcements via HTTP
  * - POST /catalog/ingest - Trigger ingestion worker
@@ -500,7 +500,7 @@ export class BazaarService {
       return c.body(this.metrics.render());
     });
 
-    // Hybrid search: BM25 keywords, feature-hash vectors, and telemetry, fused by RRF
+    // Hybrid search: cover-density text (ts_rank_cd), feature-hash vectors, and telemetry, fused by RRF
     this.app.get("/discovery/search", async (c) => {
       const startedAt = performance.now();
       this.metrics.increment("veridex_search_requests_total");
